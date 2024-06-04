@@ -45,8 +45,8 @@ describe('S3 Storage tests', () => {
     expect(parsedData).to.deep.equal({ key: 'value' })
   })
 
-  it('should fetch data from s3', () => {
-    const result = s3Storage.getDownloadUrl()
+  it('should fetch data from s3', async () => {
+    const result = await s3Storage.getDownloadUrl()
     expect(result).to.be.equal(JSON.stringify(s3Object))
   })
 

@@ -444,6 +444,16 @@ export const remoteDDOTypeURLNotEncrypted = {
   }
 }
 
+export const remoteDDOTypeURLEncrypted = {
+  remote: {
+    type: 'url',
+    url: '',
+    method: 'GET',
+    encryptedBy: '16Uiu2HAmN211yBiE6dF5xu8GFXV1jqZQzK5MbzBuQDspfa6qNgXF',
+    encryptedMethod: 'ECIES'
+  }
+}
+
 export const remoteDDOTypeIPFSNotEncrypted = {
   remote: {
     type: 'ipfs',
@@ -454,7 +464,7 @@ export const remoteDDOTypeIPFSNotEncrypted = {
 export const remoteDDOTypeIPFSEncrypted = {
   remote: {
     type: 'ipfs',
-    hash: 'QmaD5S7TakPs3a4fijatbfqhmhhrEbCvbqGTTAp7VrZ91T',
+    hash: 'BK/WRmZCK4dN58E9E5ilUsmSP7q11P4ri9Y0A4WL4ealbr4crSrACw4Q7xbiYymjYw/noHErKVuOytGx9tzR8ThilK0cFodlQctQKaFewtBeYj4hhErIJkn+4MAV+dGsEnlZKT0IrmLI12MhnfRBLJ606AI0HGnOndGAiYJMhieNSfWMbvk8pYCIQ9P95OE=',
     encryptedBy: '16Uiu2HAmN211yBiE6dF5xu8GFXV1jqZQzK5MbzBuQDspfa6qNgXF',
     encryptedMethod: 'ECIES'
   }

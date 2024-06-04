@@ -22,6 +22,8 @@ import { getConfiguration } from '../../utils/index.js'
 import { Readable } from 'stream'
 import fs from 'fs'
 import { expectedTimeoutFailure } from '../integration/testUtils.js'
+import { encrypt } from '../../utils/crypt.js'
+import urlJoin from 'url-join'
 
 let nodeId: string
 
@@ -148,7 +150,7 @@ describe('URL Storage tests', () => {
       'Error validationg the URL file: URL looks like a file path'
     )
   })
-  it('Gets download URL', () => {
+  it('Gets download URL', async () => {
     file = {
       type: 'url',
       url: 'http://someUrl.com/file.json',
@@ -161,7 +163,31 @@ describe('URL Storage tests', () => {
       ]
     }
     storage = Storage.getStorageClass(file)
-    expect(storage.getDownloadUrl()).to.eql('http://someUrl.com/file.json')
+    const downloaduRL = await storage.getDownloadUrl()
+    expect(downloaduRL).to.eql('http://someUrl.com/file.json')
+  })
+
+  it('Gets download encrypted URL', async () => {
+    const url = 'http://someUrl.com/file.json'
+    const uint8Array = Uint8Array.from(Buffer.from(url))
+    const encryptedUrl = await encrypt(uint8Array, EncryptMethod.ECIES)
+    const encodedUrl = encryptedUrl.toString('base64')
+    file = {
+      type: 'url',
+      url: encodedUrl,
+      method: 'get',
+      encryptedBy: '16Uiu2HAmN211yBiE6dF5xu8GFXV1jqZQzK5MbzBuQDspfa6qNgXF',
+      encryptedMethod: 'ECIES',
+      headers: [
+        {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer auth_token_X'
+        }
+      ]
+    }
+    storage = Storage.getStorageClass(file)
+    const downloaduRL = await storage.getDownloadUrl()
+    expect(downloaduRL).to.eql(url)
   })
 
   it('Gets readable stream', async () => {
@@ -189,6 +215,33 @@ describe('IPFS Storage tests', () => {
       [ENVIRONMENT_VARIABLES.IPFS_GATEWAY],
       ['https://ipfs.oceanprotocol.com']
     )
+  })
+
+  it('Gets download encrypted IPFS', async () => {
+    const storage = Storage.getStorageClass(file)
+    const downloadUrl = await storage.getDownloadUrl()
+    expect(downloadUrl).to.eql(
+      urlJoin(
+        process.env.IPFS_GATEWAY,
+        urlJoin('/ipfs', 'Qxchjkflsejdfklgjhfkgjkdjoiderj')
+      )
+    )
+  })
+
+  it('Gets download encrypted IPFS', async () => {
+    const hash = 'QmaD5S7TakPs3a4fijatbfqhmhhrEbCvbqGTTAp7VrZ91T'
+    const uint8Array = Uint8Array.from(Buffer.from(hash))
+    const encryptedHash = await encrypt(uint8Array, EncryptMethod.ECIES)
+    const encodedHash = encryptedHash.toString('base64')
+    const fileDummy = {
+      type: 'ipfs',
+      hash: encodedHash,
+      encryptedBy: '16Uiu2HAmN211yBiE6dF5xu8GFXV1jqZQzK5MbzBuQDspfa6qNgXF',
+      encryptedMethod: 'ECIES'
+    }
+    const storage = Storage.getStorageClass(fileDummy)
+    const downloadUrl = await storage.getDownloadUrl()
+    expect(downloadUrl).to.eql(urlJoin(process.env.IPFS_GATEWAY, urlJoin('/ipfs', hash)))
   })
 
   it('Storage instance', () => {
