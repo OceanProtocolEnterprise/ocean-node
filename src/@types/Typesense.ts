@@ -83,7 +83,7 @@ export interface TypesenseSearchParams {
   [key: string]: any
   // From https://typesense.org/docs/latest/api/documents.html#arguments
   q: string
-  query_by: string | string[]
+  query_by: string
   query_by_weights?: string | number[]
   prefix?: string | boolean | boolean[] // default: true
   filter_by?: string
@@ -145,4 +145,16 @@ export interface TypesenseSearchResponse {
     hits: any[]
     found?: number
   }[]
+}
+
+export interface TypesenseMultiSearchResponse {
+  results: TypesenseSearchResponse[]
+}
+
+export interface TypesenseMultiSearchParams {
+  collection: string
+}
+
+export interface TypesenseMultiSearchesParam {
+  searches: TypesenseMultiSearchParams[]
 }
