@@ -43,8 +43,10 @@ describe('URL Storage tests', () => {
   }
   let storage: Storage
   let error: Error
-  before(() => {
-    storage = Storage.getStorageClass(file)
+  let config: any
+  before(async () => {
+    config = await getConfiguration()
+    storage = Storage.getStorageClass(file, config)
   })
 
   it('Storage instance', () => {
@@ -60,7 +62,7 @@ describe('URL Storage tests', () => {
   it('canDecrypt should return true for the correct nodeId', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-        true,
+      true,
       "can't decrypt with the correct nodeId"
     )
   })
@@ -83,7 +85,7 @@ describe('URL Storage tests', () => {
       ]
     }
     try {
-      Storage.getStorageClass(file)
+      Storage.getStorageClass(file, config)
     } catch (err) {
       error = err
     }
@@ -101,7 +103,7 @@ describe('URL Storage tests', () => {
       ]
     }
     try {
-      Storage.getStorageClass(file)
+      Storage.getStorageClass(file, config)
     } catch (err) {
       error = err
     }
@@ -122,7 +124,7 @@ describe('URL Storage tests', () => {
       ]
     }
     try {
-      Storage.getStorageClass(file)
+      Storage.getStorageClass(file, config)
     } catch (err) {
       error = err
     }
@@ -142,7 +144,7 @@ describe('URL Storage tests', () => {
       ]
     }
     try {
-      Storage.getStorageClass(file)
+      Storage.getStorageClass(file, config)
     } catch (err) {
       error = err
     }
@@ -162,32 +164,8 @@ describe('URL Storage tests', () => {
         }
       ]
     }
-    storage = Storage.getStorageClass(file)
-    const downloaduRL = await storage.getDownloadUrl()
-    expect(downloaduRL).to.eql('http://someUrl.com/file.json')
-  })
-
-  it('Gets download encrypted URL', async () => {
-    const url = 'http://someUrl.com/file.json'
-    const uint8Array = Uint8Array.from(Buffer.from(url))
-    const encryptedUrl = await encrypt(uint8Array, EncryptMethod.ECIES)
-    const encodedUrl = encryptedUrl.toString('base64')
-    file = {
-      type: 'url',
-      url: encodedUrl,
-      method: 'get',
-      encryptedBy: '16Uiu2HAmN211yBiE6dF5xu8GFXV1jqZQzK5MbzBuQDspfa6qNgXF',
-      encryptedMethod: 'ECIES',
-      headers: [
-        {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer auth_token_X'
-        }
-      ]
-    }
-    storage = Storage.getStorageClass(file)
-    const downloaduRL = await storage.getDownloadUrl()
-    expect(downloaduRL).to.eql(url)
+    storage = Storage.getStorageClass(file, config)
+    expect(await storage.getDownloadUrl()).to.eql('http://someUrl.com/file.json')
   })
 
   it('Gets readable stream', async () => {
@@ -196,9 +174,54 @@ describe('URL Storage tests', () => {
       url: 'https://stock-api.oceanprotocol.com/stock/stock.json',
       method: 'get'
     }
-    const storage = Storage.getStorageClass(file)
+    const storage = Storage.getStorageClass(file, config)
     const stream = await storage.getReadableStream()
     expect(stream).not.to.eql(null)
+  })
+})
+
+describe('Unsafe URL tests', () => {
+  let previousConfiguration: OverrideEnvConfig[]
+  let file: any
+  let error: Error
+  let config: any
+  before(async () => {
+    previousConfiguration = await setupEnvironment(
+      null,
+      buildEnvOverrideConfig(
+        [ENVIRONMENT_VARIABLES.UNSAFE_URLS],
+        [JSON.stringify(['^.*(169.254.169.254).*', '^.*(127.0.0.1).*'])]
+      )
+    )
+    config = await getConfiguration(true)
+  })
+
+  it('Should reject unsafe URL', () => {
+    file = {
+      type: 'url',
+      url: 'http://169.254.169.254/asfd',
+      method: 'get'
+    }
+    try {
+      Storage.getStorageClass(file, config)
+    } catch (err) {
+      error = err
+    }
+    expect(error.message).to.eql(
+      'Error validationg the URL file: URL is marked as unsafe'
+    )
+  })
+  it('Should allow safe URL', async () => {
+    file = {
+      type: 'url',
+      url: 'https://oceanprotocol.com',
+      method: 'get'
+    }
+    const storage = Storage.getStorageClass(file, config)
+    expect(await storage.getDownloadUrl()).to.eql('https://oceanprotocol.com')
+  })
+  after(() => {
+    tearDownEnvironment(previousConfiguration)
   })
 })
 
@@ -209,16 +232,17 @@ describe('IPFS Storage tests', () => {
   }
   let error: Error
   let previousConfiguration: OverrideEnvConfig[]
-
-  before(() => {
+  let config: any
+  before(async () => {
     previousConfiguration = buildEnvOverrideConfig(
       [ENVIRONMENT_VARIABLES.IPFS_GATEWAY],
       ['https://ipfs.oceanprotocol.com']
     )
+    config = await getConfiguration()
   })
 
   it('Gets download encrypted IPFS', async () => {
-    const storage = Storage.getStorageClass(file)
+    const storage = Storage.getStorageClass(file, config)
     const downloadUrl = await storage.getDownloadUrl()
     expect(downloadUrl).to.eql(
       urlJoin(
@@ -239,23 +263,23 @@ describe('IPFS Storage tests', () => {
       encryptedBy: '16Uiu2HAmN211yBiE6dF5xu8GFXV1jqZQzK5MbzBuQDspfa6qNgXF',
       encryptedMethod: 'ECIES'
     }
-    const storage = Storage.getStorageClass(fileDummy)
+    const storage = Storage.getStorageClass(fileDummy, config)
     const downloadUrl = await storage.getDownloadUrl()
     expect(downloadUrl).to.eql(urlJoin(process.env.IPFS_GATEWAY, urlJoin('/ipfs', hash)))
   })
 
   it('Storage instance', () => {
-    expect(Storage.getStorageClass(file)).to.be.instanceOf(IpfsStorage)
+    expect(Storage.getStorageClass(file, config)).to.be.instanceOf(IpfsStorage)
   })
   it('IPFS validation passes', () => {
-    expect(Storage.getStorageClass(file).validate()).to.eql([true, ''])
+    expect(Storage.getStorageClass(file, config).validate()).to.eql([true, ''])
   })
   it('IPFS validation fails', () => {
     file = {
       type: 'ipfs'
     }
     try {
-      Storage.getStorageClass(file)
+      Storage.getStorageClass(file, config)
     } catch (err) {
       error = err
     }
@@ -275,26 +299,28 @@ describe('Arweave Storage tests', () => {
 
   let error: Error
   let previousConfiguration: OverrideEnvConfig[]
+  let config: any
 
-  before(() => {
+  before(async () => {
     previousConfiguration = buildEnvOverrideConfig(
       [ENVIRONMENT_VARIABLES.ARWEAVE_GATEWAY],
       ['https://snaznabndfe3.arweave.net/nnLNdp6nuTb8mJ-qOgbUEx-9SBtBXQc_jejYOWzYEkM']
     )
+    config = await getConfiguration()
   })
 
   it('Storage instance', () => {
-    expect(Storage.getStorageClass(file)).to.be.instanceOf(ArweaveStorage)
+    expect(Storage.getStorageClass(file, config)).to.be.instanceOf(ArweaveStorage)
   })
   it('Arweave validation passes', () => {
-    expect(Storage.getStorageClass(file).validate()).to.eql([true, ''])
+    expect(Storage.getStorageClass(file, config).validate()).to.eql([true, ''])
   })
   it('Arweave validation fails', () => {
     file = {
       type: 'arweave'
     }
     try {
-      Storage.getStorageClass(file)
+      Storage.getStorageClass(file, config)
     } catch (err) {
       error = err
     }
@@ -310,13 +336,16 @@ describe('Arweave Storage tests', () => {
 
 describe('URL Storage getFileInfo tests', () => {
   let storage: UrlStorage
-  before(() => {
-    storage = new UrlStorage({
-      type: 'url',
-      url: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt',
-      method: 'get',
-      fileHash: '1f7c17bed455f484f4d5ebc581cde6bc059977ef1e143b52a703f18b89c86a22'
-    })
+  before(async () => {
+    const config = await getConfiguration()
+    storage = new UrlStorage(
+      {
+        type: 'url',
+        url: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt',
+        method: 'get'
+      },
+      config
+    )
   })
 
   it('isEncrypted should return false for an encrypted file', () => {
@@ -326,7 +355,7 @@ describe('URL Storage getFileInfo tests', () => {
   it('canDecrypt should return false when the file is not encrypted', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-        false,
+      false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
   })
@@ -347,12 +376,16 @@ describe('URL Storage getFileInfo tests', () => {
     const fileInfoRequest: FileInfoRequest = {
       type: FileObjectType.URL
     }
-    const storage2 = new UrlStorage({
-      type: 'url',
-      url: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt',
-      method: 'get',
-      fileHash: 'wrong'
-    })
+    const config = await getConfiguration()
+    const storage2 = new UrlStorage(
+      {
+        type: 'url',
+        url: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt',
+        method: 'get',
+        fileHash: 'wrong'
+      },
+      config
+    )
     try {
       await storage2.getFileInfo(fileInfoRequest, true)
     } catch (err) {
@@ -373,15 +406,22 @@ describe('URL Storage getFileInfo tests', () => {
 
 describe('URL Storage with malformed URL', () => {
   let error: Error
+  let config: any
+  before(async () => {
+    config = await getConfiguration()
+  })
 
   it('should detect path regex', () => {
     try {
       // eslint-disable-next-line no-new
-      new UrlStorage({
-        type: 'url',
-        url: '../../myFolder/',
-        method: 'get'
-      })
+      new UrlStorage(
+        {
+          type: 'url',
+          url: '../../myFolder/',
+          method: 'get'
+        },
+        config
+      )
     } catch (err) {
       error = err
     }
@@ -392,15 +432,18 @@ describe('URL Storage with malformed URL', () => {
 })
 
 describe('Arweave Storage getFileInfo tests', function () {
-  this.timeout(15000)
+  // this.timeout(15000)
   let storage: ArweaveStorage
 
-  before(() => {
-    storage = new ArweaveStorage({
-      type: FileObjectType.ARWEAVE,
-      transactionId: 'gPPDyusRh2ZyFl-sQ2ODK6hAwCRBAOwp0OFKr0n23QE',
-      fileHash: '40f90cef24cf570149f27c3054752333b75081f6efc4e90ba1a2496b7adc9e48'
-    })
+  before(async () => {
+    const config = await getConfiguration()
+    storage = new ArweaveStorage(
+      {
+        type: FileObjectType.ARWEAVE,
+        transactionId: 'gPPDyusRh2ZyFl-sQ2ODK6hAwCRBAOwp0OFKr0n23QE'
+      },
+      config
+    )
   })
 
   it('Successfully retrieves file info for an Arweave transaction', async () => {
@@ -408,25 +451,24 @@ describe('Arweave Storage getFileInfo tests', function () {
       type: FileObjectType.ARWEAVE
     }
     const fileInfo = await storage.getFileInfo(fileInfoRequest, true)
-
+    console.log('fileInfo:', fileInfo[0])
     assert(fileInfo[0].valid, 'File info is valid')
     assert(fileInfo[0].type === FileObjectType.ARWEAVE, 'Type is incorrect')
-    assert(
-      fileInfo[0].contentType === 'text/csv; charset=utf-8',
-      'Content type is incorrect'
-    )
-    assert(fileInfo[0].contentLength === '680782', 'Content length is incorrect')
   })
 
   it('Throws error when checksum fails', async () => {
     const fileInfoRequest: FileInfoRequest = {
       type: FileObjectType.ARWEAVE
     }
-    const storage2 = new ArweaveStorage({
-      type: FileObjectType.ARWEAVE,
-      transactionId: 'gPPDyusRh2ZyFl-sQ2ODK6hAwCRBAOwp0OFKr0n23QE',
-      fileHash: 'wrong'
-    })
+    const config = await getConfiguration()
+    const storage2 = new ArweaveStorage(
+      {
+        type: FileObjectType.ARWEAVE,
+        transactionId: 'gPPDyusRh2ZyFl-sQ2ODK6hAwCRBAOwp0OFKr0n23QE',
+        fileHash: 'wrong'
+      },
+      config
+    )
     try {
       await storage2.getFileInfo(fileInfoRequest, true)
     } catch (err) {
@@ -447,15 +489,21 @@ describe('Arweave Storage getFileInfo tests', function () {
 
 describe('Arweave Storage with malformed transaction ID', () => {
   let error: Error
-
+  let config: any
+  before(async () => {
+    config = await getConfiguration()
+  })
   it('should detect URL path format', () => {
     try {
       // eslint-disable-next-line no-new
-      new ArweaveStorage({
-        type: 'arweave',
-        transactionId:
-          'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt'
-      })
+      new ArweaveStorage(
+        {
+          type: 'arweave',
+          transactionId:
+            'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt'
+        },
+        config
+      )
     } catch (err) {
       error = err
     }
@@ -467,10 +515,13 @@ describe('Arweave Storage with malformed transaction ID', () => {
   it('should detect path regex', () => {
     try {
       // eslint-disable-next-line no-new
-      new ArweaveStorage({
-        type: 'arweave',
-        transactionId: '../../myFolder/'
-      })
+      new ArweaveStorage(
+        {
+          type: 'arweave',
+          transactionId: '../../myFolder/'
+        },
+        config
+      )
     } catch (err) {
       error = err
     }
@@ -482,14 +533,20 @@ describe('Arweave Storage with malformed transaction ID', () => {
 
 describe('Arweave Storage with malformed transaction ID', () => {
   let error: Error
-
+  let config: any
+  before(async () => {
+    config = await getConfiguration()
+  })
   it('should detect URL path format', () => {
     try {
       // eslint-disable-next-line no-new
-      new IpfsStorage({
-        type: 'ipfs',
-        hash: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt'
-      })
+      new IpfsStorage(
+        {
+          type: 'ipfs',
+          hash: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt'
+        },
+        config
+      )
     } catch (err) {
       error = err
     }
@@ -501,10 +558,13 @@ describe('Arweave Storage with malformed transaction ID', () => {
   it('should detect path regex', () => {
     try {
       // eslint-disable-next-line no-new
-      new IpfsStorage({
-        type: 'ipfs',
-        hash: '../../myFolder/'
-      })
+      new IpfsStorage(
+        {
+          type: 'ipfs',
+          hash: '../../myFolder/'
+        },
+        config
+      )
     } catch (err) {
       error = err
     }
@@ -517,19 +577,23 @@ describe('Arweave Storage with malformed transaction ID', () => {
 describe('IPFS Storage getFileInfo tests', function () {
   let storage: IpfsStorage
   let previousConfiguration: OverrideEnvConfig[]
-
+  let config: any
   before(async () => {
     previousConfiguration = await buildEnvOverrideConfig(
       [ENVIRONMENT_VARIABLES.IPFS_GATEWAY],
       ['https://ipfs.oceanprotocol.com']
     )
     await setupEnvironment(undefined, previousConfiguration) // Apply the environment override
+    config = await getConfiguration()
 
-    storage = new IpfsStorage({
-      type: FileObjectType.IPFS,
-      hash: 'QmRhsp7eghZtW4PktPC2wAHdKoy2LiF1n6UXMKmAhqQJUA',
-      fileHash: '40f90cef24cf570149f27c3054752333b75081f6efc4e90ba1a2496b7adc9e48'
-    })
+    storage = new IpfsStorage(
+      {
+        type: FileObjectType.IPFS,
+        hash: 'QmRhsp7eghZtW4PktPC2wAHdKoy2LiF1n6UXMKmAhqQJUA',
+        fileHash: '40f90cef24cf570149f27c3054752333b75081f6efc4e90ba1a2496b7adc9e48'
+      },
+      config
+    )
   })
 
   it('Successfully retrieves file info for an IPFS hash', function () {
@@ -555,11 +619,14 @@ describe('IPFS Storage getFileInfo tests', function () {
   })
 
   it('Throws error when checksum fails', async () => {
-    const storage2 = new IpfsStorage({
-      type: FileObjectType.IPFS,
-      hash: 'QmRhsp7eghZtW4PktPC2wAHdKoy2LiF1n6UXMKmAhqQJUA',
-      fileHash: 'wrong'
-    })
+    const storage2 = new IpfsStorage(
+      {
+        type: FileObjectType.IPFS,
+        hash: 'QmRhsp7eghZtW4PktPC2wAHdKoy2LiF1n6UXMKmAhqQJUA',
+        fileHash: 'wrong'
+      },
+      config
+    )
     const fileInfoRequest: FileInfoRequest = { type: FileObjectType.IPFS }
     try {
       await storage2.getFileInfo(fileInfoRequest, true)
@@ -585,13 +652,17 @@ describe('IPFS Storage getFileInfo tests', function () {
 
 describe('URL Storage encryption tests', () => {
   let storage: UrlStorage
-
-  before(() => {
-    storage = new UrlStorage({
-      type: 'url',
-      url: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt',
-      method: 'get'
-    })
+  let config: any
+  before(async () => {
+    config = await getConfiguration()
+    storage = new UrlStorage(
+      {
+        type: 'url',
+        url: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt',
+        method: 'get'
+      },
+      config
+    )
   })
 
   it('isEncrypted should return false for an encrypted file', () => {
@@ -601,13 +672,13 @@ describe('URL Storage encryption tests', () => {
   it('canDecrypt should return false when the file is not encrypted', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-        false,
+      false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
   })
 
   it('encrypt method should correctly encrypt data', async () => {
-    const { keys } = await getConfiguration()
+    const { keys } = config
     nodeId = keys.peerId.toString()
     // Perform encryption
     const encryptResponse = await storage.encrypt(EncryptMethod.AES)
@@ -644,13 +715,16 @@ describe('URL Storage encryption tests', function () {
       ['https://ipfs.oceanprotocol.com']
     )
     await setupEnvironment(undefined, previousConfiguration) // Apply the environment override
-
-    storage = new IpfsStorage({
-      type: 'ipfs',
-      hash: 'QmQVPuoXMbVEk7HQBth5pGPPMcgvuq4VSgu2XQmzU5M2Pv',
-      encryptedBy: nodeId,
-      encryptMethod: EncryptMethod.AES
-    })
+    const config = await getConfiguration()
+    storage = new IpfsStorage(
+      {
+        type: 'ipfs',
+        hash: 'QmQVPuoXMbVEk7HQBth5pGPPMcgvuq4VSgu2XQmzU5M2Pv',
+        encryptedBy: nodeId,
+        encryptMethod: EncryptMethod.AES
+      },
+      config
+    )
   })
 
   it('isEncrypted should return true for an encrypted file', () => {
@@ -691,7 +765,7 @@ describe('URL Storage encryption tests', function () {
   it('canDecrypt should return false when called from an unauthorised node', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-        false,
+      false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
   })

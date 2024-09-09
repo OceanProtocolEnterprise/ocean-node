@@ -21,6 +21,11 @@ export interface AdminCommand extends Command {
   signature: string
 }
 
+export interface AdminCollectFeesHandlerResponse {
+  tx: string
+  message: string
+}
+
 export interface DownloadURLCommand extends Command {
   fileObject: any
   aes_encrypted_key?: string // if not present it means download without encryption
@@ -50,7 +55,9 @@ export interface DDOCommand extends Command {
   id: string
 }
 export interface GetDdoCommand extends DDOCommand {}
-export interface FindDDOCommand extends DDOCommand {}
+export interface FindDDOCommand extends DDOCommand {
+  force?: boolean
+}
 // this one gets the raw ddo
 // https://github.com/oceanprotocol/ocean-node/issues/47
 export interface ValidateDDOCommand extends Command {
@@ -114,6 +121,13 @@ export interface AdminReindexTxCommand extends AdminCommand {
   txId: string
 }
 
+export interface AdminCollectFeesCommand extends AdminCommand {
+  tokenAddress: string
+  chainId: number
+  tokenAmount?: number
+  destinationAddress: string
+}
+
 export interface AdminReindexChainCommand extends AdminCommand {
   chainId: number
 }
@@ -129,7 +143,7 @@ export interface BroadcastCommand {
 }
 
 export interface ComputeGetEnvironmentsCommand extends Command {
-  chainId: number
+  chainId?: number
 }
 
 export interface ComputeDetails {
@@ -159,6 +173,7 @@ export interface ComputeStopCommand extends Command {
   signature: string
   nonce: string
   jobId: string
+  agreementId?: string
 }
 
 export interface ComputeGetResultCommand extends Command {
@@ -178,4 +193,26 @@ export interface ComputeGetStatusCommand extends Command {
 export interface ValidateChainId {
   validation: boolean
   networkRpc: string
+}
+/* eslint-disable no-unused-vars */
+export enum CommandStatus {
+  DELIVERED = 'DELIVERED', // command was delivered successfully
+  PENDING = 'PENDING', // command is pending excution or still running
+  FAILURE = 'FAILURE', // command execution failed
+  SUCCESS = 'SUCCESS' // command execution succeeded
+}
+export interface JobStatus {
+  command: string
+  timestamp: string
+  jobId: string
+  status: CommandStatus
+  hash: string
+}
+export enum IndexingCommand {
+  STOP_THREAD = 'start',
+  START_THREAD = 'stop'
+}
+export interface StartStopIndexingCommand extends AdminCommand {
+  chainId?: number
+  action: IndexingCommand
 }

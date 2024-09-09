@@ -32,7 +32,8 @@ import { FeesHandler } from '../../components/core/handler/feesHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { ProviderFees } from '../../@types/Fees.js'
 
-export async function publishAsset(genericAsset: any, publisherAccount: Signer) {
+export async function publishAsset(asset: any, publisherAccount: Signer) {
+  const genericAsset = JSON.parse(JSON.stringify(asset))
   try {
     let network = getOceanArtifactsAdressesByChainId(DEVELOPMENT_CHAIN_ID)
     if (!network) {
@@ -83,7 +84,7 @@ export async function publishAsset(genericAsset: any, publisherAccount: Signer) 
       Buffer.from(JSON.stringify(genericAsset.services[0].files))
     )
     const encryptedData = await encrypt(data, EncryptMethod.ECIES)
-    // const encryptedDataString = encryptedData.toString('base64')
+    const encryptedDataString = encryptedData.toString('hex')
 
     const nftContract = new ethers.Contract(
       nftAddress,
@@ -98,7 +99,7 @@ export async function publishAsset(genericAsset: any, publisherAccount: Signer) 
     genericAsset.nftAddress = nftAddress
     genericAsset.chainId = parseInt(chainId.toString(10))
 
-    genericAsset.services[0].files = encryptedData
+    genericAsset.services[0].files = encryptedDataString
     genericAsset.services[0].datatokenAddress = datatokenAddress
 
     const stringDDO = JSON.stringify(genericAsset)
@@ -127,6 +128,37 @@ export async function publishAsset(genericAsset: any, publisherAccount: Signer) 
   }
 }
 
+export async function updateAssetMetadata(
+  nftAddress: string,
+  updatedDDO: any,
+  publisherAccount: Signer
+) {
+  const nftContract = new ethers.Contract(
+    nftAddress,
+    ERC721Template.abi,
+    publisherAccount
+  )
+
+  const stringDDO = JSON.stringify(updatedDDO)
+  const bytes = Buffer.from(stringDDO)
+  const metadata = hexlify(bytes)
+  const hash = createHash('sha256').update(metadata).digest('hex')
+
+  const setMetaDataTx = await nftContract.setMetaData(
+    0,
+    'http://v4.provider.oceanprotocol.com',
+    '0x123',
+    '0x01',
+    metadata,
+    '0x' + hash,
+    []
+  )
+  const trxReceipt = await setMetaDataTx.wait()
+  return {
+    trxReceipt
+  }
+}
+
 export async function orderAsset(
   genericAsset: any,
   serviceIndex: number,
@@ -140,6 +172,7 @@ export async function orderAsset(
   const consumeMarketFeeAmount = 0
   const consumeMarketFeeToken = ZeroAddress
   const service = AssetUtils.getServiceByIndex(genericAsset, serviceIndex)
+
   let orderTxReceipt = null
   const dataTokenContract = new Contract(
     service.datatokenAddress,
@@ -157,7 +190,8 @@ export async function orderAsset(
       node: oceanNodeConfig.keys.peerId.toString()
     }
     const response = await new FeesHandler(oceanNode).handle(statusCommand)
-    providerFees = await streamToObject(response.stream as Readable)
+    const fees = await streamToObject(response.stream as Readable)
+    providerFees = fees.providerFee
   }
   // call the mint function on the dataTokenContract
   const mintTx = await dataTokenContract.mint(
@@ -242,7 +276,8 @@ export async function reOrderAsset(
       node: oceanNodeConfig.keys.peerId.toString()
     }
     const response = await new FeesHandler(oceanNode).handle(statusCommand)
-    providerFees = await streamToObject(response.stream as Readable)
+    const fees = await streamToObject(response.stream as Readable)
+    providerFees = fees.providerFee
   }
   // call the mint function on the dataTokenContract
   const mintTx = await dataTokenContract.mint(

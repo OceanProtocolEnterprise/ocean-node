@@ -1,4 +1,3 @@
-import type { PeerId } from '@libp2p/interface/peer-id'
 import { Stream } from 'stream'
 import { RPCS } from './blockchain'
 import { C2DClusterInfo } from './C2D'
@@ -16,7 +15,7 @@ export interface DenyList {
 }
 
 export interface OceanNodeKeys {
-  peerId: PeerId
+  peerId: any
   publicKey: any
   privateKey: any
   ethAddress: string
@@ -24,6 +23,8 @@ export interface OceanNodeKeys {
 
 export interface OceanNodeP2PConfig {
   bootstrapNodes: string[]
+  enableIPV4: boolean
+  enableIPV6: boolean
   ipV4BindAddress: string | null
   ipV4BindTcpPort: number | null
   ipV4BindWsPort: number | null
@@ -36,6 +37,20 @@ export interface OceanNodeP2PConfig {
   mDNSInterval: number
   connectionsMaxParallelDials: number
   connectionsDialTimeout: number
+  announceAddresses: string[]
+  filterAnnouncedAddresses: string[]
+  autoNat: boolean
+  upnp: boolean
+  enableCircuitRelayServer: boolean
+  enableCircuitRelayClient: boolean
+  circuitRelays: number
+  announcePrivateIp: boolean
+  minConnections: number
+  maxConnections: number
+  autoDialPeerRetryThreshold: number
+  autoDialConcurrency: number
+  maxPeerAddrsToDial: number
+  autoDialInterval: number
 }
 
 export interface OceanNodeConfig {
@@ -52,13 +67,16 @@ export interface OceanNodeConfig {
   httpPort: number
   feeStrategy: FeeStrategy
   supportedNetworks?: RPCS
+  indexingNetworks?: RPCS
   c2dClusters: C2DClusterInfo[]
+  c2dNodeUri: string
   accountPurgatoryUrl: string
   assetPurgatoryUrl: string
   allowedAdmins?: string[]
   codeHash?: string
   rateLimit?: number
   denyList?: DenyList
+  unsafeURLs?: string[]
 }
 
 export interface P2PStatusResponse {

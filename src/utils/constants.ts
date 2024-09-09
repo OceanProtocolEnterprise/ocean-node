@@ -25,7 +25,9 @@ export const PROTOCOL_COMMANDS = {
   COMPUTE_INITIALIZE: 'initializeCompute',
   STOP_NODE: 'stopNode',
   REINDEX_TX: 'reindexTx',
-  REINDEX_CHAIN: 'reindexChain'
+  REINDEX_CHAIN: 'reindexChain',
+  HANDLE_INDEXING_THREAD: 'handleIndexingThread',
+  COLLECT_FEES: 'collectFees'
 }
 // more visible, keep then close to make sure we always update both
 export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
@@ -51,7 +53,9 @@ export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
   PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
   PROTOCOL_COMMANDS.STOP_NODE,
   PROTOCOL_COMMANDS.REINDEX_TX,
-  PROTOCOL_COMMANDS.REINDEX_CHAIN
+  PROTOCOL_COMMANDS.REINDEX_CHAIN,
+  PROTOCOL_COMMANDS.HANDLE_INDEXING_THREAD,
+  PROTOCOL_COMMANDS.COLLECT_FEES
 ]
 
 export const MetadataStates = {
@@ -77,8 +81,17 @@ export const EVENTS = {
 
 export const INDEXER_CRAWLING_EVENTS = {
   CRAWLING_STARTED: 'crawlingStarted',
-  REINDEX_QUEUE_POP: 'popFromQueue'
-  // TODO REINDEX_CHAIN
+  REINDEX_QUEUE_POP: 'popFromQueue', // this is for reindex tx, not chain
+  // use same names as the corresponding commands for these events
+  REINDEX_CHAIN: PROTOCOL_COMMANDS.REINDEX_CHAIN,
+  REINDEX_TX: PROTOCOL_COMMANDS.REINDEX_TX
+}
+
+export const INDEXER_MESSAGES = {
+  REINDEX_TX: PROTOCOL_COMMANDS.REINDEX_TX, // use the same names, no need to add different strings all the time
+  REINDEX_CHAIN: PROTOCOL_COMMANDS.REINDEX_CHAIN,
+  START_CRAWLING: 'start-crawling',
+  STOP_CRAWLING: 'stop-crawling'
 }
 
 export const EVENT_HASHES: Hashes = {
@@ -149,6 +162,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     required: false
   },
   RPCS: { name: 'RPCS', value: process.env.RPCS, required: false },
+  INDEXER_NETWORKS: {
+    name: 'INDEXER_NETWORKS',
+    value: process.env.INDEXER_NETWORKS,
+    required: false
+  },
   DB_URL: { name: 'DB_URL', value: process.env.DB_URL, required: false },
   // these 2 bellow will change in the future (not required, just remove functionality)
   IPFS_GATEWAY: {
@@ -171,6 +189,22 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   ADDRESS_FILE: {
     name: 'ADDRESS_FILE',
     value: process.env.ADDRESS_FILE,
+    required: false
+  },
+  // p2p specific
+  P2P_BOOTSTRAP_NODES: {
+    name: 'P2P_BOOTSTRAP_NODES',
+    value: process.env.P2P_BOOTSTRAP_NODES,
+    required: false
+  },
+  P2P_ANNOUNCE_ADDRESSES: {
+    name: 'P2P_ANNOUNCE_ADDRESSES',
+    value: process.env.P2P_ANNOUNCE_ADDRESSES,
+    required: false
+  },
+  P2P_FILTER_ANNOUNCED_ADDRESSES: {
+    name: 'P2P_FILTER_ANNOUNCED_ADDRESSES',
+    value: process.env.P2P_FILTER_ANNOUNCED_ADDRESSES,
     required: false
   },
   // node specific
@@ -248,11 +282,80 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     name: 'LOG_LEVEL',
     value: process.env.LOG_LEVEL,
     required: false
+  },
+  LOG_CONSOLE: {
+    // log to console output? true if no other bellow is set
+    name: 'LOG_CONSOLE',
+    value: process.env.LOG_CONSOLE,
+    required: false
+  },
+  LOG_FILES: {
+    // log to files?
+    name: 'LOG_FILES',
+    value: process.env.LOG_FILES,
+    required: false
+  },
+  LOG_DB: {
+    // log to DB?
+    name: 'LOG_DB',
+    value: process.env.LOG_DB,
+    required: false
+  },
+  UNSAFE_URLS: {
+    name: 'UNSAFE_URLS',
+    value: process.env.UNSAFE_URLS,
+    required: false
   }
 }
 
 // default to 3 requests per second (configurable)
 export const DEFAULT_RATE_LIMIT_PER_SECOND = 3
+// Typesense's maximum limit to send 250 hits at a time
+export const TYPESENSE_HITS_CAP = 250
 export const DDO_IDENTIFIER_PREFIX = 'did:op:'
 // global ocean node API services path
 export const SERVICES_API_BASE_PATH = '/api/services'
+
+export const defaultBootstrapAddresses = [
+  // Public IPFS bootstraps
+  // '/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ',
+  // '/dnsaddr/bootstrap.libp2p.io/ipfs/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN',
+  // '/dnsaddr/bootstrap.libp2p.io/ipfs/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa',
+  // OPF nodes
+  //  node1
+  '/dns4/node1.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
+  '/dns4/node1.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
+  '/dns6/node1.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
+  '/dns6/node1.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
+  // node 2
+  '/dns4/node2.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
+  '/dns4/node2.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
+  '/dns6/node2.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
+  '/dns6/node2.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
+  // node 3
+  '/dns4/node3.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
+  '/dns4/node3.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
+  '/dns6/node3.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
+  '/dns6/node3.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
+  // node 4
+  '/dns4/node4.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom',
+  '/dns4/node4.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom',
+  '/dns6/node4.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom',
+  '/dns6/node4.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom'
+]
+
+export const knownUnsafeURLs: string[] = [
+  // AWS and GCP
+  '^.*(169.254.169.254).*',
+  // GCP
+  '^.*(metadata.google.internal).*',
+  '^.*(http://metadata).*',
+  // Azure
+  '^.*(http://169.254.169.254).*',
+  // Oracle Cloud
+  '^.*(http://192.0.0.192).*',
+  // Alibaba Cloud
+  '^.*(http://100.100.100.200).*',
+  // k8s ETCD
+  '^.*(127.0.0.1).*'
+]

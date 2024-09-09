@@ -10,8 +10,12 @@ import {
   buildInvalidRequestMessage,
   validateCommandParameters
 } from '../../httpRoutes/validateCommands.js'
-import { validateDDOIdentifier } from './ddoHandler.js'
+import { FindDdoHandler, validateDDOIdentifier } from './ddoHandler.js'
 import { isAddress } from 'ethers'
+import { ProviderInitialize } from '../../../@types/Fees.js'
+import { getNonce } from '../utils/nonceHandler.js'
+import { streamToString } from '../../../utils/util.js'
+import { isOrderingAllowedForAsset } from './downloadHandler.js'
 
 export class FeesHandler extends Handler {
   validate(command: GetFeesCommand): ValidateParams {
@@ -38,10 +42,21 @@ export class FeesHandler extends Handler {
       true
     )
     let errorMsg: string = null
-    const ddo = await this.getOceanNode().getDatabase().ddo.retrieve(task.ddoId)
-
+    const ddo = await new FindDdoHandler(this.getOceanNode()).findAndFormatDdo(task.ddoId)
     if (!ddo) {
       errorMsg = 'Cannot resolve DID'
+    }
+
+    const isOrdable = isOrderingAllowedForAsset(ddo)
+    if (!isOrdable.isOrdable) {
+      PROVIDER_LOGGER.error(isOrdable.reason)
+      return {
+        stream: null,
+        status: {
+          httpStatus: 500,
+          error: isOrdable.reason
+        }
+      }
     }
 
     const service = ddo.services.find((what: any) => what.id === task.serviceId)
@@ -78,11 +93,21 @@ export class FeesHandler extends Handler {
       }
     }
 
+    const nonceDB = this.getOceanNode().getDatabase().nonce
+    const nonceHandlerResponse = await getNonce(nonceDB, task.consumerAddress)
+    const nonce = await streamToString(nonceHandlerResponse.stream as Readable)
+
     try {
       const providerFee = await createProviderFee(ddo, service, validUntil, null, null)
       if (providerFee) {
+        const response: ProviderInitialize = {
+          providerFee,
+          datatoken: service?.datatokenAddress,
+          nonce,
+          computeAddress: task?.consumerAddress
+        }
         return {
-          stream: Readable.from(JSON.stringify(providerFee, null, 4)),
+          stream: Readable.from(JSON.stringify(response, null, 4)),
           status: { httpStatus: 200 }
         }
       } else {

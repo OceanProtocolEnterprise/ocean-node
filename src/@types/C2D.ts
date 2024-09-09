@@ -36,6 +36,10 @@ export interface ComputeEnvironment {
   feeToken: string
 }
 
+export interface ComputeEnvByChain {
+  [chainId: number]: ComputeEnvironment[]
+}
+
 export type ComputeResultType =
   | 'algorithmLog'
   | 'output'
@@ -98,11 +102,13 @@ export interface ComputeAlgorithm {
 export interface OPFK8ComputeStageInput {
   index: number
   id?: string
+  remote?: any
   url?: string[]
 }
 export interface OPFK8ComputeStageAlgorithm {
   id?: string
   url?: string
+  remote?: any
   rawcode?: string
   container?: {
     /**
@@ -163,6 +169,7 @@ export interface OPFK8ComputeStart {
 export interface OPFK8ComputeStop {
   jobId: string
   owner: string
+  agreementId?: string
   providerSignature: string //  message=owner+jobId
   providerAddress: string
   nonce: number

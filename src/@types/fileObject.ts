@@ -66,7 +66,7 @@ export interface FileInfoResponse {
   valid: boolean
   contentLength: string
   contentType: string
-  contentChecksum?: string
+  checksum?: string
   name: string
   type: string
   encryptedBy?: string

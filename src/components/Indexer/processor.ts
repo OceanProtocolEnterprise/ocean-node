@@ -238,7 +238,7 @@ class BaseEventProcessor {
                     const str = uint8ArrayToString(chunk.subarray()) // Obs: we need to specify the length of the subarrays
                     const decoded = JSON.parse(str)
                     if ('headers' in decoded) {
-                      if (str.toLowerCase().includes('application/octet-stream')) {
+                      if (str?.toLowerCase().includes('application/octet-stream')) {
                         isBinaryContent = true
                       }
                     }
@@ -481,7 +481,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
     if (isRemoteDDO(ddo)) {
       INDEXER_LOGGER.logMessage('DDO is remote', true)
 
-      const storage = Storage.getStorageClass(ddo.remote)
+      const storage = Storage.getStorageClass(ddo.remote, await getConfiguration())
       const result = await storage.getReadableStream()
       const streamToStringDDO = await streamToString(result.stream as Readable)
 
@@ -649,7 +649,11 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
         )
         return
       }
-      if ('stats' in ddo && ddo.services[serviceIndex].datatoken === event.address) {
+      if (
+        'stats' in ddo &&
+        ddo.services[serviceIndex].datatoken?.toLowerCase() ===
+          event.address?.toLowerCase()
+      ) {
         ddo.stats.orders += 1
       } else {
         // Still update until we validate and polish schemas for DDO.

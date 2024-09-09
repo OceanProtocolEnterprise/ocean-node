@@ -4,7 +4,7 @@ WIP, may not compile.
 
 ## Running Locally
 
-### 1. Make sure to use nvm
+### 1. Make sure to use nvm (or make sure you're using the same node version specified on .nvmrc)
 
 ```bash
 nvm use
@@ -36,6 +36,24 @@ git checkout feature/nodes
 ### 5. Open terminal 1 and set the environmental variables
 
 A full list of all environmental variables is available in [env.md](./env.md)
+
+The only required/mandatory setting to run a node (very basic configuration) is the PRIVATE_KEY. The node does not start without it.
+All the others are either optional or they have defaults. However, it is recommended that you set some of them, otherwise your node will not be able to perform most of the available features.
+
+There are 2 options for setting the initial configuration
+
+## Option 1 -> Run the helper script "helpers/scripts/setupNodeEnv.sh"
+
+This script will help you to generate a private key (if you don't have one already) and some basic configuration under a (also generated) `.env` file. Once you have answered the basic questions, you will have a `.env` under your root folder, with some basic settings.
+You can further edit the file to add additional/more advanced settings. Once you're ready to start your node, do the following before:
+
+```bash
+source .env
+```
+
+This will export all the configurations present in the `.env` file to your local environment. From now on, you can use this file as a reference.
+
+## Option 2 -> Export the necessary variables manually from the terminal
 
 Set env values:
 
@@ -70,16 +88,23 @@ For configuring allowed validators for verifying an asset signature before index
 export ALLOWED_VALIDATORS=[\"0x123\",\"0x456\"]
 ```
 
-For configuring a C2D (Compute to Data) cluster(s), please set the following environment variable (array of 1 or multiple cluster URLS):
+For configuring a C2D (Compute to Data) cluster(s), please set the following environment variable (array of 1 or multiple cluster URLS) and node URI that C2D points to, in order fetch the datasets & algorithms:
 
 ```bash
 export OPERATOR_SERVICE_URL=[\"http://example.c2d.cluster1.com\",\"http://example.cd2.cluster2.com\"]
+export C2D_NODE_URI='http://127.0.0.1:8081' #for e.g.
 ```
 
 For configuring the Indexer crawling interval in miliseconds (default, if not set, is 30 secs)
 
 ```bash
 export INDEXER_INTERVAL=10000
+```
+
+To configure which networks the Indexer will be crawling (optional; if not set, the Indexer will index all networks defined in the RPCS environment variable):
+
+```bash
+export INDEXER_NETWORKS="[1, 137]"
 ```
 
 For purgatory checks, please export the following env variables;
@@ -179,6 +204,41 @@ setupEnvironment() / tearDownEnvironment()
 
 instead (on before() and after() hooks respectively),
 Any config changes will not be permanent and the environment is preserved between tests
+
+## Performance tests
+
+There are 3 different scenarios that can be run; `smoke` tests, `load` tests, and `stress` tests.
+Each one of those scenarios puts the ocean node into different traffic/request pressure conditions.
+
+In order to start the suite, you need to have a running node instance first and then target the node on the tests.
+Furthermore, you need to have previously installed grafana k6 tools on your machine: [https://grafana.com/docs/k6/latest/set-up/install-k6/](https://grafana.com/docs/k6/latest/set-up/install-k6/).
+You can use `TARGET_URL` env variable to specify the target URL for the tests (by default runs against the local node, if any)
+
+To run them, use one of the following options;
+
+```bash
+npm run test:smoke
+npm run test:load
+npm run test:stress
+```
+
+The 1st option performs a more "lightweight" approach, with fewer requests and less virtual users involved.
+The 2nd and the 3rd options put the node into greater pressure for longer periods of time, also making more requests and simulating more usage
+Additionally, you can also execute another test that will instruct the k6 script to keep the request rate under the node `RATE LIMIT` verifications
+By default (can be customized) the ocean node allows a MAX of 3 requests per second, from the same originating address/ip. Anything above that is denied.
+So if you want to avoid the rate limitations and still perform a battery of HTTP requests, you can set `RATE_LIMIT` env var.
+The value of this variable should be lower than the value definied on the node itself (same env var name on the node instance)
+To run this rate limited tests do;
+
+```bash
+npm run test:request:rate
+```
+
+At the end of the test suite, you can check the generated HTML report `html-report.html` for more insigths.
+Additionally, while the tests are running you can open
+a browser page at `http://127.0.0.1:5665/` and see a live report
+
+For a more detailed view of all the options available and the type of requests executed check the script: [./src/test/performance/util.js](./src/test/performance/util.js)
 
 ## Additional tests / helper scripts
 
@@ -318,3 +378,70 @@ npm run start
 ```
 
 The dashboard will be made available at: `http://localhost:8000/dashboard/`
+
+## Networking in cloud environments or DMZ
+
+In order for your node to join the network, the others nodes needs to be able to connect to it.
+All options can be controlled using [environment
+variables](env.md#p2p)
+
+To quickly start your node, you can keep all of the default values,but most likely it will hurt performance. If you want a customised approach, here are the full steps:
+
+- decide what IP version to use (IPV4 or/and IPv6). You should use both if available.
+- decide if you want to filter private ips (if you run multiple nodes in a LAN or cloud environment, leave them on)
+- if you already have an external ip configured on your machine, you are good to go.
+- if you have a private ip, but an UPNP gateway, you should be fine as well.
+- if you have a private ip and you can forward external ports from your gateway, use P2P_ANNOUNCE_ADDRESSES and let other nodes know your external IP/port.
+- if you cannot forward ports on your gateway, the only choice is to use a circuit relay server (then all traffic will go through that node and it will proxy)
+
+In order to check connectivity, you can do the following:
+
+### On your node, check and observe how your node sees itself:
+
+```bash
+curl http://localhost:8000/getP2pPeer?peerId=16Uiu2HAkwWe6BFQXZWg6zE9X7ExynvXEe9BRTR5Wn3udNs7JpUDx
+```
+
+and observe the addresses section:
+
+```json
+{
+  "addresses": [
+    { "multiaddr": "/ip4/127.0.0.1/tcp/34227", "isCertified": false },
+    { "multiaddr": "/ip4/127.0.0.1/tcp/36913/ws", "isCertified": false },
+    { "multiaddr": "/ip4/172.15.0.1/tcp/34227", "isCertified": false },
+    { "multiaddr": "/ip4/172.15.0.1/tcp/36913/ws", "isCertified": false },
+    { "multiaddr": "/ip4/172.26.53.25/tcp/34227", "isCertified": false },
+    { "multiaddr": "/ip4/172.26.53.25/tcp/36913/ws", "isCertified": false },
+    { "multiaddr": "/ip6/::1/tcp/41157", "isCertified": false }
+  ],
+  "protocols": [
+    "/floodsub/1.0.0",
+    "/ipfs/id/1.0.0",
+    "/ipfs/id/push/1.0.0",
+    "/ipfs/ping/1.0.0",
+    "/libp2p/autonat/1.0.0",
+    "/libp2p/circuit/relay/0.2.0/hop",
+    "/libp2p/circuit/relay/0.2.0/stop",
+    "/libp2p/dcutr",
+    "/meshsub/1.0.0",
+    "/meshsub/1.1.0",
+    "/ocean/nodes/1.0.0",
+    "/ocean/nodes/1.0.0/kad/1.0.0",
+    "/ocean/nodes/1.0.0/lan/kad/1.0.0"
+  ],
+  "metadata": {},
+  "tags": {},
+  "id": "16Uiu2HAkwWe6BFQXZWg6zE9X7ExynvXEe9BRTR5Wn3udNs7JpUDx",
+  "publicKey": "08021221021efd24150c233d689ade0f9f467aa6a5a2969a5f52d70c85caac8681925093e3"
+}
+```
+
+Are any of those IPs reachable from other nodes?
+
+### To observe how your node is seen by others, start your node, wait a bit and then ask another node to give you details about you:
+
+```bash
+ curl http://node2.oceanprotocol.com:8000/getP2pPeer?peerId=16Uiu2HAk
+wWe6BFQXZWg6zE9X7ExynvXEe9BRTR5Wn3udNs7JpUDx
+```

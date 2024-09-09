@@ -1,7 +1,10 @@
-import { JsonRpcProvider } from 'ethers'
 import { Handler } from './handler.js'
 import { checkNonce, NonceResponse } from '../utils/nonceHandler.js'
-import { ENVIRONMENT_VARIABLES, PROTOCOL_COMMANDS } from '../../../utils/constants.js'
+import {
+  ENVIRONMENT_VARIABLES,
+  MetadataStates,
+  PROTOCOL_COMMANDS
+} from '../../../utils/constants.js'
 import { P2PCommandResponse } from '../../../@types/OceanNode.js'
 import { verifyProviderFees } from '../utils/feesHandler.js'
 import { decrypt } from '../../../utils/crypt.js'
@@ -13,7 +16,11 @@ import { validateOrderTransaction } from '../utils/validateOrders.js'
 import { AssetUtils } from '../../../utils/asset.js'
 import { Service } from '../../../@types/DDO/Service.js'
 import { ArweaveStorage, IpfsStorage, Storage } from '../../storage/index.js'
-import { existsEnvironmentVariable, getConfiguration } from '../../../utils/index.js'
+import {
+  Blockchain,
+  existsEnvironmentVariable,
+  getConfiguration
+} from '../../../utils/index.js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { OceanNode } from '../../../OceanNode.js'
@@ -25,7 +32,33 @@ import {
   ValidateParams
 } from '../../httpRoutes/validateCommands.js'
 import { DDO } from '../../../@types/DDO/DDO.js'
+import { sanitizeServiceFiles } from '../../../utils/util.js'
+import { getNFTContract } from '../../Indexer/utils.js'
+import { OrdableAssetResponse } from '../../../@types/Asset.js'
 export const FILE_ENCRYPTION_ALGORITHM = 'aes-256-cbc'
+
+export function isOrderingAllowedForAsset(asset: DDO): OrdableAssetResponse {
+  if (!asset) {
+    return {
+      isOrdable: false,
+      reason: `Asset provided is either null, either undefined ${asset}`
+    }
+  } else if (
+    asset.nft &&
+    !(asset.nft.state in [MetadataStates.ACTIVE, MetadataStates.UNLISTED])
+  ) {
+    return {
+      isOrdable: false,
+      reason:
+        'Nft not present in the asset or the state is different than ACTIVE or UNLISTED.'
+    }
+  }
+
+  return {
+    isOrdable: true,
+    reason: ''
+  }
+}
 
 export async function handleDownloadUrlCommand(
   node: OceanNode,
@@ -33,10 +66,10 @@ export async function handleDownloadUrlCommand(
 ): Promise<P2PCommandResponse> {
   const encryptFile = !!task.aes_encrypted_key
   CORE_LOGGER.logMessage('DownloadCommand requires file encryption? ' + encryptFile, true)
-
+  const config = await getConfiguration()
   try {
     // Determine the type of storage and get a readable stream
-    const storage = Storage.getStorageClass(task.fileObject)
+    const storage = Storage.getStorageClass(task.fileObject, config)
     if (
       storage instanceof ArweaveStorage &&
       !existsEnvironmentVariable(ENVIRONMENT_VARIABLES.ARWEAVE_GATEWAY)
@@ -72,22 +105,26 @@ export async function handleDownloadUrlCommand(
         }
       }
     }
+    const fileMetadata = await storage.fetchSpecificFileMetadata(task.fileObject, true)
     const inputStream = await storage.getReadableStream()
     const headers: any = {}
     for (const [key, value] of Object.entries(inputStream.headers)) {
       headers[key] = value
     }
     // need to check if content length is already in headers, but we don't know the case
-    const objTemp = JSON.parse(JSON.stringify(headers).toLowerCase())
-    if (!('Content-Length'.toLowerCase() in objTemp))
+    const objTemp = JSON.parse(JSON.stringify(headers)?.toLowerCase())
+    if (!('Content-Length'?.toLowerCase() in objTemp))
       headers['Transfer-Encoding'] = 'chunked'
-    if (!('Content-Disposition'.toLowerCase() in objTemp))
-      headers['Content-Disposition'] = 'attachment;filename=unknownfile' // TO DO: use did+serviceId+fileIndex
+    // ensure that the right content length is set in the headers
+    headers['Content-Length'.toLowerCase()] = fileMetadata.contentLength
+
+    if (!('Content-Disposition'?.toLowerCase() in objTemp))
+      headers['Content-Disposition'.toLowerCase()] =
+        `attachment;filename=${fileMetadata.name}`
     if (encryptFile) {
       // we parse the string into the object again
       const encryptedObject = ethCrypto.cipher.parse(task.aes_encrypted_key)
       // get the key from configuration
-      const config = await getConfiguration()
       const nodePrivateKey = Buffer.from(config.keys.privateKey).toString('hex')
       const decrypted = await ethCrypto.decryptWithPrivateKey(
         nodePrivateKey,
@@ -153,8 +190,9 @@ export function validateFilesStructure(
   decriptedFileObject: any
 ): boolean {
   if (
-    decriptedFileObject.nftAddress !== ddo.nftAddress ||
-    decriptedFileObject.datatokenAddress !== service.datatokenAddress
+    decriptedFileObject.nftAddress?.toLowerCase() !== ddo.nftAddress?.toLowerCase() ||
+    decriptedFileObject.datatokenAddress?.toLowerCase() !==
+      service.datatokenAddress?.toLowerCase()
   ) {
     return false
   }
@@ -203,6 +241,18 @@ export class DownloadHandler extends Handler {
       }
     }
 
+    const isOrdable = isOrderingAllowedForAsset(ddo)
+    if (!isOrdable.isOrdable) {
+      CORE_LOGGER.error(isOrdable.reason)
+      return {
+        stream: null,
+        status: {
+          httpStatus: 500,
+          error: isOrdable.reason
+        }
+      }
+    }
+
     // 2. Validate ddo and credentials
     if (!ddo.chainId || !ddo.nftAddress || !ddo.metadata) {
       CORE_LOGGER.logMessage('Error: DDO malformed or disabled', true)
@@ -236,7 +286,7 @@ export class DownloadHandler extends Handler {
       task.consumerAddress,
       parseInt(task.nonce),
       task.signature,
-      ddo.id
+      String(ddo.id + task.nonce) // ddo.id
     )
 
     if (!nonceCheckResult.valid) {
@@ -255,11 +305,24 @@ export class DownloadHandler extends Handler {
     }
     // from now on, we need blockchain checks
     const config = await getConfiguration()
-    const { rpc } = config.supportedNetworks[ddo.chainId]
+    const { rpc, network, chainId, fallbackRPCs } = config.supportedNetworks[ddo.chainId]
     let provider
+    let blockchain
     try {
-      provider = new JsonRpcProvider(rpc)
+      blockchain = new Blockchain(rpc, network, chainId, fallbackRPCs)
+      const { ready, error } = await blockchain.isNetworkReady()
+      if (!ready) {
+        return {
+          stream: null,
+          status: {
+            httpStatus: 400,
+            error: `Download handler: ${error}`
+          }
+        }
+      }
+      provider = blockchain.getProvider()
     } catch (e) {
+      CORE_LOGGER.error('Download JsonRpcProvider ERROR: ' + e.message)
       return {
         stream: null,
         status: {
@@ -281,10 +344,40 @@ export class DownloadHandler extends Handler {
         }
       }
     }
+    // check lifecycle state of the asset
+    const nftContract = getNFTContract(blockchain.getSigner(), ddo.nftAddress)
+    const nftState = Number(await nftContract.metaDataState())
+    if (nftState !== 0 && nftState !== 5) {
+      CORE_LOGGER.logMessage(
+        `Error: Asset with id ${ddo.id} is not in an active state`,
+        true
+      )
+      return {
+        stream: null,
+        status: {
+          httpStatus: 500,
+          error: `Error: Asset with id ${ddo.id} is not in an active state`
+        }
+      }
+    }
     let service: Service = AssetUtils.getServiceById(ddo, task.serviceId)
     if (!service) service = AssetUtils.getServiceByIndex(ddo, Number(task.serviceId))
     if (!service) throw new Error('Cannot find service')
 
+    // check lifecycle state of the service - undefined state is considered active
+    if (service.state && service.state !== 0 && service.state !== 5) {
+      CORE_LOGGER.logMessage(
+        `Error: Service with id ${service.id} is not in an active state`,
+        true
+      )
+      return {
+        stream: null,
+        status: {
+          httpStatus: 500,
+          error: `Error: Service with id ${service.id} is not in an active state`
+        }
+      }
+    }
     // check credentials on service level
     if (service.credentials) {
       const accessGranted = checkCredentials(service.credentials, task.consumerAddress)
@@ -302,7 +395,6 @@ export class DownloadHandler extends Handler {
         }
       }
     }
-
     // 4. Check service type
     const serviceType = service.type
     if (serviceType === 'compute') {
@@ -316,10 +408,10 @@ export class DownloadHandler extends Handler {
         const engine = C2DEngine.getC2DClass(cluster)
         const environments = await engine.getComputeEnvironments(ddo.chainId)
         for (const env of environments)
-          computeAddrs.push(env.consumerAddress.toLowerCase())
+          computeAddrs.push(env.consumerAddress?.toLowerCase())
       }
-      //
-      if (!computeAddrs.includes(task.consumerAddress.toLowerCase())) {
+
+      if (!computeAddrs.includes(task.consumerAddress?.toLowerCase())) {
         const msg = 'Not allowed to download this asset of type compute'
         CORE_LOGGER.logMessage(msg)
         return {
@@ -349,6 +441,7 @@ export class DownloadHandler extends Handler {
         }
       }
     }
+
     // 6. Call the validateOrderTransaction function to check order transaction
     const paymentValidation = await validateOrderTransaction(
       task.transferTxId,
@@ -357,8 +450,10 @@ export class DownloadHandler extends Handler {
       ddo.nftAddress,
       service.datatokenAddress,
       AssetUtils.getServiceIndexById(ddo, task.serviceId),
-      service.timeout
+      service.timeout,
+      blockchain.getSigner()
     )
+
     if (paymentValidation.isValid) {
       CORE_LOGGER.logMessage(
         `Valid payment transaction. Result: ${paymentValidation.message}`,
@@ -379,11 +474,11 @@ export class DownloadHandler extends Handler {
     }
 
     try {
-      // 6. Decrypt the url
-      const decryptedUrlBytes = await decrypt(
-        Uint8Array.from(Buffer.from(service.files, 'hex')),
-        EncryptMethod.ECIES
+      // 7. Decrypt the url
+      const uint8ArrayHex = Uint8Array.from(
+        Buffer.from(sanitizeServiceFiles(service.files), 'hex')
       )
+      const decryptedUrlBytes = await decrypt(uint8ArrayHex, EncryptMethod.ECIES)
       // Convert the decrypted bytes back to a string
       const decryptedFilesString = Buffer.from(decryptedUrlBytes).toString()
       const decryptedFileData = JSON.parse(decryptedFilesString)
@@ -401,7 +496,7 @@ export class DownloadHandler extends Handler {
         }
       }
 
-      // 7. Proceed to download the file
+      // 8. Proceed to download the file
       return await handleDownloadUrlCommand(node, {
         fileObject: decriptedFileObject,
         aes_encrypted_key: task.aes_encrypted_key,
