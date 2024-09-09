@@ -62,7 +62,7 @@ describe('URL Storage tests', () => {
   it('canDecrypt should return true for the correct nodeId', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-      true,
+        true,
       "can't decrypt with the correct nodeId"
     )
   })
@@ -355,7 +355,7 @@ describe('URL Storage getFileInfo tests', () => {
   it('canDecrypt should return false when the file is not encrypted', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-      false,
+        false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
   })
@@ -451,7 +451,6 @@ describe('Arweave Storage getFileInfo tests', function () {
       type: FileObjectType.ARWEAVE
     }
     const fileInfo = await storage.getFileInfo(fileInfoRequest, true)
-    console.log('fileInfo:', fileInfo[0])
     assert(fileInfo[0].valid, 'File info is valid')
     assert(fileInfo[0].type === FileObjectType.ARWEAVE, 'Type is incorrect')
   })
@@ -672,7 +671,7 @@ describe('URL Storage encryption tests', () => {
   it('canDecrypt should return false when the file is not encrypted', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-      false,
+        false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
   })
@@ -765,7 +764,7 @@ describe('URL Storage encryption tests', function () {
   it('canDecrypt should return false when called from an unauthorised node', () => {
     assert(
       storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-      false,
+        false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
   })
