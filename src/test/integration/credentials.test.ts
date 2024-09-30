@@ -117,7 +117,6 @@ describe('Should run a complete node flow.', () => {
       downloadAssetWithCredentials,
       publisherAccount
     )
-    console.log('publishedDataset', publishedDataset)
     did = publishedDataset.ddo.id
     await waitToIndex(did, EVENTS.METADATA_CREATED, DEFAULT_TEST_TIMEOUT)
   })
