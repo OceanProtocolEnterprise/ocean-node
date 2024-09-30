@@ -227,6 +227,8 @@ describe('Indexer stores a new metadata events and orders.', () => {
       DEFAULT_TEST_TIMEOUT * 3
     )
     resolvedDDO = ddo
+    console.log('resolvedDDO', resolvedDDO)
+    console.log('genericAsset', genericAsset)
     if (resolvedDDO) {
       expect(resolvedDDO.id).to.equal(genericAsset.id)
     } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
