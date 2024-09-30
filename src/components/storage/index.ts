@@ -32,7 +32,7 @@ export abstract class Storage {
   }
 
   abstract validate(): [boolean, string]
-  abstract getDownloadUrl(): string
+  abstract getDownloadUrl(): Promise<string>
 
   abstract fetchSpecificFileMetadata(
     fileObject: any,
@@ -48,7 +48,7 @@ export abstract class Storage {
 
   // similar to all subclasses
   async getReadableStream(): Promise<StorageReadable> {
-    const input = this.getDownloadUrl()
+    const input = await this.getDownloadUrl()
     const response = await axios({
       method: 'get',
       url: input,
@@ -183,6 +183,14 @@ export abstract class Storage {
       return false
     }
   }
+
+  async decryptUrl(hashedUrl: string, encryptedMethod: EncryptMethod): Promise<string> {
+    const decodedUrlBuffer = Buffer.from(hashedUrl, 'base64')
+    const decryptedBuffer = await decryptData(decodedUrlBuffer, encryptedMethod)
+    const decoder = new TextDecoder()
+    const decryptedUrl = decoder.decode(decryptedBuffer)
+    return decryptedUrl
+  }
 }
 
 export class UrlStorage extends Storage {
@@ -222,16 +230,26 @@ export class UrlStorage extends Storage {
 
   isFilePath(): boolean {
     const regex: RegExp = /^(.+)\/([^/]*)$/ // The URL should not represent a path
-    const { url } = this.getFile()
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+    const file = this.getFile()
+    if (
+      file.url.startsWith('http://') ||
+      file.url.startsWith('https://') ||
+      (file.encryptedBy && file.encryptedMethod)
+    ) {
       return false
     }
-    return regex.test(url)
+    return regex.test(file.url)
   }
 
-  getDownloadUrl(): string {
+  async getDownloadUrl(): Promise<string> {
     if (this.validate()[0] === true) {
-      return this.getFile().url
+      const file = this.getFile()
+      if (file?.encryptedBy && file?.encryptedMethod) {
+        const decryptedUrl = await this.decryptUrl(file.url, file.encryptedMethod)
+        return decryptedUrl
+      } else {
+        return file.url
+      }
     }
     return null
   }
@@ -240,12 +258,16 @@ export class UrlStorage extends Storage {
     fileObject: UrlFileObject,
     forceChecksum: boolean
   ): Promise<FileInfoResponse> {
-    const { url, method } = fileObject
+    const url = await this.getDownloadUrl()
+    const { method, fileHash } = fileObject
     const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
       url,
       method,
       forceChecksum
     )
+    if (forceChecksum && fileHash && contentChecksum !== fileHash) {
+      throw new Error(`Error checksum`)
+    }
     return {
       valid: true,
       contentLength,
@@ -311,20 +333,26 @@ export class ArweaveStorage extends Storage {
     return regex.test(transactionId)
   }
 
-  getDownloadUrl(): string {
-    return urlJoin(process.env.ARWEAVE_GATEWAY, this.getFile().transactionId)
+  getDownloadUrl(): Promise<string> {
+    return Promise.resolve(
+      urlJoin(process.env.ARWEAVE_GATEWAY, this.getFile().transactionId)
+    )
   }
 
   async fetchSpecificFileMetadata(
     fileObject: ArweaveFileObject,
     forceChecksum: boolean
   ): Promise<FileInfoResponse> {
+    const { fileHash } = fileObject
     const url = urlJoin(process.env.ARWEAVE_GATEWAY, fileObject.transactionId)
     const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
       url,
       'get',
       forceChecksum
     )
+    if (forceChecksum && fileHash && contentChecksum !== fileHash) {
+      throw new Error(`Error checksum`)
+    }
     return {
       valid: true,
       contentLength,
@@ -378,25 +406,36 @@ export class IpfsStorage extends Storage {
 
   isFilePath(): boolean {
     const regex: RegExp = /^(.+)\/([^/]*)$/ // The CID should not represent a path
-    const { hash } = this.getFile()
-
-    return regex.test(hash)
+    const file = this.getFile()
+    if (file.encryptedBy && file.encryptedMethod) {
+      return false
+    }
+    return regex.test(file.hash)
   }
 
-  getDownloadUrl(): string {
-    return urlJoin(process.env.IPFS_GATEWAY, urlJoin('/ipfs', this.getFile().hash))
+  async getDownloadUrl(): Promise<string> {
+    const file = this.getFile()
+    if (file?.encryptedBy && file?.encryptedMethod) {
+      const decryptedUrl = await this.decryptUrl(file.hash, file.encryptedMethod)
+      return urlJoin(process.env.IPFS_GATEWAY, urlJoin('/ipfs', decryptedUrl))
+    }
+    return urlJoin(process.env.IPFS_GATEWAY, urlJoin('/ipfs', file.hash))
   }
 
   async fetchSpecificFileMetadata(
     fileObject: IpfsFileObject,
     forceChecksum: boolean
   ): Promise<FileInfoResponse> {
-    const url = urlJoin(process.env.IPFS_GATEWAY, urlJoin('/ipfs', fileObject.hash))
+    const url = await this.getDownloadUrl()
+    const { fileHash } = fileObject
     const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
       url,
       'get',
       forceChecksum
     )
+    if (forceChecksum && fileHash && contentChecksum !== fileHash) {
+      throw new Error(`Error checksum`)
+    }
     return {
       valid: true,
       contentLength,
@@ -463,9 +502,9 @@ export class S3Storage extends Storage {
     return endpoint.includes('.')
   }
 
-  getDownloadUrl(): string {
+  getDownloadUrl(): Promise<string> {
     const { s3Access } = this.getFile()
-    return JSON.stringify(s3Access)
+    return Promise.resolve(JSON.stringify(s3Access))
   }
 
   async fetchDataContent(): Promise<any> {

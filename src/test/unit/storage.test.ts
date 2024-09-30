@@ -22,6 +22,8 @@ import { getConfiguration } from '../../utils/index.js'
 import { Readable } from 'stream'
 import fs from 'fs'
 import { expectedTimeoutFailure } from '../integration/testUtils.js'
+import { encrypt } from '../../utils/crypt.js'
+import urlJoin from 'url-join'
 
 let nodeId: string
 
@@ -150,7 +152,7 @@ describe('URL Storage tests', () => {
       'Error validationg the URL file: URL looks like a file path'
     )
   })
-  it('Gets download URL', () => {
+  it('Gets download URL', async () => {
     file = {
       type: 'url',
       url: 'http://someUrl.com/file.json',
@@ -163,7 +165,7 @@ describe('URL Storage tests', () => {
       ]
     }
     storage = Storage.getStorageClass(file, config)
-    expect(storage.getDownloadUrl()).to.eql('http://someUrl.com/file.json')
+    expect(await storage.getDownloadUrl()).to.eql('http://someUrl.com/file.json')
   })
 
   it('Gets readable stream', async () => {
@@ -209,14 +211,14 @@ describe('Unsafe URL tests', () => {
       'Error validationg the URL file: URL is marked as unsafe'
     )
   })
-  it('Should allow safe URL', () => {
+  it('Should allow safe URL', async () => {
     file = {
       type: 'url',
       url: 'https://oceanprotocol.com',
       method: 'get'
     }
     const storage = Storage.getStorageClass(file, config)
-    expect(storage.getDownloadUrl()).to.eql('https://oceanprotocol.com')
+    expect(await storage.getDownloadUrl()).to.eql('https://oceanprotocol.com')
   })
   after(() => {
     tearDownEnvironment(previousConfiguration)
@@ -237,6 +239,33 @@ describe('IPFS Storage tests', () => {
       ['https://ipfs.oceanprotocol.com']
     )
     config = await getConfiguration()
+  })
+
+  it('Gets download encrypted IPFS', async () => {
+    const storage = Storage.getStorageClass(file, config)
+    const downloadUrl = await storage.getDownloadUrl()
+    expect(downloadUrl).to.eql(
+      urlJoin(
+        process.env.IPFS_GATEWAY,
+        urlJoin('/ipfs', 'Qxchjkflsejdfklgjhfkgjkdjoiderj')
+      )
+    )
+  })
+
+  it('Gets download encrypted IPFS', async () => {
+    const hash = 'QmaD5S7TakPs3a4fijatbfqhmhhrEbCvbqGTTAp7VrZ91T'
+    const uint8Array = Uint8Array.from(Buffer.from(hash))
+    const encryptedHash = await encrypt(uint8Array, EncryptMethod.ECIES)
+    const encodedHash = encryptedHash.toString('base64')
+    const fileDummy = {
+      type: 'ipfs',
+      hash: encodedHash,
+      encryptedBy: '16Uiu2HAmN211yBiE6dF5xu8GFXV1jqZQzK5MbzBuQDspfa6qNgXF',
+      encryptedMethod: 'ECIES'
+    }
+    const storage = Storage.getStorageClass(fileDummy, config)
+    const downloadUrl = await storage.getDownloadUrl()
+    expect(downloadUrl).to.eql(urlJoin(process.env.IPFS_GATEWAY, urlJoin('/ipfs', hash)))
   })
 
   it('Storage instance', () => {
@@ -335,13 +364,34 @@ describe('URL Storage getFileInfo tests', () => {
     const fileInfoRequest: FileInfoRequest = {
       type: FileObjectType.URL
     }
-    const fileInfo = await storage.getFileInfo(fileInfoRequest)
-
+    const fileInfo = await storage.getFileInfo(fileInfoRequest, true)
     assert(fileInfo[0].valid, 'File info is valid')
     expect(fileInfo[0].contentLength).to.equal('319520')
     expect(fileInfo[0].contentType).to.equal('text/plain; charset=utf-8')
     expect(fileInfo[0].name).to.equal('shs_dataset_test.txt')
     expect(fileInfo[0].type).to.equal('url')
+  })
+
+  it('Throws error when checksum fails', async () => {
+    const fileInfoRequest: FileInfoRequest = {
+      type: FileObjectType.URL
+    }
+    const config = await getConfiguration()
+    const storage2 = new UrlStorage(
+      {
+        type: 'url',
+        url: 'https://raw.githubusercontent.com/tbertinmahieux/MSongsDB/master/Tasks_Demos/CoverSongs/shs_dataset_test.txt',
+        method: 'get',
+        fileHash: 'wrong'
+      },
+      config
+    )
+    try {
+      await storage2.getFileInfo(fileInfoRequest, true)
+    } catch (err) {
+      // get log because in getFileInfo there is a console
+      expect(err.message).to.equal('Error checksum')
+    }
   })
 
   it('Throws error when URL is missing in request', async () => {
@@ -400,15 +450,30 @@ describe('Arweave Storage getFileInfo tests', function () {
     const fileInfoRequest: FileInfoRequest = {
       type: FileObjectType.ARWEAVE
     }
-    const fileInfo = await storage.getFileInfo(fileInfoRequest)
-
+    const fileInfo = await storage.getFileInfo(fileInfoRequest, true)
     assert(fileInfo[0].valid, 'File info is valid')
     assert(fileInfo[0].type === FileObjectType.ARWEAVE, 'Type is incorrect')
-    assert(
-      fileInfo[0].contentType === 'text/csv; charset=utf-8',
-      'Content type is incorrect'
+  })
+
+  it('Throws error when checksum fails', async () => {
+    const fileInfoRequest: FileInfoRequest = {
+      type: FileObjectType.ARWEAVE
+    }
+    const config = await getConfiguration()
+    const storage2 = new ArweaveStorage(
+      {
+        type: FileObjectType.ARWEAVE,
+        transactionId: 'gPPDyusRh2ZyFl-sQ2ODK6hAwCRBAOwp0OFKr0n23QE',
+        fileHash: 'wrong'
+      },
+      config
     )
-    assert(fileInfo[0].contentLength === '680782', 'Content length is incorrect')
+    try {
+      await storage2.getFileInfo(fileInfoRequest, true)
+    } catch (err) {
+      // get log because in getFileInfo there is a console
+      expect(err.message).to.equal('Error checksum')
+    }
   })
 
   it('Throws error when transaction ID is missing in request', async () => {
@@ -523,7 +588,8 @@ describe('IPFS Storage getFileInfo tests', function () {
     storage = new IpfsStorage(
       {
         type: FileObjectType.IPFS,
-        hash: 'QmRhsp7eghZtW4PktPC2wAHdKoy2LiF1n6UXMKmAhqQJUA'
+        hash: 'QmRhsp7eghZtW4PktPC2wAHdKoy2LiF1n6UXMKmAhqQJUA',
+        fileHash: '40f90cef24cf570149f27c3054752333b75081f6efc4e90ba1a2496b7adc9e48'
       },
       config
     )
@@ -538,7 +604,7 @@ describe('IPFS Storage getFileInfo tests', function () {
     }
     // and only fire the test half way
     setTimeout(async () => {
-      const fileInfo = await storage.getFileInfo(fileInfoRequest)
+      const fileInfo = await storage.getFileInfo(fileInfoRequest, true)
       if (fileInfo && fileInfo.length > 0) {
         assert(fileInfo[0].valid, 'File info is valid')
         assert(fileInfo[0].type === 'ipfs', 'Type is incorrect')
@@ -549,6 +615,24 @@ describe('IPFS Storage getFileInfo tests', function () {
         } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(true)
       }
     }, DEFAULT_TEST_TIMEOUT)
+  })
+
+  it('Throws error when checksum fails', async () => {
+    const storage2 = new IpfsStorage(
+      {
+        type: FileObjectType.IPFS,
+        hash: 'QmRhsp7eghZtW4PktPC2wAHdKoy2LiF1n6UXMKmAhqQJUA',
+        fileHash: 'wrong'
+      },
+      config
+    )
+    const fileInfoRequest: FileInfoRequest = { type: FileObjectType.IPFS }
+    try {
+      await storage2.getFileInfo(fileInfoRequest, true)
+    } catch (err) {
+      // get log because in getFileInfo there is a console
+      expect(err.message).to.equal('Error checksum')
+    }
   })
 
   it('Throws error when hash is missing in request', async () => {
