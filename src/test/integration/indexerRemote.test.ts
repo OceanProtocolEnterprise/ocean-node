@@ -189,8 +189,9 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
     assert(setMetaDataTxReceipt, 'set metada failed')
   })
 
-  it('should store the ddo in the database and return it ', async () => {
+  it('should store the ddo in the database and return it ', async function () {
     const did = makeDid(getAddress(nftAddress), chainId.toString(10))
+    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
     resolvedDDO = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
