@@ -29,6 +29,7 @@ import { DecryptDDOCommand } from '../../@types/commands.js'
 import { isRemoteDDO, makeDid } from '../core/utils/validateDdoHandler.js'
 import { create256Hash } from '../../utils/crypt.js'
 import { URLUtils } from '../../utils/url.js'
+import { isVerifiableCredential } from '../../utils/verifiableCredential.js'
 
 class BaseEventProcessor {
   protected networkId: number
@@ -89,27 +90,50 @@ class BaseEventProcessor {
     try {
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
       const saveDDO = await ddoDatabase.update({ ...ddo })
-      await ddoState.update(
-        this.networkId,
-        saveDDO.id,
-        saveDDO.nftAddress,
-        saveDDO.event?.tx,
-        true
-      )
+      if (isVerifiableCredential(saveDDO)) {
+        await ddoState.update(
+          this.networkId,
+          saveDDO.id,
+          saveDDO.credentialSubject.nftAddress,
+          saveDDO.credentialSubject.event?.tx,
+          true
+        )
+      } else {
+        await ddoState.update(
+          this.networkId,
+          saveDDO.id,
+          saveDDO.nftAddress,
+          saveDDO.event?.tx,
+          true
+        )
+      }
+
       INDEXER_LOGGER.logMessage(
         `Saved or updated DDO  : ${saveDDO.id} from network: ${this.networkId} triggered by: ${method}`
       )
       return saveDDO
     } catch (err) {
       const { ddoState } = await getDatabase()
-      await ddoState.update(
-        this.networkId,
-        ddo.id,
-        ddo.nftAddress,
-        ddo.event?.tx,
-        true,
-        err.message
-      )
+      if (isVerifiableCredential(ddo)) {
+        await ddoState.update(
+          this.networkId,
+          ddo.id,
+          ddo.credentialSubject.nftAddress,
+          ddo.credentialSubject.event?.tx,
+          true,
+          err.message
+        )
+      } else {
+        await ddoState.update(
+          this.networkId,
+          ddo.id,
+          ddo.nftAddress,
+          ddo.event?.tx,
+          true,
+          err.message
+        )
+      }
+
       INDEXER_LOGGER.log(
         LOG_LEVELS_STR.LEVEL_ERROR,
         `Error found on ${this.networkId} triggered by: ${method} while creating or updating DDO: ${err}`,
@@ -353,23 +377,34 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         return
       }
       // for unencrypted DDOs
-      console.log(ddo.id)
-      console.log(metadataHash)
       if (parseInt(flag) !== 2 && !this.checkDdoHash(ddo, metadataHash)) {
         return
       }
       did = ddo.id
       // stuff that we overwrite
-      ddo.chainId = chainId
-      ddo.nftAddress = event.address
-      ddo.datatokens = this.getTokenInfo(ddo.services)
-      ddo.nft = await this.getNFTInfo(
-        ddo.nftAddress,
-        signer,
-        owner,
-        parseInt(decodedEventData.args[6])
-      )
-
+      if (isVerifiableCredential(ddo)) {
+        ddo.credentialSubject.chainId = chainId
+        ddo.credentialSubject.nftAddress = event.address
+        ddo.credentialSubject.datatokens = this.getTokenInfo(
+          ddo.credentialSubject.services
+        )
+        ddo.credentialSubject.nft = await this.getNFTInfo(
+          ddo.credentialSubject.nftAddress,
+          signer,
+          owner,
+          parseInt(decodedEventData.args[6])
+        )
+      } else {
+        ddo.chainId = chainId
+        ddo.nftAddress = event.address
+        ddo.datatokens = this.getTokenInfo(ddo.services)
+        ddo.nft = await this.getNFTInfo(
+          ddo.nftAddress,
+          signer,
+          owner,
+          parseInt(decodedEventData.args[6])
+        )
+      }
       INDEXER_LOGGER.logMessage(
         `Processed new DDO data ${ddo.id} with txHash ${event.transactionHash} from block ${event.blockNumber}`,
         true
@@ -431,22 +466,43 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
       // we need to store the event data (either metadata created or update and is updatable)
       if ([EVENTS.METADATA_CREATED, EVENTS.METADATA_UPDATED].includes(eventName)) {
-        if (!ddo.event) {
-          ddo.event = {}
-        }
-        ddo.event.tx = event.transactionHash
-        ddo.event.from = from
-        ddo.event.contract = event.address
-        if (event.blockNumber) {
-          ddo.event.block = event.blockNumber
-          // try get block & timestamp from block (only wait 2.5 secs maximum)
-          const promiseFn = provider.getBlock(event.blockNumber)
-          const result = await asyncCallWithTimeout(promiseFn, 2500)
-          if (result.data !== null && !result.timeout) {
-            ddo.event.datetime = new Date(result.data.timestamp * 1000).toJSON()
+        if (isVerifiableCredential(ddo)) {
+          if (!ddo.credentialSubject.event) {
+            ddo.credentialSubject.event = {}
+          }
+          ddo.credentialSubject.event.tx = event.transactionHash
+          ddo.credentialSubject.event.from = from
+          ddo.credentialSubject.event.contract = event.address
+          if (event.blockNumber) {
+            ddo.credentialSubject.event.block = event.blockNumber
+            const promiseFn = provider.getBlock(event.blockNumber)
+            const result = await asyncCallWithTimeout(promiseFn, 2500)
+            if (result.data !== null && !result.timeout) {
+              ddo.credentialSubject.event.datetime = new Date(
+                result.data.timestamp * 1000
+              ).toJSON()
+            }
+          } else {
+            ddo.credentialSubject.event.block = -1
           }
         } else {
-          ddo.event.block = -1
+          if (!ddo.event) {
+            ddo.event = {}
+          }
+          ddo.event.tx = event.transactionHash
+          ddo.event.from = from
+          ddo.event.contract = event.address
+          if (event.blockNumber) {
+            ddo.event.block = event.blockNumber
+            // try get block & timestamp from block (only wait 2.5 secs maximum)
+            const promiseFn = provider.getBlock(event.blockNumber)
+            const result = await asyncCallWithTimeout(promiseFn, 2500)
+            if (result.data !== null && !result.timeout) {
+              ddo.event.datetime = new Date(result.data.timestamp * 1000).toJSON()
+            }
+          } else {
+            ddo.event.block = -1
+          }
         }
       }
 
@@ -513,14 +569,22 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
   isUpdateable(previousDdo: any, txHash: string, block: number): [boolean, string] {
     let errorMsg: string
-    const ddoTxId = previousDdo.event.tx
+    let ddoTxId: string
+    let ddoBlock
+    if (isVerifiableCredential(previousDdo)) {
+      ddoTxId = previousDdo.credentialSubject.event.tx
+      ddoBlock = previousDdo.credentialSubject.event.block
+    } else {
+      ddoTxId = previousDdo.event.tx
+      ddoBlock = previousDdo.event.block
+    }
+
     // do not update if we have the same txid
     if (txHash === ddoTxId) {
       errorMsg = `Previous DDO has the same tx id, no need to update: event-txid=${txHash} <> asset-event-txid=${ddoTxId}`
       INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_DEBUG, errorMsg, true)
       return [false, errorMsg]
     }
-    const ddoBlock = previousDdo.event.block
     // do not update if we have the same block
     if (block === ddoBlock) {
       errorMsg = `Asset was updated later (block: ${ddoBlock}) vs transaction block: ${block}`

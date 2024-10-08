@@ -15,6 +15,7 @@ import { SQLiteProvider } from './sqlite.js'
 import { URLUtils } from '../../utils/url.js'
 import fs from 'fs'
 import path from 'path'
+import { isVerifiableCredential } from '../../utils/verifiableCredential.js'
 
 export class OrderDatabase {
   private provider: Typesense
@@ -353,7 +354,10 @@ export class DdoDatabase {
   getDDOSchema(ddo: Record<string, any>): Schema {
     // Find the schema based on the DDO version OR use the short DDO schema when state !== 0
     let schemaName: string
-    if (ddo.nft?.state !== 0) {
+    if (
+      (!isVerifiableCredential(ddo) && ddo.nft?.state !== 0) ||
+      (isVerifiableCredential(ddo) && ddo.credentialSubject.nft?.state !== 0)
+    ) {
       schemaName = 'op_ddo_short'
     } else if (ddo.version) {
       schemaName = `op_ddo_v${ddo.version}`
@@ -369,16 +373,28 @@ export class DdoDatabase {
   }
 
   async validateDDO(ddo: Record<string, any>): Promise<boolean> {
-    if (ddo.nft?.state !== 0) {
+    if (isVerifiableCredential(ddo) && ddo.credentialSubject.nft?.state !== 0) {
       // Skipping validation for short DDOs as it currently doesn't work
       // TODO: DDO validation needs to be updated to consider the fields required by the schema
       // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
       return true
+    } else if (!isVerifiableCredential(ddo) && ddo.nft?.state !== 0) {
+      return true
     } else {
-      const validation = await validateObject(ddo, ddo.chainId, ddo.nftAddress)
+      let validation
+      const did = ddo.id
+      if (isVerifiableCredential(ddo)) {
+        validation = await validateObject(
+          ddo,
+          ddo.credentialSubject.chainId,
+          ddo.credentialSubject.nftAddress
+        )
+      } else {
+        validation = await validateObject(ddo, ddo.chainId, ddo.nftAddress)
+      }
       if (validation[0] === true) {
         DATABASE_LOGGER.logMessageWithEmoji(
-          `Validation of DDO with did: ${ddo.id} has passed`,
+          `Validation of DDO with did: ${did} has passed`,
           true,
           GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
           LOG_LEVELS_STR.LEVEL_INFO

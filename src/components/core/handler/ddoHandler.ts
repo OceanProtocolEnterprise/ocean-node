@@ -12,7 +12,7 @@ import {
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { sleep, readStream } from '../../../utils/util.js'
-import { DDO } from '../../../@types/DDO/DDO.js'
+import { DDO, DDOVC } from '../../../@types/DDO/DDO.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { Blockchain } from '../../../utils/blockchain.js'
 import { ethers, isAddress } from 'ethers'
@@ -46,6 +46,7 @@ import {
   wasNFTDeployedByOurFactory
 } from '../../Indexer/utils.js'
 import { validateDDOHash } from '../../../utils/asset.js'
+import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -800,11 +801,17 @@ export class ValidateDDOHandler extends Handler {
       return validationResponse
     }
     try {
-      const validation = await validateObject(
-        task.ddo,
-        task.ddo.chainId,
-        task.ddo.nftAddress
-      )
+      let validation
+      if (isVerifiableCredential(task.ddo)) {
+        validation = await validateObject(
+          task.ddo,
+          (task.ddo as any as DDOVC).credentialSubject.chainId,
+          (task.ddo as any as DDOVC).credentialSubject.nftAddress
+        )
+      } else {
+        validation = await validateObject(task.ddo, task.ddo.chainId, task.ddo.nftAddress)
+      }
+
       if (validation[0] === false) {
         CORE_LOGGER.logMessageWithEmoji(
           `Validation failed with error: ${validation[1]}`,

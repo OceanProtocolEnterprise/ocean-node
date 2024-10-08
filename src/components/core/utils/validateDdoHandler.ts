@@ -11,9 +11,10 @@ import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { create256Hash } from '../../../utils/crypt.js'
 import { getProviderWallet } from './feesHandler.js'
 import { Readable } from 'stream'
+import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
 
 const CURRENT_VERSION = '4.5.0'
-const ALLOWED_VERSIONS = ['4.1.0', '4.3.0', '4.5.0']
+const ALLOWED_VERSIONS = ['4.1.0', '4.3.0', '4.5.0', '5.0.0']
 
 export function getSchema(version: string = CURRENT_VERSION): string {
   if (!ALLOWED_VERSIONS.includes(version)) {
@@ -55,8 +56,13 @@ export async function validateObject(
   nftAddress: string
 ): Promise<[boolean, Record<string, string[]>]> {
   const ddoCopy = JSON.parse(JSON.stringify(obj))
-  ddoCopy['@type'] = 'DDO'
-
+  // Handle different version-specific logic
+  const version = ddoCopy.version || CURRENT_VERSION
+  if (isVerifiableCredential(ddoCopy)) {
+    ddoCopy['@type'] = 'VerifiableCredential'
+  } else {
+    ddoCopy['@type'] = 'DDO'
+  }
   const extraErrors: Record<string, string[]> = {}
   // overwrite context
   ddoCopy['@context'] = {
@@ -107,7 +113,6 @@ export async function validateObject(
     if (!('id' in extraErrors)) extraErrors.id = []
     extraErrors.id.push('did is not valid for chain Id and nft address')
   }
-  const version = ddoCopy.version || CURRENT_VERSION
   const schemaFilePath = getSchema(version)
   CORE_LOGGER.logMessage(`Using ` + schemaFilePath, true)
 
