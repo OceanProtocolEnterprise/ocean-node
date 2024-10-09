@@ -207,7 +207,6 @@ export class DecryptDdoHandler extends Handler {
       let encryptedDocument: Uint8Array
       let flags: number
       let documentHash: string
-
       if (transactionId) {
         try {
           const receipt = await provider.getTransactionReceipt(transactionId)
@@ -340,7 +339,7 @@ export class DecryptDdoHandler extends Handler {
 
       // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
-      if (ddo.id !== makeDid(dataNftAddress, chainId)) {
+      if (!isRemoteDDO(ddo) && ddo.id !== makeDid(dataNftAddress, chainId)) {
         CORE_LOGGER.error(`Decrypted DDO ID is not matching the generated hash for DID.`)
         return {
           stream: null,
@@ -352,8 +351,10 @@ export class DecryptDdoHandler extends Handler {
       }
 
       // checksum matches
+      const decryptedDocumentString2 = decryptedDocument.toString()
+      const ddoObject2 = JSON.parse(decryptedDocumentString2)
       const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
-      if (decryptedDocumentHash !== documentHash) {
+      if (!isRemoteDDO(ddoObject2) && decryptedDocumentHash !== documentHash) {
         CORE_LOGGER.logMessage(
           `Decrypt DDO: error checksum does not match ${decryptedDocumentHash} with ${documentHash}`,
           true

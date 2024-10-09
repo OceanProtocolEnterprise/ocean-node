@@ -207,6 +207,7 @@ class BaseEventProcessor {
           }
 
           let responseHash
+
           if (response.data instanceof Object) {
             responseHash = create256Hash(JSON.stringify(response.data))
             ddo = response.data
@@ -214,7 +215,7 @@ class BaseEventProcessor {
             ddo = JSON.parse(response.data)
             responseHash = create256Hash(ddo)
           }
-          if (responseHash !== metadataHash) {
+          if (!ddo.encryptedData && responseHash !== metadataHash) {
             const msg = `Hash check failed: response=${ddo}, decrypted ddo hash=${responseHash}\n metadata hash=${metadataHash}`
             INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, msg)
             throw new Error(msg)
@@ -320,7 +321,21 @@ class BaseEventProcessor {
       const utf8String = toUtf8String(byteArray)
       ddo = JSON.parse(utf8String)
     }
+    return ddo
+  }
 
+  protected decryptDDOIPFS(
+    decryptorURL: string,
+    eventCreator: string,
+    metadataHash: string,
+    metadata: any
+  ): Promise<any> {
+    INDEXER_LOGGER.logMessage(
+      `Decompressing DDO  from network: ${this.networkId} created by: ${eventCreator} ecnrypted by: ${decryptorURL}`
+    )
+    const byteArray = getBytes(metadata)
+    const utf8String = toUtf8String(byteArray)
+    const ddo = JSON.parse(utf8String)
     return ddo
   }
 }
@@ -369,7 +384,16 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadataHash,
         metadata
       )
-      const ddo = await this.processDDO(decryptedDDO)
+      const ddoProcessed = await this.processDDO(decryptedDDO)
+      let ddo = ddoProcessed
+      if (ddo.encryptedData) {
+        ddo = await this.decryptDDOIPFS(
+          decodedEventData.args[2],
+          owner,
+          metadataHash,
+          ddo.encryptedData
+        )
+      }
       if (ddo.id !== makeDid(event.address, chainId.toString(10))) {
         INDEXER_LOGGER.error(
           `Decrypted DDO ID is not matching the generated hash for DID.`
@@ -377,7 +401,11 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         return
       }
       // for unencrypted DDOs
-      if (parseInt(flag) !== 2 && !this.checkDdoHash(ddo, metadataHash)) {
+      if (
+        !isRemoteDDO(decryptedDDO) &&
+        parseInt(flag) !== 2 &&
+        !this.checkDdoHash(ddo, metadataHash)
+      ) {
         return
       }
       did = ddo.id
@@ -536,11 +564,9 @@ export class MetadataEventProcessor extends BaseEventProcessor {
   async processDDO(ddo: any) {
     if (isRemoteDDO(ddo)) {
       INDEXER_LOGGER.logMessage('DDO is remote', true)
-
       const storage = Storage.getStorageClass(ddo.remote, await getConfiguration())
       const result = await storage.getReadableStream()
       const streamToStringDDO = await streamToString(result.stream as Readable)
-
       return JSON.parse(streamToStringDDO)
     }
 
