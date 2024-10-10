@@ -215,7 +215,7 @@ class BaseEventProcessor {
             ddo = JSON.parse(response.data)
             responseHash = create256Hash(ddo)
           }
-          if (!ddo.encryptedData && responseHash !== metadataHash) {
+          if (responseHash !== metadataHash) {
             const msg = `Hash check failed: response=${ddo}, decrypted ddo hash=${responseHash}\n metadata hash=${metadataHash}`
             INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, msg)
             throw new Error(msg)
