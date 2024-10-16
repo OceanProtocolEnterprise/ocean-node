@@ -7,18 +7,9 @@
 
 schema:VerifiableCredentialShape
     sh:targetClass schema:VerifiableCredential ;
-      sh:property [
-        sh:path schema:id ;
-        sh:datatype xsd:string ;
-        sh:pattern "^did\\:op\\:(.*)$" ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:maxLength 71;
-        sh:minLength 71;
-    ] ;
     sh:property [
         sh:path schema:type ;
-        sh:datatype xsd:string ;
+        sh:nodeKind sh:Literal ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
     ] ;
@@ -43,6 +34,15 @@ schema:VerifiableCredentialShape
 
 schema:CredentialSubjectShape
     sh:targetClass schema:CredentialSubject ;
+    sh:property [
+        sh:path schema:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^did\\:op\\:(.*)$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:maxLength 71 ;
+        sh:minLength 71 ;
+    ] ;
     sh:property [
         sh:path schema:metadata ;
         sh:node schema:MetadataShape ;
@@ -96,32 +96,10 @@ schema:MetadataShape
         sh:maxCount 1 ;
     ] ;
     sh:property [
-        sh:path schema:copyrightHolder ;
+        sh:path schema:tags ;
         sh:datatype xsd:string ;
-        sh:pattern "^(.|\\s)*$" ;
-        sh:maxCount 1 ;
-        sh:maxLength 512 ;
-    ] ;
-    sh:property [
-        sh:path schema:name ;
-        sh:datatype xsd:string ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:maxLength 512 ;
-    ] ;
-    sh:property [
-        sh:path schema:symbol ;
-        sh:datatype xsd:string ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:maxLength 512 ;
-    ] ;
-    sh:property [
-        sh:path schema:type ;
-        sh:datatype xsd:string ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
         sh:maxLength 256 ;
+        sh:maxCount 64 ;
     ] ;
     sh:property [
         sh:path schema:author ;
@@ -131,22 +109,22 @@ schema:MetadataShape
         sh:maxLength 256 ;
     ] ;
     sh:property [
+        sh:path schema:copyrightHolder ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:pattern "^(.|\\s)*$" ;
+        sh:maxLength 512 ;
+    ] ;
+    sh:property [
         sh:path schema:license ;
         sh:node schema:LicenseObjectShape ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
     ] ;
     sh:property [
-        sh:path schema:tags ;
-        sh:datatype xsd:string ;
-        sh:maxLength 256 ;
-        sh:maxCount 64 ;
-    ] ;
-    sh:property [
-        sh:path schema:categories ;
-        sh:datatype xsd:string ;
-        sh:maxLength 256 ;
-        sh:maxCount 64 ;
+        sh:path schema:additionalInformation ;
+        sh:node schema:AdditionalInformationShape ;
+        sh:maxCount 1 ;
     ] ; .
 
 schema:DescriptionObjectShape
@@ -239,5 +217,56 @@ schema:ServiceShape
     sh:property [
         sh:path schema:compute ;
         sh:node schema:ComputeShape ;
+        sh:maxCount 1 ;
+    ] ; .
+
+schema:ComputeShape
+    sh:property [
+        sh:path schema:allowRawAlgorithm ;
+        sh:datatype xsd:boolean ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path schema:allowNetworkAccess ;
+        sh:datatype xsd:boolean ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path schema:publisherTrustedAlgorithmPublishers ;
+        sh:datatype xsd:string ;
+        sh:maxCount 64 ;
+    ] ;
+    sh:property [
+        sh:path schema:publisherTrustedAlgorithms ;
+        sh:node schema:PublisherTrustedAlgorithmShape ;
+        sh:maxCount 64 ;
+    ] ; .
+
+schema:PublisherTrustedAlgorithmShape
+    sh:property [
+        sh:path schema:did ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path schema:filesChecksum ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path schema:containerSectionChecksum ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ; .
+
+schema:AdditionalInformationShape
+    sh:property [
+        sh:path schema:termsAndConditions ;
+        sh:datatype xsd:boolean ;
+        sh:minCount 1 ;
         sh:maxCount 1 ;
     ] ; .

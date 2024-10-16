@@ -90,10 +90,13 @@ class BaseEventProcessor {
     try {
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
       const saveDDO = await ddoDatabase.update({ ...ddo })
+      const did = isVerifiableCredential(saveDDO)
+        ? saveDDO.credentialSubject.id
+        : saveDDO.id
       if (isVerifiableCredential(saveDDO)) {
         await ddoState.update(
           this.networkId,
-          saveDDO.id,
+          did,
           saveDDO.credentialSubject.nftAddress,
           saveDDO.credentialSubject.event?.tx,
           true
@@ -101,7 +104,7 @@ class BaseEventProcessor {
       } else {
         await ddoState.update(
           this.networkId,
-          saveDDO.id,
+          did,
           saveDDO.nftAddress,
           saveDDO.event?.tx,
           true
@@ -109,15 +112,16 @@ class BaseEventProcessor {
       }
 
       INDEXER_LOGGER.logMessage(
-        `Saved or updated DDO  : ${saveDDO.id} from network: ${this.networkId} triggered by: ${method}`
+        `Saved or updated DDO  : ${did} from network: ${this.networkId} triggered by: ${method}`
       )
       return saveDDO
     } catch (err) {
       const { ddoState } = await getDatabase()
+      const did = isVerifiableCredential(ddo) ? ddo.credentialSubject.id : ddo.id
       if (isVerifiableCredential(ddo)) {
         await ddoState.update(
           this.networkId,
-          ddo.id,
+          did,
           ddo.credentialSubject.nftAddress,
           ddo.credentialSubject.event?.tx,
           true,
@@ -126,7 +130,7 @@ class BaseEventProcessor {
       } else {
         await ddoState.update(
           this.networkId,
-          ddo.id,
+          did,
           ddo.nftAddress,
           ddo.event?.tx,
           true,
@@ -327,7 +331,6 @@ class BaseEventProcessor {
   protected decryptDDOIPFS(
     decryptorURL: string,
     eventCreator: string,
-    metadataHash: string,
     metadata: any
   ): Promise<any> {
     INDEXER_LOGGER.logMessage(
@@ -390,11 +393,11 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         ddo = await this.decryptDDOIPFS(
           decodedEventData.args[2],
           owner,
-          metadataHash,
           ddo.encryptedData
         )
       }
-      if (ddo.id !== makeDid(event.address, chainId.toString(10))) {
+      did = isVerifiableCredential(ddo) ? ddo.credentialSubject.id : ddo.id
+      if (did !== makeDid(event.address, chainId.toString(10))) {
         INDEXER_LOGGER.error(
           `Decrypted DDO ID is not matching the generated hash for DID.`
         )
@@ -408,7 +411,6 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       ) {
         return
       }
-      did = ddo.id
       // stuff that we overwrite
       if (isVerifiableCredential(ddo)) {
         ddo.credentialSubject.chainId = chainId
@@ -434,21 +436,21 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         )
       }
       INDEXER_LOGGER.logMessage(
-        `Processed new DDO data ${ddo.id} with txHash ${event.transactionHash} from block ${event.blockNumber}`,
+        `Processed new DDO data ${did} with txHash ${event.transactionHash} from block ${event.blockNumber}`,
         true
       )
 
-      const previousDdo = await ddoDatabase.retrieve(ddo.id)
+      const previousDdo = await ddoDatabase.retrieve(did)
       if (eventName === EVENTS.METADATA_CREATED) {
         if (previousDdo && previousDdo.nft.state === MetadataStates.ACTIVE) {
-          INDEXER_LOGGER.logMessage(`DDO ${ddo.id} is already registered as active`, true)
+          INDEXER_LOGGER.logMessage(`DDO ${did} is already registered as active`, true)
           await ddoState.update(
             this.networkId,
             did,
             event.address,
             event.transactionHash,
             false,
-            `DDO ${ddo.id} is already registered as active`
+            `DDO ${did} is already registered as active`
           )
           return
         }
@@ -457,7 +459,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       if (eventName === EVENTS.METADATA_UPDATED) {
         if (!previousDdo) {
           INDEXER_LOGGER.logMessage(
-            `Previous DDO with did ${ddo.id} was not found the database. Maybe it was deleted/hidden to some violation issues`,
+            `Previous DDO with did ${did} was not found the database. Maybe it was deleted/hidden to some violation issues`,
             true
           )
           await ddoState.update(
@@ -466,7 +468,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
             event.address,
             event.transactionHash,
             false,
-            `Previous DDO with did ${ddo.id} was not found the database. Maybe it was deleted/hidden to some violation issues`
+            `Previous DDO with did ${did} was not found the database. Maybe it was deleted/hidden to some violation issues`
           )
           return
         }

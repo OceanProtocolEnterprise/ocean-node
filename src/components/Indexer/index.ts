@@ -14,6 +14,7 @@ import {
 import { CommandStatus, JobStatus } from '../../@types/commands.js'
 import { buildJobIdentifier } from './utils.js'
 import { create256Hash } from '../../utils/crypt.js'
+import { isVerifiableCredential } from '../../utils/verifiableCredential.js'
 
 // emmit events for node
 export const INDEXER_DDO_EVENT_EMITTER = new EventEmitter()
@@ -136,10 +137,13 @@ export class OceanIndexer {
               ].includes(event.method)
             ) {
               // will emit the metadata created/updated event and advertise it to the other peers (on create only)
+              const did = isVerifiableCredential(event.data)
+                ? event.data.credentialSubject.id
+                : event.data.id
               INDEXER_LOGGER.logMessage(
-                `Emiting "${event.method}" for DDO : ${event.data.id} from network: ${network} `
+                `Emiting "${event.method}" for DDO : ${did} from network: ${network} `
               )
-              INDEXER_DDO_EVENT_EMITTER.emit(event.method, event.data.id)
+              INDEXER_DDO_EVENT_EMITTER.emit(event.method, did)
               // remove from indexing list
             } else if (event.method === INDEXER_CRAWLING_EVENTS.REINDEX_QUEUE_POP) {
               // remove this one from the queue (means we processed the reindex for this tx)

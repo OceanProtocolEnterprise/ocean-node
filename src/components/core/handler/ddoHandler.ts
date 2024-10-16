@@ -790,7 +790,10 @@ export class ValidateDDOHandler extends Handler {
   validate(command: ValidateDDOCommand): ValidateParams {
     let validation = validateCommandParameters(command, ['ddo'])
     if (validation.valid) {
-      validation = validateDDOIdentifier(command.ddo.id)
+      const ddoId = isVerifiableCredential(command.ddo)
+        ? (command.ddo as any).credentialSubject.id
+        : command.ddo.id
+      validation = validateDDOIdentifier(ddoId)
     }
 
     return validation
