@@ -237,7 +237,6 @@ export class DownloadHandler extends Handler {
       .getCoreHandlers()
       .getHandler(PROTOCOL_COMMANDS.FIND_DDO) as FindDdoHandler
     const ddo = await handler.findAndFormatDdo(task.documentId)
-
     if (ddo) {
       CORE_LOGGER.logMessage('DDO for asset found: ' + ddo, true)
     } else {
@@ -267,17 +266,18 @@ export class DownloadHandler extends Handler {
     }
 
     // 2. Validate ddo and credentials
-    let ddoChainId, nftAddress, metadata, credentials
+    let ddoChainId, nftAddress, metadata, credentials, did
 
     if (isVerifiableCredential(ddo)) {
       ;({
         chainId: ddoChainId,
         nftAddress,
         metadata,
-        credentials
+        credentials,
+        id: did
       } = (ddo as any).credentialSubject)
     } else {
-      ;({ chainId: ddoChainId, nftAddress, metadata, credentials } = ddo)
+      ;({ id: did, chainId: ddoChainId, nftAddress, metadata, credentials } = ddo)
     }
 
     if (!ddoChainId || !nftAddress || !metadata) {
@@ -295,12 +295,12 @@ export class DownloadHandler extends Handler {
     if (credentials) {
       const accessGranted = checkCredentials(credentials, task.consumerAddress)
       if (!accessGranted) {
-        CORE_LOGGER.logMessage(`Error: Access to asset ${ddo.id} was denied`, true)
+        CORE_LOGGER.logMessage(`Error: Access to asset ${did} was denied`, true)
         return {
           stream: null,
           status: {
             httpStatus: 500,
-            error: `Error: Access to asset ${ddo.id} was denied`
+            error: `Error: Access to asset ${did} was denied`
           }
         }
       }
@@ -312,7 +312,7 @@ export class DownloadHandler extends Handler {
       task.consumerAddress,
       parseInt(task.nonce),
       task.signature,
-      String(ddo.id + task.nonce) // ddo.id
+      String(did + task.nonce)
     )
 
     if (!nonceCheckResult.valid) {
@@ -375,14 +375,14 @@ export class DownloadHandler extends Handler {
     const nftState = Number(await nftContract.metaDataState())
     if (nftState !== 0 && nftState !== 5) {
       CORE_LOGGER.logMessage(
-        `Error: Asset with id ${ddo.id} is not in an active state`,
+        `Error: Asset with id ${did} is not in an active state`,
         true
       )
       return {
         stream: null,
         status: {
           httpStatus: 500,
-          error: `Error: Asset with id ${ddo.id} is not in an active state`
+          error: `Error: Asset with id ${did} is not in an active state`
         }
       }
     }

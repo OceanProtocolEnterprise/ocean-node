@@ -728,8 +728,7 @@ export class FindDdoHandler extends Handler {
     // First try to find the DDO Locally if findDDO is not enforced
     if (!force) {
       try {
-        const ddo = await node.getDatabase().ddo.retrieve(ddoId)
-        return ddo as DDO
+        return await node.getDatabase().ddo.retrieve(ddoId)
       } catch (error) {
         CORE_LOGGER.logMessage(
           `Unable to find DDO locally. Proceeding to call findDDO`,

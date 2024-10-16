@@ -546,7 +546,30 @@ export class DdoDatabase {
     try {
       const validation = await this.validateDDO(ddo)
       if (validation === true) {
-        return await this.provider.collections(schema.name).documents().update(did, ddo)
+        if (schema.name === 'op_ddo_v5.0.0') {
+          const searchResponse = await this.provider
+            .collections(schema.name)
+            .documents()
+            .search({
+              q: did,
+              query_by: 'credentialSubject.id'
+            })
+
+          if (searchResponse.hits.length === 0) {
+            throw new Error(`Document with credentialSubject.id ${did} not found`)
+          }
+
+          // Step 3: Get the internal document ID from the search result
+          const documentId = searchResponse.hits[0].document.id
+
+          // Step 4: Perform the update using the document ID from the search
+          return await this.provider
+            .collections(schema.name)
+            .documents()
+            .update(documentId, ddo)
+        } else {
+          return await this.provider.collections(schema.name).documents().update(did, ddo)
+        }
       } else {
         throw new Error(
           `Validation of DDO with schema version ${ddo.version} failed with errors`
