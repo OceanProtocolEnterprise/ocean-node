@@ -5,25 +5,34 @@ import { DDO_IDENTIFIER_PREFIX } from './constants.js'
 import { CORE_LOGGER } from './logging/common.js'
 import { createHash } from 'crypto'
 import { getAddress } from 'ethers'
+import { isVerifiableCredential } from './verifiableCredential.js'
 
 // Notes:
 // Asset as per asset.py on provider, is a class there, while on ocean.Js we only have a type
 // this is an utility to extract information from the Asset services
 export const AssetUtils = {
   getServiceIndexById(asset: DDO, id: string): number | null {
-    for (let c = 0; c < asset.services.length; c++)
-      if (asset.services[c].id === id) return c
+    const services = isVerifiableCredential(asset)
+      ? (asset as any).credentialSubject.services
+      : asset.services
+    for (let c = 0; c < services.length; c++) if (services[c].id === id) return c
     return null
   },
   getServiceByIndex(asset: DDO, index: number): Service | null {
-    if (index >= 0 && index < asset.services.length) {
-      return asset.services[index]
+    const services = isVerifiableCredential(asset)
+      ? (asset as any).credentialSubject.services
+      : asset.services
+    if (index >= 0 && index < services.length) {
+      return services[index]
     }
     return null
   },
 
   getServiceById(asset: DDO, id: string): Service | null {
-    const services = asset.services.filter((service: Service) => service.id === id)
+    const servicesToSearch = isVerifiableCredential(asset)
+      ? (asset as any).credentialSubject.services
+      : asset.services
+    const services = servicesToSearch.filter((service: Service) => service.id === id)
     return services.length ? services[0] : null
   }
 }

@@ -27,6 +27,7 @@ import { getOceanArtifactsAdresses } from '../../../utils/address.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
 import { fetchEventFromTransaction } from '../../../utils/util.js'
 import { fetchTransactionReceipt } from './validateOrders.js'
+import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
 
 async function calculateProviderFeeAmount(
   validUntil: number,
@@ -57,6 +58,9 @@ export async function createProviderFee(
   computeValidUntil: number
 ): Promise<ProviderFees> | undefined {
   // round for safety
+  const chainId = isVerifiableCredential(asset)
+    ? (asset as any).credentialSubject.chainId
+    : asset.chainId
   validUntil = Math.round(validUntil)
   computeValidUntil = Math.round(computeValidUntil)
   const providerData = {
@@ -65,7 +69,7 @@ export async function createProviderFee(
     dt: service.datatokenAddress,
     id: service.id
   }
-  const providerWallet = await getProviderWallet(String(asset.chainId))
+  const providerWallet = await getProviderWallet(String(chainId))
 
   const providerFeeAddress: string = providerWallet.address
   let providerFeeAmount: number
@@ -76,7 +80,7 @@ export async function createProviderFee(
     providerFeeToken = computeEnv.feeToken
   } else {
     // it's download, take it from config
-    providerFeeToken = await getProviderFeeToken(asset.chainId)
+    providerFeeToken = await getProviderFeeToken(chainId)
   }
   if (providerFeeToken?.toLowerCase() === ZeroAddress) {
     providerFeeAmount = 0
@@ -85,7 +89,7 @@ export async function createProviderFee(
   }
 
   if (providerFeeToken && providerFeeToken?.toLowerCase() !== ZeroAddress) {
-    const provider = await getJsonRpcProvider(asset.chainId)
+    const provider = await getJsonRpcProvider(chainId)
     const decimals = await getDatatokenDecimals(providerFeeToken, provider)
     providerFeeAmountFormatted = parseUnits(providerFeeAmount.toString(10), decimals)
   } else {

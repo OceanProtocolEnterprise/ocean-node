@@ -35,6 +35,7 @@ import { DDO } from '../../../@types/DDO/DDO.js'
 import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { getNFTContract } from '../../Indexer/utils.js'
 import { OrdableAssetResponse } from '../../../@types/Asset.js'
+import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
 export const FILE_ENCRYPTION_ALGORITHM = 'aes-256-cbc'
 
 export function isOrderingAllowedForAsset(asset: DDO): OrdableAssetResponse {
@@ -44,8 +45,15 @@ export function isOrderingAllowedForAsset(asset: DDO): OrdableAssetResponse {
       reason: `Asset provided is either null, either undefined ${asset}`
     }
   } else if (
-    asset.nft &&
-    !(asset.nft.state in [MetadataStates.ACTIVE, MetadataStates.UNLISTED])
+    (!isVerifiableCredential(asset) &&
+      asset.nft &&
+      !(asset.nft.state in [MetadataStates.ACTIVE, MetadataStates.UNLISTED])) ||
+    (isVerifiableCredential(asset) &&
+      (asset as any).credentialSubject.nft &&
+      !(
+        (asset as any).credentialSubject.nft.state in
+        [MetadataStates.ACTIVE, MetadataStates.UNLISTED]
+      ))
   ) {
     return {
       isOrdable: false,
@@ -189,10 +197,15 @@ export function validateFilesStructure(
   service: Service,
   decriptedFileObject: any
 ): boolean {
+  const nftAddress = isVerifiableCredential(ddo)
+    ? (ddo as any).credentialSubject.nftAddress
+    : ddo.nftAddress
   if (
-    decriptedFileObject.nftAddress?.toLowerCase() !== ddo.nftAddress?.toLowerCase() ||
-    decriptedFileObject.datatokenAddress?.toLowerCase() !==
-      service.datatokenAddress?.toLowerCase()
+    (decriptedFileObject.nftAddress &&
+      decriptedFileObject.nftAddress?.toLowerCase() !== nftAddress?.toLowerCase()) ||
+    (decriptedFileObject.datatokenAddress &&
+      decriptedFileObject.datatokenAddress?.toLowerCase() !==
+        service.datatokenAddress?.toLowerCase())
   ) {
     return false
   }
@@ -254,7 +267,20 @@ export class DownloadHandler extends Handler {
     }
 
     // 2. Validate ddo and credentials
-    if (!ddo.chainId || !ddo.nftAddress || !ddo.metadata) {
+    let ddoChainId, nftAddress, metadata, credentials
+
+    if (isVerifiableCredential(ddo)) {
+      ;({
+        chainId: ddoChainId,
+        nftAddress,
+        metadata,
+        credentials
+      } = (ddo as any).credentialSubject)
+    } else {
+      ;({ chainId: ddoChainId, nftAddress, metadata, credentials } = ddo)
+    }
+
+    if (!ddoChainId || !nftAddress || !metadata) {
       CORE_LOGGER.logMessage('Error: DDO malformed or disabled', true)
       return {
         stream: null,
@@ -266,8 +292,8 @@ export class DownloadHandler extends Handler {
     }
 
     // check credentials
-    if (ddo.credentials) {
-      const accessGranted = checkCredentials(ddo.credentials, task.consumerAddress)
+    if (credentials) {
+      const accessGranted = checkCredentials(credentials, task.consumerAddress)
       if (!accessGranted) {
         CORE_LOGGER.logMessage(`Error: Access to asset ${ddo.id} was denied`, true)
         return {
@@ -305,7 +331,7 @@ export class DownloadHandler extends Handler {
     }
     // from now on, we need blockchain checks
     const config = await getConfiguration()
-    const { rpc, network, chainId, fallbackRPCs } = config.supportedNetworks[ddo.chainId]
+    const { rpc, network, chainId, fallbackRPCs } = config.supportedNetworks[ddoChainId]
     let provider
     let blockchain
     try {
@@ -345,7 +371,7 @@ export class DownloadHandler extends Handler {
       }
     }
     // check lifecycle state of the asset
-    const nftContract = getNFTContract(blockchain.getSigner(), ddo.nftAddress)
+    const nftContract = getNFTContract(blockchain.getSigner(), nftAddress)
     const nftState = Number(await nftContract.metaDataState())
     if (nftState !== 0 && nftState !== 5) {
       CORE_LOGGER.logMessage(
@@ -406,7 +432,7 @@ export class DownloadHandler extends Handler {
 
       for (const cluster of c2dClusters) {
         const engine = C2DEngine.getC2DClass(cluster)
-        const environments = await engine.getComputeEnvironments(ddo.chainId)
+        const environments = await engine.getComputeEnvironments(ddoChainId)
         for (const env of environments)
           computeAddrs.push(env.consumerAddress?.toLowerCase())
       }
@@ -447,7 +473,7 @@ export class DownloadHandler extends Handler {
       task.transferTxId,
       task.consumerAddress,
       provider,
-      ddo.nftAddress,
+      nftAddress,
       service.datatokenAddress,
       AssetUtils.getServiceIndexById(ddo, task.serviceId),
       service.timeout,
@@ -472,7 +498,6 @@ export class DownloadHandler extends Handler {
         }
       }
     }
-
     try {
       // 7. Decrypt the url
       const uint8ArrayHex = Uint8Array.from(
@@ -482,7 +507,9 @@ export class DownloadHandler extends Handler {
       // Convert the decrypted bytes back to a string
       const decryptedFilesString = Buffer.from(decryptedUrlBytes).toString()
       const decryptedFileData = JSON.parse(decryptedFilesString)
-      const decriptedFileObject: any = decryptedFileData.files[task.fileIndex]
+      const decriptedFileObject: any = decryptedFileData.files
+        ? decryptedFileData.files[task.fileIndex]
+        : decryptedFileData[task.fileIndex]
       if (!validateFilesStructure(ddo, service, decryptedFileData)) {
         CORE_LOGGER.error(
           'Unauthorized download operation. Decrypted "nftAddress" and "datatokenAddress" do not match the original DDO'
