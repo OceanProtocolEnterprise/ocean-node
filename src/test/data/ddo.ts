@@ -309,15 +309,14 @@ export const ddov5 = {
 
 export const ddoV5VC = {
   '@context': ['https://w3id.org/did/v1'],
-  id: 'did:op:fa0e8fa9550e8eb13392d6eeb9ba9f8111801b332c8d2345b350b3bc66b379d5',
   version: '5.0.0',
   credentialSubject: {
+    id: 'did:op:fa0e8fa9550e8eb13392d6eeb9ba9f8111801b332c8d2345b350b3bc66b379d5',
     metadata: {
       created: '2024-10-03T14:35:20Z',
       updated: '2024-10-03T14:35:20Z',
       type: 'dataset',
       name: 'DDO 5.0.0 Asset',
-      symbol: 'DDOV5',
       description: {
         '@value': 'New asset published using ocean CLI tool with version 5.0.0',
         '@language': 'en',
@@ -377,9 +376,9 @@ export const ddoV5VC = {
 
 export const invalidDDOV5VC = {
   '@context': ['https://w3id.org/did/v1'],
-  id: 'did:op:fa0e8fa9550e8eb13392d6eeb9ba9f8111801b332c8d2345b350b3bc66b379d5',
   version: '5.0.0',
   credentialSubject: {
+    id: 'did:op:fa0e8fa9550e8eb13392d6eeb9ba9f8111801b332c8d2345b350b3bc66b379d5',
     services: [
       {
         id: 'ccb398c50d6abd5b456e8d7242bd856a1767a890b537c2f8c10ba8b8a10e6025',
