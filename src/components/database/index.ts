@@ -354,10 +354,7 @@ export class DdoDatabase {
   getDDOSchema(ddo: Record<string, any>): Schema {
     // Find the schema based on the DDO version OR use the short DDO schema when state !== 0
     let schemaName: string
-    if (
-      (!isVerifiableCredential(ddo) && ddo.nft?.state !== 0) ||
-      (isVerifiableCredential(ddo) && ddo.credentialSubject.nft?.state !== 0)
-    ) {
+    if (ddo.nft?.state !== 0) {
       schemaName = 'op_ddo_short'
     } else if (ddo.version) {
       schemaName = `op_ddo_v${ddo.version}`
@@ -373,12 +370,10 @@ export class DdoDatabase {
   }
 
   async validateDDO(ddo: Record<string, any>): Promise<boolean> {
-    if (isVerifiableCredential(ddo) && ddo.credentialSubject.nft?.state !== 0) {
+    if (ddo.nft?.state !== 0) {
       // Skipping validation for short DDOs as it currently doesn't work
       // TODO: DDO validation needs to be updated to consider the fields required by the schema
       // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
-      return true
-    } else if (!isVerifiableCredential(ddo) && ddo.nft?.state !== 0) {
       return true
     } else {
       let validation

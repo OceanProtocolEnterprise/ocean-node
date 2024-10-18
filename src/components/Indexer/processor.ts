@@ -418,7 +418,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         ddo.credentialSubject.datatokens = this.getTokenInfo(
           ddo.credentialSubject.services
         )
-        ddo.credentialSubject.nft = await this.getNFTInfo(
+        ddo.nft = await this.getNFTInfo(
           ddo.credentialSubject.nftAddress,
           signer,
           owner,

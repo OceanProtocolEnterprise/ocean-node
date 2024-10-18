@@ -45,15 +45,8 @@ export function isOrderingAllowedForAsset(asset: DDO): OrdableAssetResponse {
       reason: `Asset provided is either null, either undefined ${asset}`
     }
   } else if (
-    (!isVerifiableCredential(asset) &&
-      asset.nft &&
-      !(asset.nft.state in [MetadataStates.ACTIVE, MetadataStates.UNLISTED])) ||
-    (isVerifiableCredential(asset) &&
-      (asset as any).credentialSubject.nft &&
-      !(
-        (asset as any).credentialSubject.nft.state in
-        [MetadataStates.ACTIVE, MetadataStates.UNLISTED]
-      ))
+    asset.nft &&
+    !(asset.nft.state in [MetadataStates.ACTIVE, MetadataStates.UNLISTED])
   ) {
     return {
       isOrdable: false,
