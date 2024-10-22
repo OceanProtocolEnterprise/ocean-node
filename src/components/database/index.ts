@@ -551,7 +551,11 @@ export class DdoDatabase {
             })
 
           if (searchResponse.hits.length === 0) {
-            throw new Error(`Document with credentialSubject.id ${did} not found`)
+            const error = new TypesenseError(
+              `Document with credentialSubject.id ${did} not found`
+            )
+            error.httpStatus = 404
+            throw error
           }
 
           // Step 3: Get the internal document ID from the search result

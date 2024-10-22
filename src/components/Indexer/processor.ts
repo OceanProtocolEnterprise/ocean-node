@@ -90,30 +90,32 @@ class BaseEventProcessor {
     try {
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
       const saveDDO = await ddoDatabase.update({ ...ddo })
-      const did = isVerifiableCredential(saveDDO)
-        ? saveDDO.credentialSubject.id
-        : saveDDO.id
-      if (isVerifiableCredential(saveDDO)) {
-        await ddoState.update(
-          this.networkId,
-          did,
-          saveDDO.credentialSubject.nftAddress,
-          saveDDO.credentialSubject.event?.tx,
-          true
-        )
-      } else {
-        await ddoState.update(
-          this.networkId,
-          did,
-          saveDDO.nftAddress,
-          saveDDO.event?.tx,
-          true
+      if (saveDDO) {
+        const did = isVerifiableCredential(saveDDO)
+          ? saveDDO.credentialSubject.id
+          : saveDDO.id
+        if (isVerifiableCredential(saveDDO)) {
+          await ddoState.update(
+            this.networkId,
+            did,
+            saveDDO.credentialSubject.nftAddress,
+            saveDDO.credentialSubject.event?.tx,
+            true
+          )
+        } else {
+          await ddoState.update(
+            this.networkId,
+            did,
+            saveDDO.nftAddress,
+            saveDDO.event?.tx,
+            true
+          )
+        }
+
+        INDEXER_LOGGER.logMessage(
+          `Saved or updated DDO  : ${did} from network: ${this.networkId} triggered by: ${method}`
         )
       }
-
-      INDEXER_LOGGER.logMessage(
-        `Saved or updated DDO  : ${did} from network: ${this.networkId} triggered by: ${method}`
-      )
       return saveDDO
     } catch (err) {
       const { ddoState } = await getDatabase()
