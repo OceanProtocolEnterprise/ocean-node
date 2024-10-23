@@ -35,7 +35,6 @@ import { DDO } from '../../../@types/DDO/DDO.js'
 import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { getNFTContract } from '../../Indexer/utils.js'
 import { OrdableAssetResponse } from '../../../@types/Asset.js'
-import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
 export const FILE_ENCRYPTION_ALGORITHM = 'aes-256-cbc'
 
 export function isOrderingAllowedForAsset(asset: DDO): OrdableAssetResponse {
@@ -186,13 +185,10 @@ export async function handleDownloadUrlCommand(
 }
 
 export function validateFilesStructure(
-  ddo: DDO,
+  nftAddress: string,
   service: Service,
   decriptedFileObject: any
 ): boolean {
-  const nftAddress = isVerifiableCredential(ddo)
-    ? (ddo as any).credentialSubject.nftAddress
-    : ddo.nftAddress
   if (
     (decriptedFileObject.nftAddress &&
       decriptedFileObject.nftAddress?.toLowerCase() !== nftAddress?.toLowerCase()) ||
@@ -203,6 +199,55 @@ export function validateFilesStructure(
     return false
   }
   return true
+}
+
+class DDOProcessorV4 {
+  extractDDOFields(ddo: any): {
+    ddoChainId: number
+    nftAddress: string
+    metadata: any
+    credentials: any
+    id: string
+  } {
+    const { id, chainId: ddoChainId, nftAddress, metadata, credentials } = ddo
+    return { ddoChainId, nftAddress, metadata, credentials, id }
+  }
+}
+
+class DDOProcessorV5 {
+  extractDDOFields(ddo: any): {
+    ddoChainId: number
+    nftAddress: string
+    metadata: any
+    credentials: any
+    id: string
+  } {
+    const {
+      chainId: ddoChainId,
+      nftAddress,
+      metadata,
+      credentials,
+      id
+    } = ddo.credentialSubject
+    return { ddoChainId, nftAddress, metadata, credentials, id }
+  }
+}
+
+class DDOProcessorFactory {
+  static createProcessor(ddo: any): DDOProcessorV5 | DDOProcessorV4 {
+    switch (ddo.version) {
+      case '4.1.0':
+      case '4.3.0':
+      case '4.5.0':
+        return new DDOProcessorV4()
+
+      case '5.0.0':
+        return new DDOProcessorV5()
+
+      default:
+        throw new Error(`Unsupported DDO version: ${ddo.version}`)
+    }
+  }
 }
 
 export class DownloadHandler extends Handler {
@@ -259,19 +304,15 @@ export class DownloadHandler extends Handler {
     }
 
     // 2. Validate ddo and credentials
-    let ddoChainId, nftAddress, metadata, credentials, did
 
-    if (isVerifiableCredential(ddo)) {
-      ;({
-        chainId: ddoChainId,
-        nftAddress,
-        metadata,
-        credentials,
-        id: did
-      } = (ddo as any).credentialSubject)
-    } else {
-      ;({ id: did, chainId: ddoChainId, nftAddress, metadata, credentials } = ddo)
-    }
+    const processor = DDOProcessorFactory.createProcessor(ddo)
+    const {
+      ddoChainId,
+      nftAddress,
+      metadata,
+      credentials,
+      id: did
+    } = processor.extractDDOFields(ddo)
 
     if (!ddoChainId || !nftAddress || !metadata) {
       CORE_LOGGER.logMessage('Error: DDO malformed or disabled', true)
@@ -503,7 +544,7 @@ export class DownloadHandler extends Handler {
       const decriptedFileObject: any = decryptedFileData.files
         ? decryptedFileData.files[task.fileIndex]
         : decryptedFileData[task.fileIndex]
-      if (!validateFilesStructure(ddo, service, decryptedFileData)) {
+      if (!validateFilesStructure(nftAddress, service, decryptedFileData)) {
         CORE_LOGGER.error(
           'Unauthorized download operation. Decrypted "nftAddress" and "datatokenAddress" do not match the original DDO'
         )

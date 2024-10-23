@@ -3,7 +3,6 @@ import { Metadata } from './Metadata'
 import { Credentials } from './Credentials'
 import { Event } from './Event'
 import { Nft } from './Nft'
-import { CredentialSubject } from './CredentialSubject'
 
 /**
  * DID Descriptor Object.
@@ -68,42 +67,4 @@ export interface DDO {
   event?: Event
 
   nft?: Nft
-}
-
-/**
- * DID Descriptor Object.
- * Contains metadata about the asset, and define access in at least one service.
- */
-export interface DDOVC {
-  /**
-   * Contexts used for validation.
-   * @type {string[]}
-   */
-  '@context': string[]
-
-  /**
-   * DID, descentralized ID.
-   * Computed as sha256(address of NFT contract + chainId)
-   * @type {string}
-   */
-  id: string
-
-  /**
-   * Version information in SemVer notation
-   * referring to the DDO spec version
-   * @type {string}
-   */
-  version: string
-
-  /**
-   * Version information in SemVer notation
-   * referring to the DDO spec version
-   * @type {string}
-   */
-  type: string
-
-  /**
-   * @type {CredentialSubject}
-   */
-  credentialSubject: CredentialSubject
 }

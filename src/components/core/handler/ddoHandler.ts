@@ -12,7 +12,7 @@ import {
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { sleep, readStream } from '../../../utils/util.js'
-import { DDO, DDOVC } from '../../../@types/DDO/DDO.js'
+import { DDO } from '../../../@types/DDO/DDO.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { Blockchain } from '../../../utils/blockchain.js'
 import { ethers, isAddress } from 'ethers'
@@ -46,7 +46,6 @@ import {
   wasNFTDeployedByOurFactory
 } from '../../Indexer/utils.js'
 import { validateDDOHash } from '../../../utils/asset.js'
-import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -785,13 +784,58 @@ export class FindDdoHandler extends Handler {
   }
 }
 
+class DDOProcessorV4 {
+  getDDOId(ddo: any): string {
+    return ddo.id
+  }
+
+  async validateDDO(ddo: any): Promise<[boolean, Record<string, string[]>]> {
+    return await validateObject(ddo, ddo.chainId, ddo.nftAddress)
+  }
+}
+
+class DDOProcessorV5 {
+  getDDOId(ddo: any): string {
+    return ddo.credentialSubject.id
+  }
+
+  async validateDDO(ddo: any): Promise<[boolean, Record<string, string[]>]> {
+    return await validateObject(
+      ddo,
+      ddo.credentialSubject.chainId,
+      ddo.credentialSubject.nftAddress
+    )
+  }
+}
+
+class DDOProcessorFactory {
+  static createProcessor(ddo: any): DDOProcessorV5 | DDOProcessorV4 {
+    switch (ddo.version) {
+      case '4.1.0':
+      case '4.3.0':
+      case '4.5.0':
+        return new DDOProcessorV4()
+
+      case '5.0.0':
+        return new DDOProcessorV5()
+
+      default:
+        throw new Error(`Unsupported DDO version: ${ddo.version}`)
+    }
+  }
+}
+
 export class ValidateDDOHandler extends Handler {
   validate(command: ValidateDDOCommand): ValidateParams {
     let validation = validateCommandParameters(command, ['ddo'])
     if (validation.valid) {
-      const ddoId = isVerifiableCredential(command.ddo)
-        ? (command.ddo as any).credentialSubject.id
-        : command.ddo.id
+      // Use the factory to create a processor based on the DDO version or structure
+      const processor = DDOProcessorFactory.createProcessor(command.ddo)
+
+      // Get the DDO identifier using the processor
+      const ddoId = processor.getDDOId(command.ddo)
+
+      // Validate the DDO identifier
       validation = validateDDOIdentifier(ddoId)
     }
 
@@ -803,17 +847,13 @@ export class ValidateDDOHandler extends Handler {
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
+
     try {
-      let validation
-      if (isVerifiableCredential(task.ddo)) {
-        validation = await validateObject(
-          task.ddo,
-          (task.ddo as any as DDOVC).credentialSubject.chainId,
-          (task.ddo as any as DDOVC).credentialSubject.nftAddress
-        )
-      } else {
-        validation = await validateObject(task.ddo, task.ddo.chainId, task.ddo.nftAddress)
-      }
+      // Use the factory to create a processor for DDO validation
+      const processor = DDOProcessorFactory.createProcessor(task.ddo)
+
+      // Validate the DDO using the processor
+      const validation = await processor.validateDDO(task.ddo)
 
       if (validation[0] === false) {
         CORE_LOGGER.logMessageWithEmoji(
@@ -827,6 +867,8 @@ export class ValidateDDOHandler extends Handler {
           status: { httpStatus: 400, error: `Validation error: ${validation[1]}` }
         }
       }
+
+      // Generate signature for the validated DDO
       const signature = await getValidationSignature(JSON.stringify(task.ddo))
       return {
         stream: Readable.from(JSON.stringify(signature)),

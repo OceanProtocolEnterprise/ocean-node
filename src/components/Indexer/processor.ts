@@ -345,6 +345,125 @@ class BaseEventProcessor {
   }
 }
 
+class V4EventProcessor extends BaseEventProcessor {
+  async processEventNft(
+    ddo: any,
+    chainId: number,
+    signer: Signer,
+    owner: string,
+    event: ethers.Log,
+    decodedEventData: ethers.LogDescription
+  ): Promise<any> {
+    // V4 specific logic, using DDO_V4 structure
+    ddo.chainId = chainId
+    ddo.nftAddress = event.address
+    ddo.datatokens = this.getTokenInfo(ddo.services)
+    ddo.nft = await this.getNFTInfo(
+      ddo.nftAddress,
+      signer,
+      owner,
+      parseInt(decodedEventData.args[6])
+    )
+    const did = ddo.id
+    return { ddo, did }
+  }
+
+  async processEventUpdated(
+    ddo: any,
+    event: ethers.Log,
+    from: string,
+    provider: JsonRpcApiProvider
+  ): Promise<any> {
+    if (!ddo.event) {
+      ddo.event = {}
+    }
+    ddo.event.tx = event.transactionHash
+    ddo.event.from = from
+    ddo.event.contract = event.address
+    if (event.blockNumber) {
+      ddo.event.block = event.blockNumber
+      // try get block & timestamp from block (only wait 2.5 secs maximum)
+      const promiseFn = provider.getBlock(event.blockNumber)
+      const result = await asyncCallWithTimeout(promiseFn, 2500)
+      if (result.data !== null && !result.timeout) {
+        ddo.event.datetime = new Date(result.data.timestamp * 1000).toJSON()
+      }
+    } else {
+      ddo.event.block = -1
+    }
+    return ddo
+  }
+}
+
+class V5EventProcessor extends BaseEventProcessor {
+  async processEventNft(
+    ddo: any,
+    chainId: number,
+    signer: Signer,
+    owner: string,
+    event: ethers.Log,
+    decodedEventData: ethers.LogDescription
+  ): Promise<any> {
+    // Specific logic for DDO version 5.0.0 (VerifiableCredential)
+    ddo.credentialSubject.chainId = chainId
+    ddo.credentialSubject.nftAddress = event.address
+    ddo.credentialSubject.datatokens = this.getTokenInfo(ddo.credentialSubject.services)
+    ddo.nft = await this.getNFTInfo(
+      ddo.credentialSubject.nftAddress,
+      signer,
+      owner,
+      parseInt(decodedEventData.args[6])
+    )
+    const did = ddo.credentialSubject.id
+    return { ddo, did }
+  }
+
+  async processEventUpdated(
+    ddo: any,
+    event: ethers.Log,
+    from: string,
+    provider: JsonRpcApiProvider
+  ): Promise<any> {
+    if (!ddo.credentialSubject.event) {
+      ddo.credentialSubject.event = {}
+    }
+    ddo.credentialSubject.event.tx = event.transactionHash
+    ddo.credentialSubject.event.from = from
+    ddo.credentialSubject.event.contract = event.address
+    if (event.blockNumber) {
+      ddo.credentialSubject.event.block = event.blockNumber
+      const promiseFn = provider.getBlock(event.blockNumber)
+      const result = await asyncCallWithTimeout(promiseFn, 2500)
+      if (result.data !== null && !result.timeout) {
+        ddo.credentialSubject.event.datetime = new Date(
+          result.data.timestamp * 1000
+        ).toJSON()
+      }
+    } else {
+      ddo.credentialSubject.event.block = -1
+    }
+    return ddo
+  }
+}
+
+type EventProcessorType = V4EventProcessor | V5EventProcessor
+class DDOProcessorFactory {
+  static createProcessor(ddo: any): EventProcessorType {
+    switch (ddo.version) {
+      case '4.1.0':
+      case '4.3.0':
+      case '4.5.0':
+        return new V4EventProcessor(ddo.chainId)
+
+      case '5.0.0':
+        return new V5EventProcessor(ddo.credentialSubject.chainId)
+
+      default:
+        throw new Error(`Unsupported DDO version: ${ddo.version}`)
+    }
+  }
+}
+
 export class MetadataEventProcessor extends BaseEventProcessor {
   async processEvent(
     event: ethers.Log,
@@ -353,7 +472,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
     provider: JsonRpcApiProvider,
     eventName: string
   ): Promise<any> {
-    let did = 'did:op'
+    const did = 'did:op'
     try {
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
       const wasDeployedByUs = await wasNFTDeployedByOurFactory(
@@ -389,23 +508,9 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadataHash,
         metadata
       )
+
       const ddoProcessed = await this.processDDO(decryptedDDO)
       let ddo = ddoProcessed
-      if (ddo.encryptedData) {
-        ddo = await this.decryptDDOIPFS(
-          decodedEventData.args[2],
-          owner,
-          ddo.encryptedData
-        )
-      }
-      did = isVerifiableCredential(ddo) ? ddo.credentialSubject.id : ddo.id
-      if (did !== makeDid(event.address, chainId.toString(10))) {
-        INDEXER_LOGGER.error(
-          `Decrypted DDO ID is not matching the generated hash for DID.`
-        )
-        return
-      }
-      // for unencrypted DDOs
       if (
         !isRemoteDDO(decryptedDDO) &&
         parseInt(flag) !== 2 &&
@@ -413,30 +518,30 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       ) {
         return
       }
-      // stuff that we overwrite
-      if (isVerifiableCredential(ddo)) {
-        ddo.credentialSubject.chainId = chainId
-        ddo.credentialSubject.nftAddress = event.address
-        ddo.credentialSubject.datatokens = this.getTokenInfo(
-          ddo.credentialSubject.services
-        )
-        ddo.nft = await this.getNFTInfo(
-          ddo.credentialSubject.nftAddress,
-          signer,
+      if (ddo.encryptedData) {
+        ddo = await this.decryptDDOIPFS(
+          decodedEventData.args[2],
           owner,
-          parseInt(decodedEventData.args[6])
-        )
-      } else {
-        ddo.chainId = chainId
-        ddo.nftAddress = event.address
-        ddo.datatokens = this.getTokenInfo(ddo.services)
-        ddo.nft = await this.getNFTInfo(
-          ddo.nftAddress,
-          signer,
-          owner,
-          parseInt(decodedEventData.args[6])
+          ddo.encryptedData
         )
       }
+      const processor = DDOProcessorFactory.createProcessor(ddo)
+      const { ddo: processedDDO, did } = await processor.processEventNft(
+        ddo,
+        chainId,
+        signer,
+        owner,
+        event,
+        decodedEventData
+      )
+      ddo = processedDDO
+      if (did !== makeDid(event.address, chainId.toString(10))) {
+        INDEXER_LOGGER.error(
+          `Decrypted DDO ID is not matching the generated hash for DID.`
+        )
+        return
+      }
+
       INDEXER_LOGGER.logMessage(
         `Processed new DDO data ${did} with txHash ${event.transactionHash} from block ${event.blockNumber}`,
         true
@@ -498,44 +603,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
       // we need to store the event data (either metadata created or update and is updatable)
       if ([EVENTS.METADATA_CREATED, EVENTS.METADATA_UPDATED].includes(eventName)) {
-        if (isVerifiableCredential(ddo)) {
-          if (!ddo.credentialSubject.event) {
-            ddo.credentialSubject.event = {}
-          }
-          ddo.credentialSubject.event.tx = event.transactionHash
-          ddo.credentialSubject.event.from = from
-          ddo.credentialSubject.event.contract = event.address
-          if (event.blockNumber) {
-            ddo.credentialSubject.event.block = event.blockNumber
-            const promiseFn = provider.getBlock(event.blockNumber)
-            const result = await asyncCallWithTimeout(promiseFn, 2500)
-            if (result.data !== null && !result.timeout) {
-              ddo.credentialSubject.event.datetime = new Date(
-                result.data.timestamp * 1000
-              ).toJSON()
-            }
-          } else {
-            ddo.credentialSubject.event.block = -1
-          }
-        } else {
-          if (!ddo.event) {
-            ddo.event = {}
-          }
-          ddo.event.tx = event.transactionHash
-          ddo.event.from = from
-          ddo.event.contract = event.address
-          if (event.blockNumber) {
-            ddo.event.block = event.blockNumber
-            // try get block & timestamp from block (only wait 2.5 secs maximum)
-            const promiseFn = provider.getBlock(event.blockNumber)
-            const result = await asyncCallWithTimeout(promiseFn, 2500)
-            if (result.data !== null && !result.timeout) {
-              ddo.event.datetime = new Date(result.data.timestamp * 1000).toJSON()
-            }
-          } else {
-            ddo.event.block = -1
-          }
-        }
+        ddo = await processor.processEventUpdated(ddo, event, from, provider)
       }
 
       // always call, but only create instance once
