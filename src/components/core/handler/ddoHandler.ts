@@ -22,8 +22,7 @@ import lzmajs from 'lzma-purejs-requirejs'
 import {
   isRemoteDDO,
   getValidationSignature,
-  makeDid,
-  validateObject
+  makeDid
 } from '../utils/validateDdoHandler.js'
 import { getConfiguration } from '../../../utils/config.js'
 import {
@@ -46,6 +45,7 @@ import {
   wasNFTDeployedByOurFactory
 } from '../../Indexer/utils.js'
 import { validateDDOHash } from '../../../utils/asset.js'
+import { DDOProcessorFactory } from '../utils/DDOFactory.js'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -784,47 +784,6 @@ export class FindDdoHandler extends Handler {
   }
 }
 
-class DDOProcessorV4 {
-  getDDOId(ddo: any): string {
-    return ddo.id
-  }
-
-  async validateDDO(ddo: any): Promise<[boolean, Record<string, string[]>]> {
-    return await validateObject(ddo, ddo.chainId, ddo.nftAddress)
-  }
-}
-
-class DDOProcessorV5 {
-  getDDOId(ddo: any): string {
-    return ddo.credentialSubject.id
-  }
-
-  async validateDDO(ddo: any): Promise<[boolean, Record<string, string[]>]> {
-    return await validateObject(
-      ddo,
-      ddo.credentialSubject.chainId,
-      ddo.credentialSubject.nftAddress
-    )
-  }
-}
-
-class DDOProcessorFactory {
-  static createProcessor(ddo: any): DDOProcessorV5 | DDOProcessorV4 {
-    switch (ddo.version) {
-      case '4.1.0':
-      case '4.3.0':
-      case '4.5.0':
-        return new DDOProcessorV4()
-
-      case '5.0.0':
-        return new DDOProcessorV5()
-
-      default:
-        throw new Error(`Unsupported DDO version: ${ddo.version}`)
-    }
-  }
-}
-
 export class ValidateDDOHandler extends Handler {
   validate(command: ValidateDDOCommand): ValidateParams {
     let validation = validateCommandParameters(command, ['ddo'])
@@ -833,7 +792,7 @@ export class ValidateDDOHandler extends Handler {
       const processor = DDOProcessorFactory.createProcessor(command.ddo)
 
       // Get the DDO identifier using the processor
-      const ddoId = processor.getDDOId(command.ddo)
+      const { did: ddoId } = processor.extractDDOFields(command.ddo as any)
 
       // Validate the DDO identifier
       validation = validateDDOIdentifier(ddoId)
@@ -850,7 +809,7 @@ export class ValidateDDOHandler extends Handler {
 
     try {
       // Use the factory to create a processor for DDO validation
-      const processor = DDOProcessorFactory.createProcessor(task.ddo)
+      const processor = DDOProcessorFactory.createProcessor(task.ddo as any)
 
       // Validate the DDO using the processor
       const validation = await processor.validateDDO(task.ddo)

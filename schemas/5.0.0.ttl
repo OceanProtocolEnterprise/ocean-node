@@ -30,6 +30,20 @@ schema:VerifiableCredentialShape
         sh:datatype xsd:string ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
+    ] ;
+     sh:property [
+        sh:path schema:proof ;
+        sh:node schema:ProofShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ; .
+
+schema:ProofShape
+    sh:property [
+        sh:path schema:jws ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
     ] ; .
 
 schema:CredentialSubjectShape

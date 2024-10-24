@@ -29,7 +29,7 @@ import { DecryptDDOCommand } from '../../@types/commands.js'
 import { isRemoteDDO, makeDid } from '../core/utils/validateDdoHandler.js'
 import { create256Hash } from '../../utils/crypt.js'
 import { URLUtils } from '../../utils/url.js'
-import { isVerifiableCredential } from '../../utils/verifiableCredential.js'
+import { DDOProcessorFactory } from '../core/utils/DDOFactory.js'
 
 class BaseEventProcessor {
   protected networkId: number
@@ -91,26 +91,12 @@ class BaseEventProcessor {
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
       const saveDDO = await ddoDatabase.update({ ...ddo })
       if (saveDDO) {
-        const did = isVerifiableCredential(saveDDO)
-          ? saveDDO.credentialSubject.id
-          : saveDDO.id
-        if (isVerifiableCredential(saveDDO)) {
-          await ddoState.update(
-            this.networkId,
-            did,
-            saveDDO.credentialSubject.nftAddress,
-            saveDDO.credentialSubject.event?.tx,
-            true
-          )
-        } else {
-          await ddoState.update(
-            this.networkId,
-            did,
-            saveDDO.nftAddress,
-            saveDDO.event?.tx,
-            true
-          )
-        }
+        const processor = DDOProcessorFactory.createProcessor(saveDDO)
+
+        // Get the DDO identifier using the processor
+        const { did, nftAddress, event } = processor.extractDDOFields(saveDDO as any)
+
+        await ddoState.update(this.networkId, did, nftAddress, event?.tx, true)
 
         INDEXER_LOGGER.logMessage(
           `Saved or updated DDO  : ${did} from network: ${this.networkId} triggered by: ${method}`
@@ -119,26 +105,12 @@ class BaseEventProcessor {
       return saveDDO
     } catch (err) {
       const { ddoState } = await getDatabase()
-      const did = isVerifiableCredential(ddo) ? ddo.credentialSubject.id : ddo.id
-      if (isVerifiableCredential(ddo)) {
-        await ddoState.update(
-          this.networkId,
-          did,
-          ddo.credentialSubject.nftAddress,
-          ddo.credentialSubject.event?.tx,
-          true,
-          err.message
-        )
-      } else {
-        await ddoState.update(
-          this.networkId,
-          did,
-          ddo.nftAddress,
-          ddo.event?.tx,
-          true,
-          err.message
-        )
-      }
+      const processor = DDOProcessorFactory.createProcessor(ddo)
+
+      // Get the DDO identifier using the processor
+      const { did, nftAddress, event } = processor.extractDDOFields(ddo as any)
+
+      await ddoState.update(this.networkId, did, nftAddress, event?.tx, true, err.message)
 
       INDEXER_LOGGER.log(
         LOG_LEVELS_STR.LEVEL_ERROR,
@@ -447,7 +419,7 @@ class V5EventProcessor extends BaseEventProcessor {
 }
 
 type EventProcessorType = V4EventProcessor | V5EventProcessor
-class DDOProcessorFactory {
+class DDOProcessorEventFactory {
   static createProcessor(ddo: any): EventProcessorType {
     switch (ddo.version) {
       case '4.1.0':
@@ -525,7 +497,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           ddo.encryptedData
         )
       }
-      const processor = DDOProcessorFactory.createProcessor(ddo)
+      const processor = DDOProcessorEventFactory.createProcessor(ddo)
       const { ddo: processedDDO, did } = await processor.processEventNft(
         ddo,
         chainId,
@@ -667,15 +639,12 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
   isUpdateable(previousDdo: any, txHash: string, block: number): [boolean, string] {
     let errorMsg: string
-    let ddoTxId: string
-    let ddoBlock
-    if (isVerifiableCredential(previousDdo)) {
-      ddoTxId = previousDdo.credentialSubject.event.tx
-      ddoBlock = previousDdo.credentialSubject.event.block
-    } else {
-      ddoTxId = previousDdo.event.tx
-      ddoBlock = previousDdo.event.block
-    }
+    const processor = DDOProcessorFactory.createProcessor(previousDdo)
+
+    // Get the DDO identifier using the processor
+    const { event } = processor.extractDDOFields(previousDdo as any)
+    const ddoTxId = event.tx
+    const ddoBlock = event.block
 
     // do not update if we have the same txid
     if (txHash === ddoTxId) {

@@ -1,8 +1,17 @@
-import { Credentials, Service } from 'aws-sdk'
-import { Metadata } from 'aws-sdk/clients/appstream'
 import { Nft } from './Nft'
+import { Service } from './Service'
+import { Credentials } from './Credentials'
+import { Metadata } from './Metadata'
+import { Event } from './Event'
 
 export interface CredentialSubject {
+  /**
+   * DID, descentralized ID.
+   * Computed as sha256(address of NFT contract + chainId)
+   * @type {string}
+   */
+  id: string
+
   /**
    * NFT contract address
    * @type {string}

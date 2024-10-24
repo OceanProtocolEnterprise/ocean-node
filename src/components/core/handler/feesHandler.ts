@@ -16,7 +16,7 @@ import { ProviderInitialize } from '../../../@types/Fees.js'
 import { getNonce } from '../utils/nonceHandler.js'
 import { streamToString } from '../../../utils/util.js'
 import { isOrderingAllowedForAsset } from './downloadHandler.js'
-import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
+import { DDOProcessorFactory } from '../utils/DDOFactory.js'
 
 export class FeesHandler extends Handler {
   validate(command: GetFeesCommand): ValidateParams {
@@ -58,9 +58,11 @@ export class FeesHandler extends Handler {
         }
       }
     }
-    const services = isVerifiableCredential(ddo)
-      ? (ddo as any).credentialSubject.services
-      : ddo.services
+    const processor = DDOProcessorFactory.createProcessor(ddo)
+
+    // Get the DDO identifier using the processor
+    const { services } = processor.extractDDOFields(ddo as any)
+
     const service = services.find((what: any) => what.id === task.serviceId)
     if (!service) {
       errorMsg = 'Invalid serviceId'

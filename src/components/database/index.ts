@@ -15,7 +15,7 @@ import { SQLiteProvider } from './sqlite.js'
 import { URLUtils } from '../../utils/url.js'
 import fs from 'fs'
 import path from 'path'
-import { isVerifiableCredential } from '../../utils/verifiableCredential.js'
+import { DDOProcessorFactory } from '../core/utils/DDOFactory.js'
 
 export class OrderDatabase {
   private provider: Typesense
@@ -376,17 +376,11 @@ export class DdoDatabase {
       // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
       return true
     } else {
-      let validation
-      const did = isVerifiableCredential(ddo) ? ddo.credentialSubject.id : ddo.id
-      if (isVerifiableCredential(ddo)) {
-        validation = await validateObject(
-          ddo,
-          ddo.credentialSubject.chainId,
-          ddo.credentialSubject.nftAddress
-        )
-      } else {
-        validation = await validateObject(ddo, ddo.chainId, ddo.nftAddress)
-      }
+      const processor = DDOProcessorFactory.createProcessor(ddo)
+      const { did, chainId, nftAddress } = processor.extractDDOFields(ddo as any)
+
+      const validation = await validateObject(ddo, chainId, nftAddress)
+
       if (validation[0] === true) {
         DATABASE_LOGGER.logMessageWithEmoji(
           `Validation of DDO with did: ${did} has passed`,
@@ -457,7 +451,11 @@ export class DdoDatabase {
   }
 
   async create(ddo: Record<string, any>) {
-    const did = isVerifiableCredential(ddo) ? ddo.credentialSubject.id : ddo.id
+    const processor = DDOProcessorFactory.createProcessor(ddo)
+
+    // Get the DDO identifier using the processor
+    const { did } = processor.extractDDOFields(ddo as any)
+
     const schema = this.getDDOSchema(ddo)
     if (!schema) {
       throw new Error(`Schema for version ${ddo.version} not found`)
@@ -533,7 +531,10 @@ export class DdoDatabase {
   }
 
   async update(ddo: Record<string, any>) {
-    const did = isVerifiableCredential(ddo) ? ddo.credentialSubject.id : ddo.id
+    const processor = DDOProcessorFactory.createProcessor(ddo)
+
+    // Get the DDO identifier using the processor
+    const { did } = processor.extractDDOFields(ddo as any)
     const schema = this.getDDOSchema(ddo)
     if (!schema) {
       throw new Error(`Schema for version ${ddo.version} not found`)

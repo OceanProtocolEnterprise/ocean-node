@@ -11,7 +11,6 @@ import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { create256Hash } from '../../../utils/crypt.js'
 import { getProviderWallet } from './feesHandler.js'
 import { Readable } from 'stream'
-import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
 
 const CURRENT_VERSION = '4.5.0'
 const ALLOWED_VERSIONS = ['4.1.0', '4.3.0', '4.5.0', '5.0.0']
@@ -58,7 +57,11 @@ export async function validateObject(
   const ddoCopy = JSON.parse(JSON.stringify(obj))
   // Handle different version-specific logic
   const version = ddoCopy.version || CURRENT_VERSION
-  if (isVerifiableCredential(ddoCopy)) {
+  if (
+    ddoCopy.type &&
+    Array.isArray(ddoCopy.type) &&
+    ddoCopy.type.includes('VerifiableCredential')
+  ) {
     ddoCopy['@type'] = 'VerifiableCredential'
   } else {
     ddoCopy['@type'] = 'DDO'

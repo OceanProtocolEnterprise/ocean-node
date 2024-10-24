@@ -14,7 +14,7 @@ import {
 import { CommandStatus, JobStatus } from '../../@types/commands.js'
 import { buildJobIdentifier } from './utils.js'
 import { create256Hash } from '../../utils/crypt.js'
-import { isVerifiableCredential } from '../../utils/verifiableCredential.js'
+import { DDOProcessorFactory } from '../core/utils/DDOFactory.js'
 
 // emmit events for node
 export const INDEXER_DDO_EVENT_EMITTER = new EventEmitter()
@@ -137,9 +137,10 @@ export class OceanIndexer {
               ].includes(event.method)
             ) {
               // will emit the metadata created/updated event and advertise it to the other peers (on create only)
-              const did = isVerifiableCredential(event.data)
-                ? event.data.credentialSubject.id
-                : event.data.id
+              const processor = DDOProcessorFactory.createProcessor(event.data)
+
+              // Get the DDO identifier using the processor
+              const { did } = processor.extractDDOFields(event.data)
               INDEXER_LOGGER.logMessage(
                 `Emiting "${event.method}" for DDO : ${did} from network: ${network} `
               )

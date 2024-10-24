@@ -27,7 +27,8 @@ import { getOceanArtifactsAdresses } from '../../../utils/address.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
 import { fetchEventFromTransaction } from '../../../utils/util.js'
 import { fetchTransactionReceipt } from './validateOrders.js'
-import { isVerifiableCredential } from '../../../utils/verifiableCredential.js'
+import { DDOProcessorFactory } from './DDOFactory.js'
+import { VerifiableCredential } from '../../../@types/DDO/VerifiableCredential.js'
 
 async function calculateProviderFeeAmount(
   validUntil: number,
@@ -51,16 +52,17 @@ async function calculateProviderFeeAmount(
 }
 
 export async function createProviderFee(
-  asset: DDO,
+  asset: DDO | VerifiableCredential,
   service: Service,
   validUntil: number,
   computeEnv: ComputeEnvironment,
   computeValidUntil: number
 ): Promise<ProviderFees> | undefined {
   // round for safety
-  const chainId = isVerifiableCredential(asset)
-    ? (asset as any).credentialSubject.chainId
-    : asset.chainId
+  const processor = DDOProcessorFactory.createProcessor(asset)
+
+  // Get the DDO identifier using the processor
+  const { chainId } = processor.extractDDOFields(asset as any)
   validUntil = Math.round(validUntil)
   computeValidUntil = Math.round(computeValidUntil)
   const providerData = {

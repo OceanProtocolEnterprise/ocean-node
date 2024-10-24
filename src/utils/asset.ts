@@ -5,23 +5,26 @@ import { DDO_IDENTIFIER_PREFIX } from './constants.js'
 import { CORE_LOGGER } from './logging/common.js'
 import { createHash } from 'crypto'
 import { getAddress } from 'ethers'
-import { isVerifiableCredential } from './verifiableCredential.js'
+import { DDOProcessorFactory } from '../components/core/utils/DDOFactory.js'
 
 // Notes:
 // Asset as per asset.py on provider, is a class there, while on ocean.Js we only have a type
 // this is an utility to extract information from the Asset services
 export const AssetUtils = {
   getServiceIndexById(asset: DDO, id: string): number | null {
-    const services = isVerifiableCredential(asset)
-      ? (asset as any).credentialSubject.services
-      : asset.services
+    const processor = DDOProcessorFactory.createProcessor(asset)
+
+    // Get the DDO identifier using the processor
+    const { services } = processor.extractDDOFields(asset as any)
+
     for (let c = 0; c < services.length; c++) if (services[c].id === id) return c
     return null
   },
   getServiceByIndex(asset: DDO, index: number): Service | null {
-    const services = isVerifiableCredential(asset)
-      ? (asset as any).credentialSubject.services
-      : asset.services
+    const processor = DDOProcessorFactory.createProcessor(asset)
+
+    // Get the DDO identifier using the processor
+    const { services } = processor.extractDDOFields(asset as any)
     if (index >= 0 && index < services.length) {
       return services[index]
     }
@@ -29,9 +32,10 @@ export const AssetUtils = {
   },
 
   getServiceById(asset: DDO, id: string): Service | null {
-    const servicesToSearch = isVerifiableCredential(asset)
-      ? (asset as any).credentialSubject.services
-      : asset.services
+    const processor = DDOProcessorFactory.createProcessor(asset)
+
+    // Get the DDO identifier using the processor
+    const { services: servicesToSearch } = processor.extractDDOFields(asset as any)
     const services = servicesToSearch.filter((service: Service) => service.id === id)
     return services.length ? services[0] : null
   }

@@ -35,6 +35,7 @@ import { DDO } from '../../../@types/DDO/DDO.js'
 import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { getNFTContract } from '../../Indexer/utils.js'
 import { OrdableAssetResponse } from '../../../@types/Asset.js'
+import { DDOProcessorFactory } from '../utils/DDOFactory.js'
 export const FILE_ENCRYPTION_ALGORITHM = 'aes-256-cbc'
 
 export function isOrderingAllowedForAsset(asset: DDO): OrdableAssetResponse {
@@ -201,55 +202,6 @@ export function validateFilesStructure(
   return true
 }
 
-class DDOProcessorV4 {
-  extractDDOFields(ddo: any): {
-    ddoChainId: number
-    nftAddress: string
-    metadata: any
-    credentials: any
-    id: string
-  } {
-    const { id, chainId: ddoChainId, nftAddress, metadata, credentials } = ddo
-    return { ddoChainId, nftAddress, metadata, credentials, id }
-  }
-}
-
-class DDOProcessorV5 {
-  extractDDOFields(ddo: any): {
-    ddoChainId: number
-    nftAddress: string
-    metadata: any
-    credentials: any
-    id: string
-  } {
-    const {
-      chainId: ddoChainId,
-      nftAddress,
-      metadata,
-      credentials,
-      id
-    } = ddo.credentialSubject
-    return { ddoChainId, nftAddress, metadata, credentials, id }
-  }
-}
-
-class DDOProcessorFactory {
-  static createProcessor(ddo: any): DDOProcessorV5 | DDOProcessorV4 {
-    switch (ddo.version) {
-      case '4.1.0':
-      case '4.3.0':
-      case '4.5.0':
-        return new DDOProcessorV4()
-
-      case '5.0.0':
-        return new DDOProcessorV5()
-
-      default:
-        throw new Error(`Unsupported DDO version: ${ddo.version}`)
-    }
-  }
-}
-
 export class DownloadHandler extends Handler {
   validate(command: DownloadCommand): ValidateParams {
     return validateCommandParameters(command, [
@@ -307,12 +259,12 @@ export class DownloadHandler extends Handler {
 
     const processor = DDOProcessorFactory.createProcessor(ddo)
     const {
-      ddoChainId,
+      chainId: ddoChainId,
       nftAddress,
       metadata,
       credentials,
-      id: did
-    } = processor.extractDDOFields(ddo)
+      did
+    } = processor.extractDDOFields(ddo as any)
 
     if (!ddoChainId || !nftAddress || !metadata) {
       CORE_LOGGER.logMessage('Error: DDO malformed or disabled', true)
