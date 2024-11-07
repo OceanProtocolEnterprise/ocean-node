@@ -49,7 +49,6 @@ export abstract class Storage {
   // similar to all subclasses
   async getReadableStream(): Promise<StorageReadable> {
     const input = this.getDownloadUrl()
-    console.log('input:', input)
     const response = await axios({
       method: 'get',
       url: input,

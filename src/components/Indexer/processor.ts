@@ -377,17 +377,18 @@ class V5EventProcessor extends BaseEventProcessor {
     decodedEventData: ethers.LogDescription
   ): Promise<any> {
     // Specific logic for DDO version 5.0.0 (VerifiableCredential)
-    ddo.credentialSubject.chainId = chainId
-    ddo.credentialSubject.nftAddress = event.address
-    ddo.credentialSubject.datatokens = this.getTokenInfo(ddo.credentialSubject.services)
-    ddo.nft = await this.getNFTInfo(
-      ddo.credentialSubject.nftAddress,
+    const vc = ddo.payload
+    vc.credentialSubject.chainId = chainId
+    vc.credentialSubject.nftAddress = event.address
+    vc.credentialSubject.datatokens = this.getTokenInfo(vc.credentialSubject.services)
+    vc.nft = await this.getNFTInfo(
+      vc.credentialSubject.nftAddress,
       signer,
       owner,
       parseInt(decodedEventData.args[6])
     )
-    const did = ddo.credentialSubject.id
-    return { ddo, did }
+    const did = vc.credentialSubject.id
+    return { ddo: vc, did }
   }
 
   async processEventUpdated(
@@ -421,17 +422,22 @@ class V5EventProcessor extends BaseEventProcessor {
 type EventProcessorType = V4EventProcessor | V5EventProcessor
 class DDOProcessorEventFactory {
   static createProcessor(ddo: any): EventProcessorType {
-    switch (ddo.version) {
+    let { version } = ddo
+    if (ddo.payload) {
+      // eslint-disable-next-line prefer-destructuring
+      version = ddo.payload.version
+    }
+    switch (version) {
       case '4.1.0':
       case '4.3.0':
       case '4.5.0':
         return new V4EventProcessor(ddo.chainId)
 
       case '5.0.0':
-        return new V5EventProcessor(ddo.credentialSubject.chainId)
+        return new V5EventProcessor(ddo.payload.credentialSubject.chainId)
 
       default:
-        throw new Error(`Unsupported DDO version: ${ddo.version}`)
+        throw new Error(`Unsupported DDO version: ${version}`)
     }
   }
 }
