@@ -29,7 +29,8 @@ import {
   setupEnvironment,
   tearDownEnvironment,
   OverrideEnvConfig,
-  buildEnvOverrideConfig
+  buildEnvOverrideConfig,
+  DEFAULT_TEST_TIMEOUT
 } from '../utils/utils.js'
 import { ENVIRONMENT_VARIABLES, EVENTS } from '../../utils/constants.js'
 import { homedir } from 'os'
@@ -190,7 +191,7 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
 
   it('should store the ddo in the database and return it ', async () => {
     const did = makeDid(getAddress(nftAddress), chainId.toString(10))
-    resolvedDDO = await waitToIndex(did, EVENTS.METADATA_CREATED)
+    resolvedDDO = await waitToIndex(did, EVENTS.METADATA_CREATED, DEFAULT_TEST_TIMEOUT)
     if (resolvedDDO) {
       expect(resolvedDDO.ddo.id).to.equal(did)
     }
