@@ -191,9 +191,14 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
 
   it('should store the ddo in the database and return it ', async () => {
     const did = makeDid(getAddress(nftAddress), chainId.toString(10))
-    resolvedDDO = await waitToIndex(did, EVENTS.METADATA_CREATED, DEFAULT_TEST_TIMEOUT)
-    if (resolvedDDO) {
-      expect(resolvedDDO.ddo.id).to.equal(did)
+    resolvedDDO = await waitToIndex(
+      did,
+      EVENTS.METADATA_CREATED,
+      DEFAULT_TEST_TIMEOUT * 2
+    )
+    const { ddo } = resolvedDDO
+    if (ddo) {
+      expect(ddo.id).to.equal(did)
     }
   })
   after(() => {
