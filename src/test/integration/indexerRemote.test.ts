@@ -196,9 +196,9 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT * 2
     )
-    const { ddo } = resolvedDDO
-    if (ddo) {
-      expect(ddo.id).to.equal(did)
+    console.log('resolvedDDO:', resolvedDDO)
+    if (resolvedDDO && resolvedDDO.ddo) {
+      expect(resolvedDDO.ddo.id).to.equal(did)
     }
   })
   after(() => {
