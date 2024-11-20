@@ -680,7 +680,7 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
       if (
         'stats' in ddo &&
         ddo.services[serviceIndex].datatokenAddress?.toLowerCase() ===
-        event.address?.toLowerCase()
+          event.address?.toLowerCase()
       ) {
         ddo.stats.orders += 1
       } else {
