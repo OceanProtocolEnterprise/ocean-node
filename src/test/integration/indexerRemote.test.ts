@@ -35,6 +35,7 @@ import { ENVIRONMENT_VARIABLES, EVENTS } from '../../utils/constants.js'
 import { homedir } from 'os'
 import { OceanNode } from '../../OceanNode.js'
 import axios from 'axios'
+import { getConfiguration } from '../../utils/index.js'
 
 function uploadToIpfs(data: any): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -83,9 +84,7 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
   const mockSupportedNetworks: RPCS = getMockSupportedNetworks()
 
   before(async () => {
-    const dbConfig = {
-      url: 'http://localhost:8108/?apiKey=xyz'
-    }
+    const config = await getConfiguration(true)
 
     previousConfiguration = await setupEnvironment(
       null,
@@ -99,13 +98,13 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
         [
           JSON.stringify(mockSupportedNetworks),
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
-          dbConfig.url,
+          config.dbConfig.url,
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`
         ]
       )
     )
 
-    database = await new Database(dbConfig)
+    database = await new Database(config.dbConfig)
     indexer = new OceanIndexer(database, mockSupportedNetworks)
     oceanNode = await OceanNode.getInstance(database)
     let artifactsAddresses = getOceanArtifactsAdressesByChainId(DEVELOPMENT_CHAIN_ID)
