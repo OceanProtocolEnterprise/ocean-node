@@ -1,22 +1,11 @@
 import { OceanNode } from '../../OceanNode.js'
-import { CORE_LOGGER } from '../../utils/logging/common.js'
-import { createHash } from 'crypto'
-import { FindDdoHandler } from '../core/handler/ddoHandler.js'
 import { getConfiguration } from '../../utils/config.js'
 import { ComputeGetEnvironmentsHandler } from '../core/compute/index.js'
 import { PROTOCOL_COMMANDS } from '../../utils/constants.js'
 import { streamToObject } from '../../utils/util.js'
 import { Readable } from 'stream'
-import {
-  ArweaveFileObject,
-  IpfsFileObject,
-  UrlFileObject
-} from '../../@types/fileObject.js'
-import { AlgoChecksums } from '../../@types/C2D.js'
-import { DDO } from '../../@types/DDO/DDO.js'
-import { getFile } from '../../utils/file.js'
-import urlJoin from 'url-join'
-import { fetchFileMetadata } from '../../utils/asset.js'
+
+export { C2DEngine } from './compute_engine_base.js'
 
 export async function checkC2DEnvExists(
   envId: string,
@@ -66,9 +55,9 @@ export async function getAlgoChecksums(
           ? (file as UrlFileObject).url
           : file.type === 'arweave'
             ? urlJoin(
-                process.env.ARWEAVE_GATEWAY,
-                (file as ArweaveFileObject).transactionId
-              )
+              process.env.ARWEAVE_GATEWAY,
+              (file as ArweaveFileObject).transactionId
+            )
             : file.type === 'ipfs'
               ? urlJoin(process.env.IPFS_GATEWAY, (file as IpfsFileObject).hash)
               : null
@@ -80,7 +69,7 @@ export async function getAlgoChecksums(
     checksums.container = createHash('sha256')
       .update(
         algoDDO.metadata.algorithm.container.entrypoint +
-          algoDDO.metadata.algorithm.container.checksum
+        algoDDO.metadata.algorithm.container.checksum
       )
       .digest('hex')
     return checksums

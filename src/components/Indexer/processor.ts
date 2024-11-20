@@ -29,7 +29,7 @@ import { DecryptDDOCommand } from '../../@types/commands.js'
 import { isRemoteDDO, makeDid } from '../core/utils/validateDdoHandler.js'
 import { create256Hash } from '../../utils/crypt.js'
 import { URLUtils } from '../../utils/url.js'
-
+import { PolicyServer } from '../policyServer/index.js'
 class BaseEventProcessor {
   protected networkId: number
 
@@ -146,7 +146,7 @@ class BaseEventProcessor {
       INDEXER_LOGGER.logMessage(
         `Decrypting DDO  from network: ${this.networkId} created by: ${eventCreator} encrypted by: ${decryptorURL}`
       )
-      const nonce = Date.now().toString()
+      const nonce = Math.floor(Date.now() / 1000).toString()
       const { keys } = await getConfiguration()
       const nodeId = keys.peerId.toString()
 
@@ -448,8 +448,36 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         } else {
           ddo.event.block = -1
         }
-      }
 
+        // policyServer check
+        const policyServer = new PolicyServer()
+        let policyStatus
+        if (eventName === EVENTS.METADATA_UPDATED)
+          policyStatus = await policyServer.checkUpdateDDO(
+            ddo,
+            this.networkId,
+            event.transactionHash,
+            event
+          )
+        else
+          policyStatus = await policyServer.checknewDDO(
+            ddo,
+            this.networkId,
+            event.transactionHash,
+            event
+          )
+        if (!policyStatus.success) {
+          await ddoState.update(
+            this.networkId,
+            did,
+            event.address,
+            event.transactionHash,
+            false,
+            policyStatus.message
+          )
+          return
+        }
+      }
       // always call, but only create instance once
       const purgatory = await Purgatory.getInstance()
       // if purgatory is disabled just return false
@@ -651,8 +679,8 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
       }
       if (
         'stats' in ddo &&
-        ddo.services[serviceIndex].datatoken?.toLowerCase() ===
-          event.address?.toLowerCase()
+        ddo.services[serviceIndex].datatokenAddress?.toLowerCase() ===
+        event.address?.toLowerCase()
       ) {
         ddo.stats.orders += 1
       } else {
@@ -667,7 +695,10 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
         'startOrder',
         timestamp,
         consumer,
-        payer
+        payer,
+        ddo.services[serviceIndex].datatokenAddress,
+        nftAddress,
+        did
       )
       INDEXER_LOGGER.logMessage(
         `Found did ${did} for order starting on network ${chainId}`
@@ -730,6 +761,9 @@ export class OrderReusedEventProcessor extends BaseEventProcessor {
           timestamp,
           startOrder.consumer,
           payer,
+          ddo.services[0].datatokenAddress,
+          nftAddress,
+          did,
           startOrderId
         )
       } catch (error) {
