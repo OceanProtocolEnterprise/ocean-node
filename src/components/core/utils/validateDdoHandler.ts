@@ -63,14 +63,18 @@ export async function validateObject(
     ddoCopy.type.includes('VerifiableCredential')
   ) {
     ddoCopy['@type'] = 'VerifiableCredential'
+    ddoCopy['@context'] = {
+      '@vocab': 'https://www.w3.org/2018/credentials/v1'
+    }
   } else {
     ddoCopy['@type'] = 'DDO'
+    ddoCopy['@context'] = {
+      '@vocab': 'http://schema.org/'
+    }
   }
   const extraErrors: Record<string, string[]> = {}
   // overwrite context
-  ddoCopy['@context'] = {
-    '@vocab': 'http://schema.org/'
-  }
+
   /* if (!('@context' in ddoCopy) || !Array.isArray(ddoCopy['@context'])) {
     ddoCopy['@context'] = {
       '@vocab': 'http://schema.org/'
