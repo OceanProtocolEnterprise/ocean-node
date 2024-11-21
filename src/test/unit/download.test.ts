@@ -110,7 +110,9 @@ describe('Should validate files structure for download', () => {
     expect(decriptedFileObject[0]).to.be.deep.equal(assetURL.files[0])
     // validate the structure of the files object
     const service: Service = AssetUtils.getServiceByIndex(ddoObj, 0)
-    expect(validateFilesStructure(ddoObj, service, decryptedFileArray)).to.be.equal(true)
+    expect(
+      validateFilesStructure(ddoObj.nftAddress, service, decryptedFileArray)
+    ).to.be.equal(true)
   })
 
   it('should NOT validate "nftAddress" and "datatokenAddress" from files', async () => {
@@ -126,7 +128,7 @@ describe('Should validate files structure for download', () => {
     // its the same service files structure (same encrypted data),
     // but its not the same ddo so there is no matching
     expect(
-      validateFilesStructure(otherDDOSameFiles, service, decryptedFileArray)
+      validateFilesStructure(otherDDOSameFiles.nftAddress, service, decryptedFileArray)
     ).to.be.equal(false)
 
     // this encrypted file data if for assetURL with otherNFTAddress and otherDatatokenAddress above
@@ -135,7 +137,7 @@ describe('Should validate files structure for download', () => {
     const sameDDOOtherFiles = ddoObj
     sameDDOOtherFiles.services[0].files = encryptedFilesData
     expect(
-      validateFilesStructure(sameDDOOtherFiles, service, decryptedFileArray)
+      validateFilesStructure(sameDDOOtherFiles.nftAddress, service, decryptedFileArray)
     ).to.be.equal(false)
 
     const data = Uint8Array.from(Buffer.from(encryptedFilesData.slice(2), 'hex'))

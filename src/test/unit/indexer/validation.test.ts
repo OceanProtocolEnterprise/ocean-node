@@ -1,4 +1,10 @@
-import { DDOExample, ddov5, ddoValidationSignature } from '../../data/ddo.js'
+import {
+  DDOExample,
+  ddov5,
+  ddoV5VC,
+  ddoValidationSignature,
+  invalidDDOV5VC
+} from '../../data/ddo.js'
 import {
   getValidationSignature,
   validateObject
@@ -72,5 +78,42 @@ describe('Schema validation tests', async () => {
       s: '0x008b965fa2df393765d32942a7d8114d529a602cd7aa672d23d21f90dbeae2fd',
       v: 28
     })
+  })
+
+  it('should pass the validation on version 5.0.0 (Verifiable Credential)', async () => {
+    const validationResult = await validateObject(
+      ddoV5VC,
+      137,
+      ddoV5VC.credentialSubject.nftAddress
+    )
+    expect(validationResult[0]).to.eql(true)
+    expect(validationResult[1]).to.eql({})
+  })
+
+  it('should pass the validation and return signature for version 5.0.0', async () => {
+    const validationResult = await validateObject(ddoV5VC, 137, ddov5.nftAddress)
+    console.log('validationResult', validationResult)
+    expect(validationResult[0]).to.eql(true)
+    expect(validationResult[1]).to.eql({})
+    const signatureResult = await getValidationSignature(
+      JSON.stringify(ddoValidationSignature)
+    )
+    console.log('signatureResult', signatureResult)
+    expect(signatureResult).to.eql({
+      hash: '0xa291d25eb3dd0c8487dc2d55baa629184e7b668ed1c579198a434eca9c663ac4',
+      publicKey: '0xe2DD09d719Da89e5a3D0F2549c7E24566e947260',
+      r: '0xc61361803ca3402afa2406dfc3e2729dd8f0c21d06c1456cc1668510b23951c0',
+      s: '0x008b965fa2df393765d32942a7d8114d529a602cd7aa672d23d21f90dbeae2fd',
+      v: 28
+    })
+  })
+
+  it('should fail validation due to missing metadata in version 5.0.0', async () => {
+    const validationResult = await validateObject(
+      invalidDDOV5VC,
+      137,
+      invalidDDOV5VC.credentialSubject.nftAddress
+    )
+    expect(validationResult[0]).to.eql(false)
   })
 })

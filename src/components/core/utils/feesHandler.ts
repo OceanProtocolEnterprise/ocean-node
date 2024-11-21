@@ -27,6 +27,8 @@ import { getOceanArtifactsAdresses } from '../../../utils/address.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
 import { fetchEventFromTransaction } from '../../../utils/util.js'
 import { fetchTransactionReceipt } from './validateOrders.js'
+import { DDOProcessorFactory } from './DDOFactory.js'
+import { VerifiableCredential } from '../../../@types/DDO/VerifiableCredential.js'
 
 async function calculateProviderFeeAmount(
   validUntil: number,
@@ -50,13 +52,17 @@ async function calculateProviderFeeAmount(
 }
 
 export async function createProviderFee(
-  asset: DDO,
+  asset: DDO | VerifiableCredential,
   service: Service,
   validUntil: number,
   computeEnv: ComputeEnvironment,
   computeValidUntil: number
 ): Promise<ProviderFees> | undefined {
   // round for safety
+  const processor = DDOProcessorFactory.createProcessor(asset)
+
+  // Get the DDO identifier using the processor
+  const { chainId } = processor.extractDDOFields(asset as any)
   validUntil = Math.round(validUntil)
   computeValidUntil = Math.round(computeValidUntil)
   const providerData = {
@@ -65,7 +71,7 @@ export async function createProviderFee(
     dt: service.datatokenAddress,
     id: service.id
   }
-  const providerWallet = await getProviderWallet(String(asset.chainId))
+  const providerWallet = await getProviderWallet(String(chainId))
 
   const providerFeeAddress: string = providerWallet.address
   let providerFeeAmount: number
@@ -76,7 +82,7 @@ export async function createProviderFee(
     providerFeeToken = computeEnv.feeToken
   } else {
     // it's download, take it from config
-    providerFeeToken = await getProviderFeeToken(asset.chainId)
+    providerFeeToken = await getProviderFeeToken(chainId)
   }
   if (providerFeeToken?.toLowerCase() === ZeroAddress) {
     providerFeeAmount = 0
@@ -85,7 +91,7 @@ export async function createProviderFee(
   }
 
   if (providerFeeToken && providerFeeToken?.toLowerCase() !== ZeroAddress) {
-    const provider = await getJsonRpcProvider(asset.chainId)
+    const provider = await getJsonRpcProvider(chainId)
     const decimals = await getDatatokenDecimals(providerFeeToken, provider)
     providerFeeAmountFormatted = parseUnits(providerFeeAmount.toString(10), decimals)
   } else {

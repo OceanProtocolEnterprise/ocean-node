@@ -16,6 +16,7 @@ import { ProviderInitialize } from '../../../@types/Fees.js'
 import { getNonce } from '../utils/nonceHandler.js'
 import { streamToString } from '../../../utils/util.js'
 import { isOrderingAllowedForAsset } from './downloadHandler.js'
+import { DDOProcessorFactory } from '../utils/DDOFactory.js'
 
 export class FeesHandler extends Handler {
   validate(command: GetFeesCommand): ValidateParams {
@@ -46,7 +47,6 @@ export class FeesHandler extends Handler {
     if (!ddo) {
       errorMsg = 'Cannot resolve DID'
     }
-
     const isOrdable = isOrderingAllowedForAsset(ddo)
     if (!isOrdable.isOrdable) {
       PROVIDER_LOGGER.error(isOrdable.reason)
@@ -58,8 +58,12 @@ export class FeesHandler extends Handler {
         }
       }
     }
+    const processor = DDOProcessorFactory.createProcessor(ddo)
 
-    const service = ddo.services.find((what: any) => what.id === task.serviceId)
+    // Get the DDO identifier using the processor
+    const { services } = processor.extractDDOFields(ddo as any)
+
+    const service = services.find((what: any) => what.id === task.serviceId)
     if (!service) {
       errorMsg = 'Invalid serviceId'
     }

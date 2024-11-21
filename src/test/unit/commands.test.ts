@@ -253,11 +253,12 @@ describe('Commands and handlers', () => {
     const validateDDOHandler: ValidateDDOHandler = CoreHandlersRegistry.getInstance(
       node
     ).getHandler(PROTOCOL_COMMANDS.VALIDATE_DDO)
+    console.log('here')
     const validateDDOCommand: ValidateDDOCommand = {
       ddo: {
         id: 'did:op:ACce67694eD2848dd683c651Dab7Af823b7dd123',
         '@context': [],
-        version: '',
+        version: '4.1.0',
         nftAddress: '',
         chainId: 0,
         metadata: undefined,

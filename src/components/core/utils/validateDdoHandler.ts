@@ -13,7 +13,7 @@ import { getProviderWallet } from './feesHandler.js'
 import { Readable } from 'stream'
 
 const CURRENT_VERSION = '4.5.0'
-const ALLOWED_VERSIONS = ['4.1.0', '4.3.0', '4.5.0']
+const ALLOWED_VERSIONS = ['4.1.0', '4.3.0', '4.5.0', '5.0.0']
 
 export function getSchema(version: string = CURRENT_VERSION): string {
   if (!ALLOWED_VERSIONS.includes(version)) {
@@ -55,13 +55,26 @@ export async function validateObject(
   nftAddress: string
 ): Promise<[boolean, Record<string, string[]>]> {
   const ddoCopy = JSON.parse(JSON.stringify(obj))
-  ddoCopy['@type'] = 'DDO'
-
+  // Handle different version-specific logic
+  const version = ddoCopy.version || CURRENT_VERSION
+  if (
+    ddoCopy.type &&
+    Array.isArray(ddoCopy.type) &&
+    ddoCopy.type.includes('VerifiableCredential')
+  ) {
+    ddoCopy['@type'] = 'VerifiableCredential'
+    ddoCopy['@context'] = {
+      '@vocab': 'https://www.w3.org/2018/credentials/v1'
+    }
+  } else {
+    ddoCopy['@type'] = 'DDO'
+    ddoCopy['@context'] = {
+      '@vocab': 'http://schema.org/'
+    }
+  }
   const extraErrors: Record<string, string[]> = {}
   // overwrite context
-  ddoCopy['@context'] = {
-    '@vocab': 'http://schema.org/'
-  }
+
   /* if (!('@context' in ddoCopy) || !Array.isArray(ddoCopy['@context'])) {
     ddoCopy['@context'] = {
       '@vocab': 'http://schema.org/'
@@ -107,7 +120,6 @@ export async function validateObject(
     if (!('id' in extraErrors)) extraErrors.id = []
     extraErrors.id.push('did is not valid for chain Id and nft address')
   }
-  const version = ddoCopy.version || CURRENT_VERSION
   const schemaFilePath = getSchema(version)
   CORE_LOGGER.logMessage(`Using ` + schemaFilePath, true)
 

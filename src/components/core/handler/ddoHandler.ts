@@ -22,8 +22,7 @@ import lzmajs from 'lzma-purejs-requirejs'
 import {
   isRemoteDDO,
   getValidationSignature,
-  makeDid,
-  validateObject
+  makeDid
 } from '../utils/validateDdoHandler.js'
 import { getConfiguration } from '../../../utils/config.js'
 import {
@@ -46,6 +45,7 @@ import {
   wasNFTDeployedByOurFactory
 } from '../../Indexer/utils.js'
 import { validateDDOHash } from '../../../utils/asset.js'
+import { DDOProcessorFactory } from '../utils/DDOFactory.js'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -206,7 +206,6 @@ export class DecryptDdoHandler extends Handler {
       let encryptedDocument: Uint8Array
       let flags: number
       let documentHash: string
-
       if (transactionId) {
         try {
           const receipt = await provider.getTransactionReceipt(transactionId)
@@ -339,7 +338,7 @@ export class DecryptDdoHandler extends Handler {
 
       // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
-      if (ddo.id !== makeDid(dataNftAddress, chainId)) {
+      if (!isRemoteDDO(ddo) && ddo.id !== makeDid(dataNftAddress, chainId)) {
         CORE_LOGGER.error(`Decrypted DDO ID is not matching the generated hash for DID.`)
         return {
           stream: null,
@@ -351,8 +350,10 @@ export class DecryptDdoHandler extends Handler {
       }
 
       // checksum matches
+      const decryptedDocumentString2 = decryptedDocument.toString()
+      const ddoObject2 = JSON.parse(decryptedDocumentString2)
       const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
-      if (decryptedDocumentHash !== documentHash) {
+      if (!isRemoteDDO(ddoObject2) && decryptedDocumentHash !== documentHash) {
         CORE_LOGGER.logMessage(
           `Decrypt DDO: error checksum does not match ${decryptedDocumentHash} with ${documentHash}`,
           true
@@ -726,8 +727,7 @@ export class FindDdoHandler extends Handler {
     // First try to find the DDO Locally if findDDO is not enforced
     if (!force) {
       try {
-        const ddo = await node.getDatabase().ddo.retrieve(ddoId)
-        return ddo as DDO
+        return await node.getDatabase().ddo.retrieve(ddoId)
       } catch (error) {
         CORE_LOGGER.logMessage(
           `Unable to find DDO locally. Proceeding to call findDDO`,
@@ -788,7 +788,14 @@ export class ValidateDDOHandler extends Handler {
   validate(command: ValidateDDOCommand): ValidateParams {
     let validation = validateCommandParameters(command, ['ddo'])
     if (validation.valid) {
-      validation = validateDDOIdentifier(command.ddo.id)
+      // Use the factory to create a processor based on the DDO version or structure
+      const processor = DDOProcessorFactory.createProcessor(command.ddo)
+
+      // Get the DDO identifier using the processor
+      const { did: ddoId } = processor.extractDDOFields(command.ddo as any)
+
+      // Validate the DDO identifier
+      validation = validateDDOIdentifier(ddoId)
     }
 
     return validation
@@ -799,12 +806,14 @@ export class ValidateDDOHandler extends Handler {
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
+
     try {
-      const validation = await validateObject(
-        task.ddo,
-        task.ddo.chainId,
-        task.ddo.nftAddress
-      )
+      // Use the factory to create a processor for DDO validation
+      const processor = DDOProcessorFactory.createProcessor(task.ddo as any)
+
+      // Validate the DDO using the processor
+      const validation = await processor.validateDDO(task.ddo)
+
       if (validation[0] === false) {
         CORE_LOGGER.logMessageWithEmoji(
           `Validation failed with error: ${validation[1]}`,
@@ -817,6 +826,8 @@ export class ValidateDDOHandler extends Handler {
           status: { httpStatus: 400, error: `Validation error: ${validation[1]}` }
         }
       }
+
+      // Generate signature for the validated DDO
       const signature = await getValidationSignature(JSON.stringify(task.ddo))
       return {
         stream: Readable.from(JSON.stringify(signature)),

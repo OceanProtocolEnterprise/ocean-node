@@ -3,7 +3,7 @@ export interface Event {
    * TX id of the last create/update
    * @type {string}
    */
-  txid?: string
+  tx?: string
 
   /**
    * Block of txid
