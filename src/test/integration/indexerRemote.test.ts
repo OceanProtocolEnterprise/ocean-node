@@ -15,7 +15,7 @@ import { Database } from '../../components/database/index.js'
 import { OceanIndexer } from '../../components/Indexer/index.js'
 import { RPCS } from '../../@types/blockchain.js'
 import { getEventFromTx } from '../../utils/util.js'
-import { waitToIndex } from './testUtils.js'
+import { expectedTimeoutFailure, waitToIndex } from './testUtils.js'
 import { genericDDO } from '../data/ddo.js'
 import { makeDid } from '../../components/core/utils/validateDdoHandler.js'
 import { create256Hash } from '../../utils/crypt.js'
@@ -188,9 +188,10 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
     assert(setMetaDataTxReceipt, 'set metada failed')
   })
 
-  it('should store the ddo in the database and return it ', async () => {
+  it('should store the ddo in the database and return it ', async function () {
+    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
     const did = makeDid(getAddress(nftAddress), chainId.toString(10))
-    const { ddo } = await waitToIndex(
+    const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT * 2
@@ -198,7 +199,7 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
     if (ddo) {
       resolvedDDO = ddo
       expect(resolvedDDO.id).to.equal(genericAsset.id)
-    }
+    } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
   })
   after(() => {
     tearDownEnvironment(previousConfiguration)
