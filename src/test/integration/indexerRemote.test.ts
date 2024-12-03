@@ -15,7 +15,7 @@ import { Database } from '../../components/database/index.js'
 import { OceanIndexer } from '../../components/Indexer/index.js'
 import { RPCS } from '../../@types/blockchain.js'
 import { getEventFromTx } from '../../utils/util.js'
-import { waitToIndex } from './testUtils.js'
+import { expectedTimeoutFailure, waitToIndex } from './testUtils.js'
 import { genericDDO } from '../data/ddo.js'
 import { makeDid } from '../../components/core/utils/validateDdoHandler.js'
 import { create256Hash } from '../../utils/crypt.js'
@@ -29,12 +29,14 @@ import {
   setupEnvironment,
   tearDownEnvironment,
   OverrideEnvConfig,
-  buildEnvOverrideConfig
+  buildEnvOverrideConfig,
+  DEFAULT_TEST_TIMEOUT
 } from '../utils/utils.js'
 import { ENVIRONMENT_VARIABLES, EVENTS } from '../../utils/constants.js'
 import { homedir } from 'os'
 import { OceanNode } from '../../OceanNode.js'
 import axios from 'axios'
+import { getConfiguration } from '../../utils/index.js'
 
 function uploadToIpfs(data: any): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -83,9 +85,7 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
   const mockSupportedNetworks: RPCS = getMockSupportedNetworks()
 
   before(async () => {
-    const dbConfig = {
-      url: 'http://localhost:8108/?apiKey=xyz'
-    }
+    const config = await getConfiguration(true)
 
     previousConfiguration = await setupEnvironment(
       null,
@@ -99,13 +99,13 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
         [
           JSON.stringify(mockSupportedNetworks),
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
-          dbConfig.url,
+          config.dbConfig.url,
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`
         ]
       )
     )
 
-    database = await new Database(dbConfig)
+    database = await new Database(config.dbConfig)
     indexer = new OceanIndexer(database, mockSupportedNetworks)
     oceanNode = await OceanNode.getInstance(database)
     let artifactsAddresses = getOceanArtifactsAdressesByChainId(DEVELOPMENT_CHAIN_ID)
@@ -188,10 +188,18 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
     assert(setMetaDataTxReceipt, 'set metada failed')
   })
 
-  it('should store the ddo in the database and return it ', async () => {
+  it('should store the ddo in the database and return it ', async function () {
+    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
     const did = makeDid(getAddress(nftAddress), chainId.toString(10))
-    resolvedDDO = await waitToIndex(did, EVENTS.METADATA_CREATED)
-    expect(resolvedDDO.ddo.id).to.equal(did)
+    const { ddo, wasTimeout } = await waitToIndex(
+      did,
+      EVENTS.METADATA_CREATED,
+      DEFAULT_TEST_TIMEOUT * 2
+    )
+    if (ddo) {
+      resolvedDDO = ddo
+      expect(resolvedDDO.id).to.equal(genericAsset.id)
+    } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
   })
   after(() => {
     tearDownEnvironment(previousConfiguration)

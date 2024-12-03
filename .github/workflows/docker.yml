@@ -49,7 +49,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            oceanprotocol/ocean-node
+            ocnenterprise/ocean-node
           # generate Docker tags based on the following events/attributes
           tags: |
             type=ref,event=branch
@@ -68,7 +68,7 @@ jobs:
           push: false
           # tags: ${{ steps.ocean_node_meta.outputs.tags }}
           labels: ${{ steps.ocean_node_meta.outputs.labels }}
-          outputs: type=image,name=oceanprotocol/ocean-node,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ocnenterprise/ocean-node,push-by-digest=true,name-canonical=true,push=true
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
@@ -81,5 +81,3 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
-
-  
