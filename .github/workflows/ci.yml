@@ -29,7 +29,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
 
-
   dockertest:
     runs-on: ubuntu-latest
     steps:
@@ -257,7 +256,7 @@ jobs:
       - name: Checkout Ocean Node
         uses: actions/checkout@v4
         with:
-          repository: 'oceanprotocol/ocean-node'
+          repository: 'OceanProtocolEnterprise/ocean-node'
           path: 'ocean-node'
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'main' }}
 
