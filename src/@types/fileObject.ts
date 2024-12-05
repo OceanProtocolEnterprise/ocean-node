@@ -20,10 +20,12 @@ export interface UrlFileObject extends BaseFileObject {
   url: string
   method: string
   headers?: [HeadersObject]
+  fileHash?: string
 }
 
 export interface IpfsFileObject extends BaseFileObject {
   hash: string
+  fileHash?: string
 }
 export interface S3Object {
   endpoint: string
@@ -39,6 +41,7 @@ export interface S3FileObject extends BaseFileObject {
 
 export interface ArweaveFileObject extends BaseFileObject {
   transactionId: string
+  fileHash?: string
 }
 
 export interface StorageReadable {
