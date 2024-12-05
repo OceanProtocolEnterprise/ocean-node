@@ -17,6 +17,7 @@ import { DDO } from '../../@types/DDO/DDO.js'
 import { getFile } from '../../utils/file.js'
 import urlJoin from 'url-join'
 import { fetchFileMetadata } from '../../utils/asset.js'
+export { C2DEngine } from './compute_engine_base.js'
 
 export async function checkC2DEnvExists(
   envId: string,
