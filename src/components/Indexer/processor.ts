@@ -26,10 +26,11 @@ import { getConfiguration, timestampToDateTime } from '../../utils/index.js'
 import { OceanNode } from '../../OceanNode.js'
 import { asyncCallWithTimeout, streamToString } from '../../utils/util.js'
 import { DecryptDDOCommand } from '../../@types/commands.js'
-import { isRemoteDDO, makeDid } from '../core/utils/validateDdoHandler.js'
+import { isRemoteDDO } from '../core/utils/validateDdoHandler.js'
 import { create256Hash } from '../../utils/crypt.js'
 import { URLUtils } from '../../utils/url.js'
 import { PolicyServer } from '../policyServer/index.js'
+import { DDOManager } from 'ddo.js'
 class BaseEventProcessor {
   protected networkId: number
 
@@ -346,7 +347,8 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadata
       )
       const ddo = await this.processDDO(decryptedDDO)
-      if (ddo.id !== makeDid(event.address, chainId.toString(10))) {
+      const ddoInstance = DDOManager.getDDOClass(ddo)
+      if (ddo.id !== ddoInstance.makeDid(event.address, chainId.toString(10))) {
         INDEXER_LOGGER.error(
           `Decrypted DDO ID is not matching the generated hash for DID.`
         )

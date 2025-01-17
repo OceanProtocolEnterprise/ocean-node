@@ -393,7 +393,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
       return true
     } else {
-      const validation = await validateObject(ddo, ddo.chainId, ddo.nftAddress)
+      const validation = await validateObject(ddo)
       if (validation[0] === true) {
         DATABASE_LOGGER.logMessageWithEmoji(
           `Validation of DDO with did: ${ddo.id} has passed`,

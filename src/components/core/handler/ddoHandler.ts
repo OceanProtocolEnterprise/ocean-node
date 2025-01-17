@@ -22,7 +22,6 @@ import lzmajs from 'lzma-purejs-requirejs'
 import {
   isRemoteDDO,
   getValidationSignature,
-  makeDid,
   validateObject
 } from '../utils/validateDdoHandler.js'
 import { getConfiguration, hasP2PInterface } from '../../../utils/config.js'
@@ -45,6 +44,7 @@ import {
   wasNFTDeployedByOurFactory
 } from '../../Indexer/utils.js'
 import { validateDDOHash } from '../../../utils/asset.js'
+import { DDOManager } from 'ddo.js'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -338,7 +338,8 @@ export class DecryptDdoHandler extends Handler {
 
       // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
-      if (ddo.id !== makeDid(dataNftAddress, chainId)) {
+      const ddoInstance = DDOManager.getDDOClass(ddo)
+      if (ddo.id !== ddoInstance.makeDid(dataNftAddress, chainId)) {
         CORE_LOGGER.error(`Decrypted DDO ID is not matching the generated hash for DID.`)
         return {
           stream: null,
@@ -799,11 +800,7 @@ export class ValidateDDOHandler extends Handler {
       return validationResponse
     }
     try {
-      const validation = await validateObject(
-        task.ddo,
-        task.ddo.chainId,
-        task.ddo.nftAddress
-      )
+      const validation = await validateObject(task.ddo)
       if (validation[0] === false) {
         CORE_LOGGER.logMessageWithEmoji(
           `Validation failed with error: ${validation[1]}`,

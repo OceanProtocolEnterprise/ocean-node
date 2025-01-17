@@ -352,6 +352,122 @@ export const ddov7 = {
   ]
 }
 
+export const ddoEOPV5 = {
+  '@context': ['https://www.w3.org/ns/credentials/v2'],
+  version: '5.0.0',
+  id: 'did:ope:fa0e8fa9550e8eb13392d6eeb9ba9f8111801b332c8d2345b350b3bc66b379d5',
+  credentialSubject: {
+    id: 'did:ope:fa0e8fa9550e8eb13392d6eeb9ba9f8111801b332c8d2345b350b3bc66b379d5',
+    metadata: {
+      created: '2024-10-03T14:35:20Z',
+      updated: '2024-10-03T14:35:20Z',
+      type: 'dataset',
+      name: 'DDO 5.0.0 Asset',
+      description: {
+        '@value': 'New asset published using ocean CLI tool with version 5.0.0',
+        '@language': 'en',
+        '@direction': 'ltr'
+      },
+      copyrightHolder: 'Your Copyright Holder',
+      providedBy: 'Your Organization',
+      author: 'oceanprotocol',
+      license: {
+        name: 'https://market.oceanprotocol.com/terms'
+      },
+      tags: ['version-5', 'new-schema'],
+      categories: ['data', 'ocean-protocol'],
+      additionalInformation: {
+        termsAndConditions: true
+      }
+    },
+    services: [
+      {
+        id: 'ccb398c50d6abd5b456e8d7242bd856a1767a890b537c2f8c10ba8b8a10e6025',
+        type: 'access',
+        name: 'Access Service',
+        description: {
+          '@value': 'Service for accessing the dataset',
+          '@language': 'en',
+          '@direction': 'ltr'
+        },
+        datatokenAddress: '0xff4ae9869cafb5ff725f962f3bbc22fb303a8ad8',
+        nftAddress: '0xBB1081DbF3227bbB233Db68f7117114baBb43656',
+        serviceEndpoint: 'https://v4.provider.oceanprotocol.com',
+        files:
+          'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract10.xml.gz-rss.xml',
+        timeout: 86400,
+        compute: {
+          allowRawAlgorithm: false,
+          allowNetworkAccess: true
+        },
+        state: 0,
+        credentials: [{}]
+      }
+    ],
+    credentials: {
+      allow: {
+        request_credentials: [
+          {
+            type: 'VerifiableId',
+            format: 'jwt_vc_json'
+          },
+          {
+            type: 'ProofOfResidence',
+            format: 'jwt_vc_json'
+          },
+          {
+            type: 'OpenBadgeCredential',
+            format: 'jwt_vc_json',
+            policies: ['signature']
+          }
+        ]
+      }
+    },
+    event: {
+      txid: '0xceb617f13a8db82ba9ef24efcee72e90d162915fd702f07ac6012427c31ac952',
+      block: 39326976,
+      from: '0x0DB823218e337a6817e6D7740eb17635DEAdafAF',
+      contract: '0xBB1081DbF3227bbB233Db68f7117114baBb43656',
+      datetime: '2023-02-15T16:42:22'
+    },
+    nft: {
+      address: '0xBB1081DbF3227bbB233Db68f7117114baBb43656',
+      name: 'Ocean Data NFT',
+      symbol: 'OCEAN-NFT',
+      state: 0,
+      tokenURI:
+        'data:application/json;base64,eyJuYW1lIjoiT2NlYW4gRGF0YSBORlQiLCJzeW1ib2wiOiJPQ0VBTi1ORlQiLCJkZXNjcmlwdGlvbiI6IlRoaXMgTkZUIHJlcHJlc2VudHMgYW4gYXNzZXQgaW4gdGhlIE9jZWFuIFByb3RvY29sIHY0IGVjb3N5c3RlbS5cblxuVmlldyBvbiBPY2VhbiBNYXJrZXQ6IGh0dHBzOi8vbWFya2V0Lm9jZWFucHJvdG9jb2wuY29tL2Fzc2V0L2RpZDpvcDpmYTBlOGZhOTU1MGU4ZWIxMzM5MmQ2ZWViOWJhOWY4MTExODAxYjMzMmM4ZDIzNDViMzUwYjNiYzY2YjM3OWQ1IiwiZXh0ZXJuYWxfdXJsIjoiaHR0cHM6Ly9tYXJrZXQub2NlYW5wcm90b2NvbC5jb20vYXNzZXQvZGlkOm9wOmZhMGU4ZmE5NTUwZThlYjEzMzkyZDZlZWI5YmE5ZjgxMTE4MDFiMzMyYzhkMjM0NWIzNTBiM2JjNjZiMzc5ZDUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiMTQxNDE0IiwiaW1hZ2VfZGF0YSI6ImRhdGE6aW1hZ2Uvc3ZnK3htbCwlM0Nzdmcgdmlld0JveD0nMCAwIDk5IDk5JyBmaWxsPSd1bmRlZmluZWQnIHhtbG5zPSdodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyclM0UlM0NwYXRoIGZpbGw9JyUyM2ZmNDA5Mjc3JyBkPSdNMCw5OUwwLDIzQzEzLDIwIDI3LDE4IDM3LDE4QzQ2LDE3IDUyLDE4IDYyLDIwQzcxLDIxIDg1LDI0IDk5LDI3TDk5LDk5WicvJTNFJTNDcGF0aCBmaWxsPSclMjNmZjQwOTJiYicgZD0nTTAsOTlMMCw1MkMxMSw0OCAyMyw0NCAzMyw0NEM0Miw0MyA1MCw0NSA2MSw0OEM3MSw1MCA4NSw1MiA5OSw1NUw5OSw5OVonJTNFJTNDL3BhdGglM0UlM0NwYXRoIGZpbGw9JyUyM2ZmNDA5MmZmJyBkPSdNMCw5OUwwLDcyQzgsNzMgMTcsNzUgMjksNzZDNDAsNzYgNTMsNzYgNjYsNzdDNzgsNzcgODgsNzcgOTksNzhMOTksOTlaJyUzRSUzQy9wYXRoJTNFJTNDL3N2ZyUzRSJ9',
+      owner: '0x0DB823218e337a6817e6D7740eb17635DEAdafAF',
+      created: '2022-12-30T08:40:43'
+    },
+    purgatory: {
+      state: false
+    },
+    datatokens: [
+      {
+        address: '0xfF4AE9869Cafb5Ff725f962F3Bbc22Fb303A8aD8',
+        name: 'Boorish Fish Token',
+        symbol: 'BOOFIS-23',
+        serviceId: '24654b91482a3351050510ff72694d88edae803cf31a5da993da963ba0087648'
+      }
+    ],
+    stats: {
+      allocated: 5211144,
+      orders: 36,
+      price: {
+        value: 1000,
+        tokenAddress: '0x282d8efCe846A88B159800bd4130ad77443Fa1A1',
+        tokenSymbol: 'mOCEAN'
+      }
+    },
+    chainId: 137,
+    nftAddress: '0xBB1081DbF3227bbB233Db68f7117114baBb43656'
+  },
+  issuer: 'did:op:issuer-did',
+  type: ['VerifiableCredential'],
+  additionalDdos: [{ type: '', data: '' }]
+}
+
 export const publishAlgoDDO = {
   '@context': ['https://w3id.org/did/v1'],
   id: '',

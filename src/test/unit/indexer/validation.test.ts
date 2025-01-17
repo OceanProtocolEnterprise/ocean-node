@@ -1,4 +1,10 @@
-import { DDOExample, ddov5, ddov7, ddoValidationSignature } from '../../data/ddo.js'
+import {
+  ddoEOPV5,
+  DDOExample,
+  ddov5,
+  ddov7,
+  ddoValidationSignature
+} from '../../data/ddo.js'
 import {
   getValidationSignature,
   validateObject
@@ -37,7 +43,7 @@ describe('Schema validation tests', async () => {
   })
 
   it('should pass the validation on version 4.1.0', async () => {
-    const validationResult = await validateObject(DDOExample, 137, DDOExample.nftAddress)
+    const validationResult = await validateObject(DDOExample)
     expect(validationResult[0]).to.eql(true)
     expect(validationResult[1]).to.eql({})
   })
@@ -45,21 +51,17 @@ describe('Schema validation tests', async () => {
     const copy = JSON.parse(JSON.stringify(DDOExample))
     copy['@context'] = ['https://w3id.org/did/v1']
     delete copy.metadata.created
-    const validationResult = await validateObject(copy, 137, copy.nftAddress)
+    const validationResult = await validateObject(copy)
     expect(validationResult[0]).to.eql(false)
   })
   // TO DO after fixing regex for created & updated: it('should not pass due to invalid ISO timestamp on version 4.1.0', async () => {
   it('4.5.0 should pass the validation without service', async () => {
-    const validationResult = await validateObject(ddov5, 137, ddov5.nftAddress)
+    const validationResult = await validateObject(ddov5)
     expect(validationResult[0]).to.eql(true)
     expect(validationResult[1]).to.eql({})
   })
   it('should pass the validation and return signature', async () => {
-    const validationResult = await validateObject(
-      ddoValidationSignature,
-      137,
-      ddov5.nftAddress
-    )
+    const validationResult = await validateObject(ddoValidationSignature)
     expect(validationResult[0]).to.eql(true)
     expect(validationResult[1]).to.eql({})
     const signatureResult = await getValidationSignature(
@@ -75,7 +77,7 @@ describe('Schema validation tests', async () => {
   })
 
   it('should pass the validation on version 4.7.0', async () => {
-    const validationResult = await validateObject(ddov7, 137, ddov7.nftAddress)
+    const validationResult = await validateObject(ddov7)
     console.log('Validation 4.7.0 result: ', validationResult)
     expect(validationResult[0]).to.eql(true)
     expect(validationResult[1]).to.eql({})
@@ -84,8 +86,33 @@ describe('Schema validation tests', async () => {
   it('should pass the validation on version 4.7.0 without credentials', async () => {
     const newDDO = structuredClone(ddov7)
     delete newDDO.services[0].credentials
-    const validationResult = await validateObject(newDDO, 137, newDDO.nftAddress)
+    const validationResult = await validateObject(newDDO)
     expect(validationResult[0]).to.eql(true)
     expect(validationResult[1]).to.eql({})
+  })
+
+  it('should pass the validation on version 5.0.0 ope', async () => {
+    const validationResult = await validateObject(ddoEOPV5)
+    console.log('Validation 5.0.0 ope result: ', validationResult)
+    expect(validationResult[0]).to.eql(true)
+    expect(validationResult[1]).to.eql({})
+  })
+
+  it('should fail V5 DDO validation due to missing credentialSubject metadata', async () => {
+    const invalidCopy = JSON.parse(JSON.stringify(ddoEOPV5))
+    delete invalidCopy.credentialSubject.metadata
+    const validationResult = await validateObject(invalidCopy)
+    expect(validationResult[0]).to.eql(false)
+    expect(validationResult[1]).to.have.property('metadata')
+    expect(validationResult[1].metadata).to.include('metadata is missing or invalid.')
+  })
+
+  it('should fail V5 DDO validation due to missing credentialSubject services', async () => {
+    const invalidCopy = JSON.parse(JSON.stringify(ddoEOPV5))
+    delete invalidCopy.credentialSubject.services
+    const validationResult = await validateObject(invalidCopy)
+    expect(validationResult[0]).to.eql(false)
+    expect(validationResult[1]).to.have.property('services')
+    expect(validationResult[1].services).to.include('services are missing or invalid.')
   })
 })

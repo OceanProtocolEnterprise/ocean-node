@@ -238,9 +238,7 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
         return normalizeDocumentId(hit._source, hit._id)
       })
     } catch (error) {
-      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${
-        error.message
-      }`
+      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${error.message}`
       DATABASE_LOGGER.logMessageWithEmoji(
         errorMsg,
         true,
@@ -490,7 +488,7 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
     if (ddo.nft?.state !== 0) {
       return true
     } else {
-      const validation = await validateObject(ddo, ddo.chainId, ddo.nftAddress)
+      const validation = await validateObject(ddo)
       if (validation[0] === true) {
         DATABASE_LOGGER.logMessageWithEmoji(
           `Validation of DDO with did: ${ddo.id} has passed`,

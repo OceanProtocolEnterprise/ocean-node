@@ -17,7 +17,6 @@ import { RPCS } from '../../@types/blockchain.js'
 import { getEventFromTx } from '../../utils/util.js'
 import { expectedTimeoutFailure, waitToIndex } from './testUtils.js'
 import { genericDDO } from '../data/ddo.js'
-import { makeDid } from '../../components/core/utils/validateDdoHandler.js'
 import { create256Hash } from '../../utils/crypt.js'
 import {
   DEVELOPMENT_CHAIN_ID,
@@ -37,6 +36,7 @@ import { homedir } from 'os'
 import { OceanNode } from '../../OceanNode.js'
 import axios from 'axios'
 import { getConfiguration } from '../../utils/index.js'
+import { DDOManager } from 'ddo.js'
 
 function uploadToIpfs(data: any): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -160,7 +160,8 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
   it('should set metadata and save (the remote DDO is encrypted) ', async () => {
     nftContract = new ethers.Contract(nftAddress, ERC721Template.abi, publisherAccount)
     const ddoToPublish = genericDDO
-    ddoToPublish.id = makeDid(getAddress(nftAddress), chainId.toString(10))
+    const ddoInstance = DDOManager.getDDOClass(ddoToPublish)
+    ddoToPublish.id = ddoInstance.makeDid(getAddress(nftAddress), chainId.toString(10))
     const ipfsCID = await uploadToIpfs(JSON.stringify(ddoToPublish))
     const remoteDDO = {
       remote: {
@@ -190,7 +191,8 @@ describe('RemoteDDO: Indexer stores a new metadata events and orders.', () => {
 
   it('should store the ddo in the database and return it ', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 2)
-    const did = makeDid(getAddress(nftAddress), chainId.toString(10))
+    const ddoInstance = DDOManager.getDDOClass(genericDDO)
+    const did = ddoInstance.makeDid(getAddress(nftAddress), chainId.toString(10))
     const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
