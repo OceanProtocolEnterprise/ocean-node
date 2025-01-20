@@ -1,3 +1,8 @@
+import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
+import axios from 'axios'
+import { createHash } from 'crypto'
+import { AssetLastEvent, DDOManager } from 'ddo.js'
 import {
   Interface,
   JsonRpcApiProvider,
@@ -9,29 +14,24 @@ import {
   toUtf8Bytes,
   toUtf8String
 } from 'ethers'
-import { createHash } from 'crypto'
 import { Readable } from 'node:stream'
-import axios from 'axios'
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
-import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
-import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
-import { getDatabase } from '../../utils/database.js'
-import { PROTOCOL_COMMANDS, EVENTS, MetadataStates } from '../../utils/constants.js'
-import { getDtContract, wasNFTDeployedByOurFactory } from './utils.js'
-import { INDEXER_LOGGER } from '../../utils/logging/common.js'
-import { Storage } from '../../components/storage/index.js'
-import { Purgatory } from './purgatory.js'
-import { getConfiguration, timestampToDateTime } from '../../utils/index.js'
-import { OceanNode } from '../../OceanNode.js'
-import { asyncCallWithTimeout, streamToString } from '../../utils/util.js'
 import { DecryptDDOCommand } from '../../@types/commands.js'
-import { isRemoteDDO } from '../core/utils/validateDdoHandler.js'
+import { Storage } from '../../components/storage/index.js'
+import { OceanNode } from '../../OceanNode.js'
+import { EVENTS, MetadataStates, PROTOCOL_COMMANDS } from '../../utils/constants.js'
 import { create256Hash } from '../../utils/crypt.js'
+import { getDatabase } from '../../utils/database.js'
+import { getConfiguration, timestampToDateTime } from '../../utils/index.js'
+import { INDEXER_LOGGER } from '../../utils/logging/common.js'
+import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 import { URLUtils } from '../../utils/url.js'
-import { PolicyServer } from '../policyServer/index.js'
-import { AssetLastEvent, DDOManager } from 'ddo.js'
+import { asyncCallWithTimeout, streamToString } from '../../utils/util.js'
+import { isRemoteDDO } from '../core/utils/validateDdoHandler.js'
 import { AbstractDdoDatabase } from '../database/BaseDatabase.js'
+import { PolicyServer } from '../policyServer/index.js'
+import { Purgatory } from './purgatory.js'
+import { getDtContract, wasNFTDeployedByOurFactory } from './utils.js'
 class BaseEventProcessor {
   protected networkId: number
 
@@ -332,6 +332,20 @@ class BaseEventProcessor {
 
     return ddo
   }
+
+  protected decryptDDOIPFS(
+    decryptorURL: string,
+    eventCreator: string,
+    metadata: any
+  ): Promise<any> {
+    INDEXER_LOGGER.logMessage(
+      `Decompressing DDO  from network: ${this.networkId} created by: ${eventCreator} ecnrypted by: ${decryptorURL}`
+    )
+    const byteArray = getBytes(metadata)
+    const utf8String = toUtf8String(byteArray)
+    const ddo = JSON.parse(utf8String)
+    return ddo
+  }
 }
 
 export class MetadataEventProcessor extends BaseEventProcessor {
@@ -379,17 +393,28 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadata
       )
       let ddo = await this.processDDO(decryptedDDO)
+
+      if (
+        !isRemoteDDO(decryptedDDO) &&
+        parseInt(flag) !== 2 &&
+        !this.checkDdoHash(ddo, metadataHash)
+      ) {
+        return
+      }
+
+      if (ddo.encryptedData) {
+        ddo = await this.decryptDDOIPFS(
+          decodedEventData.args[2],
+          owner,
+          ddo.encryptedData
+        )
+      }
+
       const ddoInstance = DDOManager.getDDOClass(ddo)
       if (ddo.id !== ddoInstance.makeDid(event.address, chainId.toString(10))) {
         INDEXER_LOGGER.error(
           `Decrypted DDO ID is not matching the generated hash for DID.`
         )
-        return
-      }
-      // for unencrypted DDOs
-      console.log(ddo.id)
-      console.log(metadataHash)
-      if (parseInt(flag) !== 2 && !this.checkDdoHash(ddo, metadataHash)) {
         return
       }
       const did = ddo.id
