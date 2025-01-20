@@ -50,7 +50,7 @@ async function calculateProviderFeeAmount(
 }
 
 export async function createProviderFee(
-  asset: DDO,
+  asset: DDO | Record<string, any>,
   service: Service,
   validUntil: number,
   computeEnv: ComputeEnvironment,

@@ -21,7 +21,7 @@ aquariusRoutes.get(
   async (req, res) => {
     try {
       const { did, force } = req.params
-      if (!did || !did.startsWith('did:op')) {
+      if (!did || !/^did:ope?/.test(did)) {
         res.status(400).send('Missing or invalid required parameter: "did"')
         return
       }
@@ -44,7 +44,7 @@ aquariusRoutes.get(
   async (req, res) => {
     try {
       const { did, force } = req.params
-      if (!did || !did.startsWith('did:op')) {
+      if (!did || !/^did:ope?/.test(did)) {
         res.status(400).send('Missing or invalid required parameter: "did"')
         return
       }

@@ -42,18 +42,20 @@ import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { getNFTContract } from '../../Indexer/utils.js'
 import { OrdableAssetResponse } from '../../../@types/Asset.js'
 import { PolicyServer } from '../../policyServer/index.js'
+import { DDOManager } from 'ddo.js'
 export const FILE_ENCRYPTION_ALGORITHM = 'aes-256-cbc'
 
-export function isOrderingAllowedForAsset(asset: DDO): OrdableAssetResponse {
+export function isOrderingAllowedForAsset(
+  asset: Record<string, any>
+): OrdableAssetResponse {
+  const ddoInstance = DDOManager.getDDOClass(asset)
+  const { nft } = ddoInstance.getAssetFields()
   if (!asset) {
     return {
       isOrdable: false,
       reason: `Asset provided is either null, either undefined ${asset}`
     }
-  } else if (
-    asset.nft &&
-    !(asset.nft.state in [MetadataStates.ACTIVE, MetadataStates.UNLISTED])
-  ) {
+  } else if (nft && !(nft.state in [MetadataStates.ACTIVE, MetadataStates.UNLISTED])) {
     return {
       isOrdable: false,
       reason:
@@ -192,7 +194,7 @@ export async function handleDownloadUrlCommand(
 }
 
 export function validateFilesStructure(
-  ddo: DDO,
+  ddo: DDO | Record<string, any>,
   service: Service,
   decriptedFileObject: any
 ): boolean {
@@ -260,8 +262,15 @@ export class DownloadHandler extends Handler {
       }
     }
 
+    const ddoInstance = DDOManager.getDDOClass(ddo)
+    const {
+      chainId: ddoChainId,
+      metadata,
+      nftAddress,
+      credentials
+    } = ddoInstance.getDDOFields()
     // 2. Validate ddo and credentials
-    if (!ddo.chainId || !ddo.nftAddress || !ddo.metadata) {
+    if (!ddoChainId || !nftAddress || !metadata) {
       CORE_LOGGER.logMessage('Error: DDO malformed or disabled', true)
       return {
         stream: null,
@@ -273,8 +282,8 @@ export class DownloadHandler extends Handler {
     }
 
     // check credentials
-    if (ddo.credentials) {
-      const accessGranted = checkCredentials(ddo.credentials, task.consumerAddress)
+    if (credentials) {
+      const accessGranted = checkCredentials(credentials as any, task.consumerAddress)
       if (!accessGranted) {
         CORE_LOGGER.logMessage(`Error: Access to asset ${ddo.id} was denied`, true)
         return {
@@ -312,7 +321,7 @@ export class DownloadHandler extends Handler {
     }
     // from now on, we need blockchain checks
     const config = await getConfiguration()
-    const { rpc, network, chainId, fallbackRPCs } = config.supportedNetworks[ddo.chainId]
+    const { rpc, network, chainId, fallbackRPCs } = config.supportedNetworks[ddoChainId]
     let provider
     let blockchain
     try {
@@ -340,19 +349,19 @@ export class DownloadHandler extends Handler {
     }
     if (!rpc) {
       CORE_LOGGER.logMessage(
-        `Cannot proceed with download. RPC not configured for this chain ${ddo.chainId}`,
+        `Cannot proceed with download. RPC not configured for this chain ${ddoChainId}`,
         true
       )
       return {
         stream: null,
         status: {
           httpStatus: 500,
-          error: `Cannot proceed with download. RPC not configured for this chain ${ddo.chainId}`
+          error: `Cannot proceed with download. RPC not configured for this chain ${ddoChainId}`
         }
       }
     }
     // check lifecycle state of the asset
-    const nftContract = getNFTContract(blockchain.getSigner(), ddo.nftAddress)
+    const nftContract = getNFTContract(blockchain.getSigner(), nftAddress)
     const nftState = Number(await nftContract.metaDataState())
     if (nftState !== 0 && nftState !== 5) {
       CORE_LOGGER.logMessage(
@@ -367,7 +376,7 @@ export class DownloadHandler extends Handler {
         }
       }
     }
-    let service: Service = AssetUtils.getServiceById(ddo, task.serviceId)
+    let service = AssetUtils.getServiceById(ddo, task.serviceId)
     if (!service) service = AssetUtils.getServiceByIndex(ddo, Number(task.serviceId))
     if (!service) throw new Error('Cannot find service')
 
@@ -451,7 +460,7 @@ export class DownloadHandler extends Handler {
       task.transferTxId,
       task.consumerAddress,
       provider,
-      ddo.nftAddress,
+      nftAddress,
       service.datatokenAddress,
       AssetUtils.getServiceIndexById(ddo, task.serviceId),
       service.timeout,
@@ -504,13 +513,13 @@ export class DownloadHandler extends Handler {
       let decriptedFileObject: any = null
       let decryptedFileData: any = null
       // check if confidential EVM
-      const confidentialEVM = isConfidentialChainDDO(ddo.chainId, service)
+      const confidentialEVM = isConfidentialChainDDO(ddoChainId, service)
       // check that files is missing and template 4 is active on the chain
       if (confidentialEVM) {
         const signer = blockchain.getSigner()
         const isTemplate4 = await isDataTokenTemplate4(service.datatokenAddress, signer)
 
-        if (!isTemplate4 || !(await isERC20Template4Active(ddo.chainId, signer))) {
+        if (!isTemplate4 || !(await isERC20Template4Active(ddoChainId, signer))) {
           const errorMsg =
             'Cannot decrypt DDO files, Template 4 is not active for confidential EVM!'
           CORE_LOGGER.error(errorMsg)

@@ -81,7 +81,7 @@ export class PolicyServer {
 
   async checkDownload(
     documentId: string,
-    ddo: DDO,
+    ddo: DDO | Record<string, any>,
     serviceId: string,
     fileIndex: number,
     transferTxId: string,

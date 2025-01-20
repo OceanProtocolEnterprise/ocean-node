@@ -5,7 +5,6 @@ import {
   IpfsFileObject,
   UrlFileObject
 } from '../../../@types/fileObject.js'
-import { DDO } from '../../../@types/DDO/DDO.js'
 import { getFile } from '../../../utils/file.js'
 import urlJoin from 'url-join'
 import { fetchFileMetadata } from '../../../utils/asset.js'
@@ -13,6 +12,8 @@ import { fetchFileMetadata } from '../../../utils/asset.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { createHash } from 'crypto'
 import { FindDdoHandler } from '../../core/handler/ddoHandler.js'
+import { DDOManager } from 'ddo.js'
+import { DDO } from '../../../@types/DDO/DDO.js'
 
 export async function getAlgoChecksums(
   algoDID: string,
@@ -46,11 +47,11 @@ export async function getAlgoChecksums(
       const { contentChecksum } = await fetchFileMetadata(url, 'get', false)
       checksums.files = checksums.files.concat(contentChecksum)
     }
-
+    const ddoInstance = DDOManager.getDDOClass(algoDDO)
+    const { metadata } = ddoInstance.getDDOFields()
     checksums.container = createHash('sha256')
       .update(
-        algoDDO.metadata.algorithm.container.entrypoint +
-          algoDDO.metadata.algorithm.container.checksum
+        metadata.algorithm.container.entrypoint + metadata.algorithm.container.checksum
       )
       .digest('hex')
     return checksums
@@ -66,13 +67,15 @@ export async function validateAlgoForDataset(
     files: string
     container: string
   },
-  datasetDDO: DDO,
+  datasetDDO: DDO | Record<string, any>,
   datasetServiceId: string,
   oceanNode: OceanNode
 ) {
   try {
-    const datasetService = datasetDDO.services.find(
-      (service) => service.id === datasetServiceId
+    const ddoInstance = DDOManager.getDDOClass(datasetDDO)
+    const { services } = ddoInstance.getDDOFields() as any
+    const datasetService = services.find(
+      (service: any) => service.id === datasetServiceId
     )
     if (!datasetService) {
       throw new Error('Dataset service not found')
@@ -93,7 +96,7 @@ export async function validateAlgoForDataset(
       // if is set only allow if match
       if (compute.publisherTrustedAlgorithms) {
         const trustedAlgo = compute.publisherTrustedAlgorithms.find(
-          (algo) => algo.did === algoDID
+          (algo: any) => algo.did === algoDID
         )
         if (trustedAlgo) {
           return (
@@ -107,7 +110,7 @@ export async function validateAlgoForDataset(
         const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
         if (algoDDO) {
           return compute.publisherTrustedAlgorithmPublishers
-            .map((address) => address?.toLowerCase())
+            .map((address: string) => address?.toLowerCase())
             .includes(algoDDO.nftAddress?.toLowerCase())
         }
         return false

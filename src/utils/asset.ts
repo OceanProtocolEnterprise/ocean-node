@@ -1,5 +1,4 @@
 import axios from 'axios'
-import { DDO } from '../@types/DDO/DDO'
 import { Service } from '../@types/DDO/Service'
 import { DDO_IDENTIFIER_PREFIX } from './constants.js'
 import { CORE_LOGGER } from './logging/common.js'
@@ -9,26 +8,33 @@ import { KNOWN_CONFIDENTIAL_EVMS } from './address.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/interfaces/IERC20Template.sol/IERC20Template.json' assert { type: 'json' }
 import ERC20Template4 from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template4.sol/ERC20Template4.json' assert { type: 'json' }
 import { getContractAddress, getNFTFactory } from '../components/Indexer/utils.js'
+import { DDOManager } from 'ddo.js'
+import { DDO } from '../@types/DDO/DDO'
 
 // Notes:
 // Asset as per asset.py on provider, is a class there, while on ocean.Js we only have a type
 // this is an utility to extract information from the Asset services
 export const AssetUtils = {
-  getServiceIndexById(asset: DDO, id: string): number | null {
-    for (let c = 0; c < asset.services.length; c++)
-      if (asset.services[c].id === id) return c
+  getServiceIndexById(asset: DDO | Record<string, any>, id: string): number | null {
+    const ddoInstance = DDOManager.getDDOClass(asset)
+    const { services } = ddoInstance.getDDOFields()
+    for (let c = 0; c < services.length; c++) if (services[c].id === id) return c
     return null
   },
-  getServiceByIndex(asset: DDO, index: number): Service | null {
-    if (index >= 0 && index < asset.services.length) {
-      return asset.services[index]
+  getServiceByIndex(asset: DDO | Record<string, any>, index: number): any | null {
+    const ddoInstance = DDOManager.getDDOClass(asset)
+    const { services } = ddoInstance.getDDOFields()
+    if (index >= 0 && index < services.length) {
+      return services[index]
     }
     return null
   },
 
-  getServiceById(asset: DDO, id: string): Service | null {
-    const services = asset.services.filter((service: Service) => service.id === id)
-    return services.length ? services[0] : null
+  getServiceById(asset: DDO | Record<string, any>, id: string): any | null {
+    const ddoInstance = DDOManager.getDDOClass(asset)
+    const { services } = ddoInstance.getDDOFields() as any
+    const filteredServices = services.filter((service: any) => service.id === id)
+    return filteredServices.length ? filteredServices[0] : null
   }
 }
 

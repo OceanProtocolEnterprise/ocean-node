@@ -15,7 +15,7 @@ import { sanitizeServiceFiles } from './util.js'
 import { isOrderingAllowedForAsset } from '../components/core/handler/downloadHandler.js'
 
 export async function getFile(
-  didOrDdo: string | DDO,
+  didOrDdo: string | DDO | Record<string, any>,
   serviceId: string,
   node: OceanNode
 ): Promise<UrlFileObject[] | ArweaveFileObject[] | IpfsFileObject[]> {

@@ -55,7 +55,7 @@ export async function getAlgoChecksums(
     container: ''
   }
   try {
-    const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
+    const algoDDO = (await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)) as DDO
     if (!algoDDO) {
       CORE_LOGGER.error(`Algorithm with id: ${algoDID} not found!`)
       return checksums

@@ -721,7 +721,10 @@ export class FindDdoHandler extends Handler {
   }
 
   // Function to use findDDO and get DDO in desired format
-  async findAndFormatDdo(ddoId: string, force: boolean = false): Promise<DDO | null> {
+  async findAndFormatDdo(
+    ddoId: string,
+    force: boolean = false
+  ): Promise<DDO | Record<string, any> | null> {
     const node = this.getOceanNode()
     // First try to find the DDO Locally if findDDO is not enforced
     if (!force) {
@@ -754,20 +757,23 @@ export class FindDdoHandler extends Handler {
         }
 
         // Format each service according to the Service interface
-        const formattedServices = ddoData.services.map(formatService)
+        const ddoInstance = DDOManager.getDDOClass(ddoData)
+        const { services } = ddoInstance.getDDOFields()
+        const formattedServices = services.map(formatService)
+        const ddo = ddoInstance.updateFields({ services: formattedServices as any })
 
         // Map the DDO data to the DDO interface
-        const ddo: DDO = {
-          '@context': ddoData['@context'],
-          id: ddoData.id,
-          version: ddoData.version,
-          nftAddress: ddoData.nftAddress,
-          chainId: ddoData.chainId,
-          metadata: ddoData.metadata,
-          services: formattedServices,
-          credentials: ddoData.credentials,
-          event: ddoData.event
-        }
+        // const ddo: DDO = {
+        //   '@context': ddoData['@context'],
+        //   id: ddoData.id,
+        //   version: ddoData.version,
+        //   nftAddress,
+        //   chainId,
+        //   metadata: metadata as any,
+        //   services: formattedServices,
+        //   credentials: ddoData.credentials,
+        //   event: ddoData.event
+        // }
 
         return ddo
       }
