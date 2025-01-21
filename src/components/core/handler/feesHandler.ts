@@ -16,6 +16,7 @@ import { ProviderInitialize } from '../../../@types/Fees.js'
 import { getNonce } from '../utils/nonceHandler.js'
 import { streamToString } from '../../../utils/util.js'
 import { isOrderingAllowedForAsset } from './downloadHandler.js'
+import { DDOManager } from 'ddo.js'
 
 export class FeesHandler extends Handler {
   validate(command: GetFeesCommand): ValidateParams {
@@ -58,8 +59,9 @@ export class FeesHandler extends Handler {
         }
       }
     }
-
-    const service = ddo.services.find((what: any) => what.id === task.serviceId)
+    const ddoInstance = DDOManager.getDDOClass(ddo)
+    const { services } = ddoInstance.getDDOFields() as any
+    const service = services.find((what: any) => what.id === task.serviceId)
     if (!service) {
       errorMsg = 'Invalid serviceId'
     }

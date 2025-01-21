@@ -17,6 +17,7 @@ import { DDO } from '../../@types/DDO/DDO.js'
 import { getFile } from '../../utils/file.js'
 import urlJoin from 'url-join'
 import { fetchFileMetadata } from '../../utils/asset.js'
+import { DDOManager } from 'ddo.js'
 export { C2DEngine } from './compute_engine_base.js'
 
 export async function checkC2DEnvExists(
@@ -55,7 +56,7 @@ export async function getAlgoChecksums(
     container: ''
   }
   try {
-    const algoDDO = (await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)) as DDO
+    const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
     if (!algoDDO) {
       CORE_LOGGER.error(`Algorithm with id: ${algoDID} not found!`)
       return checksums
@@ -77,11 +78,11 @@ export async function getAlgoChecksums(
       const { contentChecksum } = await fetchFileMetadata(url, 'get', false)
       checksums.files = checksums.files.concat(contentChecksum)
     }
-
+    const ddoInstance = DDOManager.getDDOClass(algoDDO)
+    const { metadata } = ddoInstance.getDDOFields() as any
     checksums.container = createHash('sha256')
       .update(
-        algoDDO.metadata.algorithm.container.entrypoint +
-          algoDDO.metadata.algorithm.container.checksum
+        metadata.algorithm.container.entrypoint + metadata.algorithm.container.checksum
       )
       .digest('hex')
     return checksums
@@ -97,13 +98,15 @@ export async function validateAlgoForDataset(
     files: string
     container: string
   },
-  datasetDDO: DDO,
+  datasetDDO: DDO | Record<string, any>,
   datasetServiceId: string,
   oceanNode: OceanNode
 ) {
   try {
-    const datasetService = datasetDDO.services.find(
-      (service) => service.id === datasetServiceId
+    const ddoInstance = DDOManager.getDDOClass(datasetDDO)
+    const { services } = ddoInstance.getDDOFields() as any
+    const datasetService = services.find(
+      (service: any) => service.id === datasetServiceId
     )
     if (!datasetService) {
       throw new Error('Dataset service not found')
@@ -124,7 +127,7 @@ export async function validateAlgoForDataset(
       // if is set only allow if match
       if (compute.publisherTrustedAlgorithms) {
         const trustedAlgo = compute.publisherTrustedAlgorithms.find(
-          (algo) => algo.did === algoDID
+          (algo: any) => algo.did === algoDID
         )
         if (trustedAlgo) {
           return (
@@ -136,10 +139,12 @@ export async function validateAlgoForDataset(
       }
       if (compute.publisherTrustedAlgorithmPublishers) {
         const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
+        const algoInstance = DDOManager.getDDOClass(algoDDO)
+        const { nftAddress } = algoInstance.getDDOFields()
         if (algoDDO) {
           return compute.publisherTrustedAlgorithmPublishers
-            .map((address) => address?.toLowerCase())
-            .includes(algoDDO.nftAddress?.toLowerCase())
+            .map((address: string) => address?.toLowerCase())
+            .includes(nftAddress?.toLowerCase())
         }
         return false
       }

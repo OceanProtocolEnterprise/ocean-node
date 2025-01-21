@@ -198,8 +198,10 @@ export function validateFilesStructure(
   service: Service,
   decriptedFileObject: any
 ): boolean {
+  const ddoInstance = DDOManager.getDDOClass(ddo)
+  const { nftAddress } = ddoInstance.getDDOFields()
   if (
-    decriptedFileObject.nftAddress?.toLowerCase() !== ddo.nftAddress?.toLowerCase() ||
+    decriptedFileObject.nftAddress?.toLowerCase() !== nftAddress?.toLowerCase() ||
     decriptedFileObject.datatokenAddress?.toLowerCase() !==
       service.datatokenAddress?.toLowerCase()
   ) {
@@ -420,7 +422,7 @@ export class DownloadHandler extends Handler {
 
       const environments = await this.getOceanNode()
         .getC2DEngines()
-        .fetchEnvironments(ddo.chainId)
+        .fetchEnvironments(ddoChainId)
       for (const env of environments)
         computeAddrs.push(env.consumerAddress?.toLowerCase())
 

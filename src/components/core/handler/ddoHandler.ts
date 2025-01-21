@@ -549,11 +549,14 @@ export class FindDdoHandler extends Handler {
           if (providerIds.length > 0) {
             const peer = providerIds.pop()
             const isResponseLegit = await checkIfDDOResponseIsLegit(ddo)
+            const ddoInstance = DDOManager.getDDOClass(ddo)
+            const { metadata } = ddoInstance.getDDOFields()
+            const { event } = ddoInstance.getAssetFields()
             if (isResponseLegit) {
               const ddoInfo: FindDDOResponse = {
                 id: ddo.id,
-                lastUpdateTx: ddo.event.tx,
-                lastUpdateTime: ddo.metadata.updated,
+                lastUpdateTx: event.txid,
+                lastUpdateTime: metadata.updated,
                 provider: peer
               }
               resultList.push(ddoInfo)
@@ -859,7 +862,9 @@ export function validateDDOIdentifier(identifier: string): ValidateParams {
  * @returns validation result
  */
 async function checkIfDDOResponseIsLegit(ddo: any): Promise<boolean> {
-  const { nftAddress, chainId, event } = ddo
+  const ddoInstance = DDOManager.getDDOClass(ddo)
+  const { nftAddress, chainId } = ddoInstance.getDDOFields()
+  const { event } = ddoInstance.getAssetFields()
   let isValid = validateDDOHash(ddo.id, nftAddress, chainId)
   // 1) check hash sha256(nftAddress + chainId)
   if (!isValid) {
@@ -909,7 +914,7 @@ async function checkIfDDOResponseIsLegit(ddo: any): Promise<boolean> {
   }
 
   // check events on logs
-  const txId: string = event.tx // NOTE: DDO is txid, Asset is tx
+  const txId: string = event.txid // NOTE: DDO is txid, Asset is tx
   if (!txId) {
     CORE_LOGGER.error(`DDO event missing tx data, cannot confirm transaction`)
     return false

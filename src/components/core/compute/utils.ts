@@ -108,10 +108,12 @@ export async function validateAlgoForDataset(
       }
       if (compute.publisherTrustedAlgorithmPublishers) {
         const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
+        const algoInstance = DDOManager.getDDOClass(algoDDO)
+        const { nftAddress } = algoInstance.getDDOFields()
         if (algoDDO) {
           return compute.publisherTrustedAlgorithmPublishers
             .map((address: string) => address?.toLowerCase())
-            .includes(algoDDO.nftAddress?.toLowerCase())
+            .includes(nftAddress?.toLowerCase())
         }
         return false
       }

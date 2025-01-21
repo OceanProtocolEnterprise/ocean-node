@@ -26,6 +26,7 @@ import { getConfiguration } from '../../../utils/index.js'
 import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { FindDdoHandler } from '../handler/ddoHandler.js'
 import { isOrderingAllowedForAsset } from '../handler/downloadHandler.js'
+import { DDOManager } from 'ddo.js'
 export class ComputeInitializeHandler extends Handler {
   validate(command: ComputeInitializeCommand): ValidateParams {
     const validation = validateCommandParameters(command, [
@@ -109,10 +110,11 @@ export class ComputeInitializeHandler extends Handler {
               }
             }
           }
-
+          const ddoInstance = DDOManager.getDDOClass(ddo)
+          const { chainId: ddoChainId, nftAddress } = ddoInstance.getDDOFields()
           const config = await getConfiguration()
           const { rpc, network, chainId, fallbackRPCs } =
-            config.supportedNetworks[ddo.chainId]
+            config.supportedNetworks[ddoChainId]
           const blockchain = new Blockchain(rpc, network, chainId, fallbackRPCs)
           const { ready, error } = await blockchain.isNetworkReady()
           if (!ready) {
@@ -128,7 +130,7 @@ export class ComputeInitializeHandler extends Handler {
           const signer = blockchain.getSigner()
 
           // check if oasis evm or similar
-          const confidentialEVM = isConfidentialChainDDO(ddo.chainId, service)
+          const confidentialEVM = isConfidentialChainDDO(ddoChainId, service)
           // let's see if we can access this asset
           let canDecrypt = false
           try {
@@ -144,7 +146,7 @@ export class ComputeInitializeHandler extends Handler {
                 service.datatokenAddress,
                 signer
               )
-              if (isTemplate4 && (await isERC20Template4Active(ddo.chainId, signer))) {
+              if (isTemplate4 && (await isERC20Template4Active(ddoChainId, signer))) {
                 // call smart contract to decrypt
                 const serviceIndex = AssetUtils.getServiceIndexById(ddo, service.id)
                 const filesObject = await getFilesObjectFromConfidentialEVM(
@@ -177,7 +179,7 @@ export class ComputeInitializeHandler extends Handler {
 
           const provider = blockchain.getProvider()
           result.datatoken = service.datatokenAddress
-          result.chainId = ddo.chainId
+          result.chainId = ddoChainId
           // start with assumption than we need new providerfees
           let validFee = {
             isValid: false,
@@ -186,9 +188,9 @@ export class ComputeInitializeHandler extends Handler {
           }
           const env = await this.getOceanNode()
             .getC2DEngines()
-            .getExactComputeEnv(task.compute.env, ddo.chainId)
+            .getExactComputeEnv(task.compute.env, ddoChainId)
           if (!env) {
-            const error = `Compute environment: ${task.compute.env} not available on chainId: ${ddo.chainId}`
+            const error = `Compute environment: ${task.compute.env} not available on chainId: ${ddoChainId}`
             return {
               stream: null,
               status: {
@@ -204,7 +206,7 @@ export class ComputeInitializeHandler extends Handler {
               elem.transferTxId,
               env.consumerAddress,
               provider,
-              ddo.nftAddress,
+              nftAddress,
               service.datatokenAddress,
               AssetUtils.getServiceIndexById(ddo, service.id),
               service.timeout,
@@ -227,7 +229,7 @@ export class ComputeInitializeHandler extends Handler {
             }
           }
           if (validFee.isComputeValid === true) {
-            foundValidCompute = { txId: elem.transferTxId, chainId: ddo.chainId }
+            foundValidCompute = { txId: elem.transferTxId, chainId: ddoChainId }
           }
           if (validFee.isValid === false) {
             // providerFee is no longer valid, so we need to create one
@@ -263,7 +265,7 @@ export class ComputeInitializeHandler extends Handler {
                 env,
                 task.compute.validUntil
               )
-              foundValidCompute = { txId: null, chainId: ddo.chainId }
+              foundValidCompute = { txId: null, chainId: ddoChainId }
             }
           }
         }

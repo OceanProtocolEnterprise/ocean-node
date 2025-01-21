@@ -28,6 +28,7 @@ import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { FindDdoHandler } from '../handler/ddoHandler.js'
 import { ProviderFeeValidation } from '../../../@types/Fees.js'
 import { isOrderingAllowedForAsset } from '../handler/downloadHandler.js'
+import { DDOManager } from 'ddo.js'
 export class ComputeStartHandler extends Handler {
   validate(command: ComputeStartCommand): ValidateParams {
     const commandValidation = validateCommandParameters(command, [
@@ -131,10 +132,16 @@ export class ComputeStartHandler extends Handler {
               }
             }
           }
-
+          const ddoInstance = DDOManager.getDDOClass(ddo)
+          const {
+            chainId: ddoChainId,
+            services,
+            metadata,
+            nftAddress
+          } = ddoInstance.getDDOFields() as any
           const config = await getConfiguration()
           const { rpc, network, chainId, fallbackRPCs } =
-            config.supportedNetworks[ddo.chainId]
+            config.supportedNetworks[ddoChainId]
           const blockchain = new Blockchain(rpc, network, chainId, fallbackRPCs)
           const { ready, error } = await blockchain.isNetworkReady()
           if (!ready) {
@@ -150,7 +157,7 @@ export class ComputeStartHandler extends Handler {
           const signer = blockchain.getSigner()
           // let's see if we can access this asset
           // check if oasis evm or similar
-          const confidentialEVM = isConfidentialChainDDO(ddo.chainId, service)
+          const confidentialEVM = isConfidentialChainDDO(ddoChainId, service)
           let canDecrypt = false
           try {
             if (!confidentialEVM) {
@@ -165,7 +172,7 @@ export class ComputeStartHandler extends Handler {
                 service.datatokenAddress,
                 signer
               )
-              if (isTemplate4 && (await isERC20Template4Active(ddo.chainId, signer))) {
+              if (isTemplate4 && (await isERC20Template4Active(ddoChainId, signer))) {
                 // call smart contract to decrypt
                 const serviceIndex = AssetUtils.getServiceIndexById(ddo, service.id)
                 const filesObject = await getFilesObjectFromConfidentialEVM(
@@ -195,12 +202,12 @@ export class ComputeStartHandler extends Handler {
               }
             }
           }
-          if (ddo.metadata.type !== 'algorithm') {
+          if (metadata.type !== 'algorithm') {
             const validAlgoForDataset = await validateAlgoForDataset(
               task.algorithm.documentId,
               algoChecksums,
               ddo,
-              ddo.services[0].id,
+              services[0].id,
               node
             )
             if (!validAlgoForDataset) {
@@ -216,9 +223,9 @@ export class ComputeStartHandler extends Handler {
 
           const provider = blockchain.getProvider()
           result.datatoken = service.datatokenAddress
-          result.chainId = ddo.chainId
+          result.chainId = ddoChainId
 
-          const env = await engine.getComputeEnvironment(ddo.chainId, task.environment)
+          const env = await engine.getComputeEnvironment(ddoChainId, task.environment)
           if (!('transferTxId' in elem) || !elem.transferTxId) {
             const error = `Missing transferTxId for DDO ${elem.documentId}`
             return {
@@ -235,7 +242,7 @@ export class ComputeStartHandler extends Handler {
             elem.transferTxId,
             env.consumerAddress,
             provider,
-            ddo.nftAddress,
+            nftAddress,
             service.datatokenAddress,
             AssetUtils.getServiceIndexById(ddo, service.id),
             service.timeout,
@@ -277,20 +284,20 @@ export class ComputeStartHandler extends Handler {
             )
             foundValidCompute = {
               txId: elem.transferTxId,
-              chainId: ddo.chainId,
+              chainId: ddoChainId,
               validUntil: validFee.validUntil
             }
           }
-          if (!('meta' in algorithm) && ddo.metadata.type === 'algorithm') {
-            const { entrypoint, image, tag, checksum } = ddo.metadata.algorithm.container
+          if (!('meta' in algorithm) && metadata.type === 'algorithm') {
+            const { entrypoint, image, tag, checksum } = metadata.algorithm.container
             const container = { entrypoint, image, tag, checksum }
             algorithm.meta = {
-              language: ddo.metadata.algorithm.language,
-              version: ddo.metadata.algorithm.version,
+              language: metadata.algorithm.language,
+              version: metadata.algorithm.version,
               container
             }
-            if ('format' in ddo.metadata.algorithm) {
-              algorithm.meta.format = ddo.metadata.algorithm.format
+            if ('format' in metadata.algorithm) {
+              algorithm.meta.format = metadata.algorithm.format
             }
           }
         }
