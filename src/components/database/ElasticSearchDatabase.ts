@@ -12,6 +12,7 @@ import { ElasticsearchSchema } from './ElasticSchemas.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 import { validateObject } from '../core/utils/validateDdoHandler.js'
+import { DDOManager } from 'ddo.js'
 
 export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
   private client: Client
@@ -469,7 +470,9 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
 
   getDDOSchema(ddo: Record<string, any>) {
     let schemaName: string | undefined
-    if (ddo.nft?.state !== 0) {
+    const ddoInstance = DDOManager.getDDOClass(ddo)
+    const { nft } = ddoInstance.getAssetFields()
+    if (nft?.state !== 0) {
       schemaName = 'op_ddo_short'
     } else if (ddo.version) {
       schemaName = `op_ddo_v${ddo.version}`
@@ -485,7 +488,9 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
   }
 
   async validateDDO(ddo: Record<string, any>): Promise<boolean> {
-    if (ddo.nft?.state !== 0) {
+    const ddoInstance = DDOManager.getDDOClass(ddo)
+    const { nft } = ddoInstance.getAssetFields()
+    if (nft?.state !== 0) {
       return true
     } else {
       const validation = await validateObject(ddo)
