@@ -91,7 +91,7 @@ class BaseEventProcessor {
     try {
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
       const saveDDO = await ddoDatabase.update({ ...ddo })
-      const ddoInstance = DDOManager.getDDOClass(saveDDO)
+      const ddoInstance = DDOManager.getDDOClass(ddo)
       const { id, nftAddress } = ddoInstance.getDDOData()
       const { event } = ddoInstance.getAssetFields()
       await ddoState.update(this.networkId, id, nftAddress, event?.txid, true)
@@ -429,17 +429,19 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       )
       // stuff that we overwrite
       ddo = ddoInstance.updateFields({ chainId, nftAddress, datatokens, nft })
-
       INDEXER_LOGGER.logMessage(
         `Processed new DDO data ${ddo.id} with txHash ${event.transactionHash} from block ${event.blockNumber}`,
         true
       )
-
       const previousDdo = await ddoDatabase.retrieve(ddo.id)
-      const previousDdoInstance = DDOManager.getDDOClass(previousDdo)
-      const { nft: prevoiusNft } = previousDdoInstance.getAssetFields()
+      let previousNft
+      if (previousDdo) {
+        const previousDdoInstance = DDOManager.getDDOClass(previousDdo)
+        const { nft } = previousDdoInstance.getAssetFields()
+        previousNft = nft
+      }
       if (eventName === EVENTS.METADATA_CREATED) {
-        if (previousDdo && prevoiusNft.state === MetadataStates.ACTIVE) {
+        if (previousDdo && previousNft && previousNft.state === MetadataStates.ACTIVE) {
           INDEXER_LOGGER.logMessage(`DDO ${ddo.id} is already registered as active`, true)
           await ddoState.update(
             this.networkId,
@@ -508,7 +510,6 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         } else {
           updatedEvent.block = -1
         }
-
         // policyServer check
         const policyServer = new PolicyServer()
         let policyStatus
