@@ -12,6 +12,7 @@ import {
   setupEnvironment,
   tearDownEnvironment
 } from '../utils/utils.js'
+import { sleep } from '../../utils/util.js'
 
 let envOverrides: OverrideEnvConfig[]
 
@@ -48,7 +49,8 @@ describe('Status command tests', async () => {
     await oceanIndexer.stopAllThreads()
   })
 
-  it('Ocean Node instance', () => {
+  it('Ocean Node instance', async () => {
+    await sleep(3000)
     expect(oceanNode).to.be.instanceOf(OceanNode)
     expect(config.supportedNetworks).to.eql({
       '1': 'https://rpc.eth.gateway.fm',
