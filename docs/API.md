@@ -1128,7 +1128,7 @@ returns the current indexing queue, as an array of objects
 
 ## PolicyServer Passthrough
 
-### `HTTP` POST /PolicyServerPassthrough
+### `HTTP` POST /api/services/PolicyServerPassthrough
 
 ### `P2P` command: PolicyServerPassthrough
 
