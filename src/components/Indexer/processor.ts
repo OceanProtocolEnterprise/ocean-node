@@ -149,7 +149,7 @@ class BaseEventProcessor {
         .update(getAddress(nftAddress) + chainId.toString(10))
         .digest('hex')
 
-    let ddo = await ddoDatabase.retrieve(didOpe)
+    let ddo = await ddoDatabase.retrieve(did)
     if (!ddo) {
       INDEXER_LOGGER.logMessage(
         `Detected OrderStarted changed for ${did}, but it does not exists, try with ddo:ope.`
