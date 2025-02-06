@@ -343,8 +343,23 @@ class BaseEventProcessor {
     )
     const byteArray = getBytes(metadata)
     const utf8String = toUtf8String(byteArray)
-    const ddo = JSON.parse(utf8String)
-    return ddo
+    const proof = JSON.parse(utf8String)
+    return proof
+  }
+
+  protected getDataFromProof(
+    proof: any
+  ): { header: any; ddoObj: Record<string, any>; signature: string } | null {
+    INDEXER_LOGGER.logMessage(`Decompressing JWT`)
+    const data = proof.split('.')
+    if (data.length > 2) {
+      const header = JSON.parse(Buffer.from(data[0], 'base64').toString('utf-8'))
+      const ddoObj = JSON.parse(Buffer.from(data[1], 'base64').toString('utf-8')).vc
+      const signature = data[2]
+
+      return { header, ddoObj, signature }
+    }
+    return null
   }
 }
 
@@ -403,11 +418,17 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       }
 
       if (ddo.encryptedData) {
-        ddo = await this.decryptDDOIPFS(
+        const proof = await this.decryptDDOIPFS(
           decodedEventData.args[2],
           owner,
           ddo.encryptedData
         )
+
+        const data = this.getDataFromProof(proof)
+        const ddoInstance = DDOManager.getDDOClass(data.ddoObj)
+        ddo = ddoInstance.updateFields({
+          proof: { signature: data.signature, header: data.header }
+        })
       }
 
       const ddoInstance = DDOManager.getDDOClass(ddo)
