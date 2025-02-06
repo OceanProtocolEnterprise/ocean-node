@@ -354,7 +354,8 @@ class BaseEventProcessor {
     const data = proof.split('.')
     if (data.length > 2) {
       const header = JSON.parse(Buffer.from(data[0], 'base64').toString('utf-8'))
-      const ddoObj = JSON.parse(Buffer.from(data[1], 'base64').toString('utf-8')).vc
+      let ddoObj = JSON.parse(Buffer.from(data[1], 'base64').toString('utf-8'))
+      if (ddoObj.vc) ddoObj = ddoObj.vc
       const signature = data[2]
 
       return { header, ddoObj, signature }
