@@ -45,6 +45,7 @@ import {
 } from '../../Indexer/utils.js'
 import { validateDDOHash } from '../../../utils/asset.js'
 import { DDOManager } from 'ddo.js'
+import { createHash } from 'crypto'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -68,6 +69,21 @@ export class DecryptDdoHandler extends Handler {
       }
     }
     return validation
+  }
+
+  checkId(id: string, dataNftAddress: string, chainId: string): Boolean {
+    const didV5 =
+      'did:ope:' +
+      createHash('sha256')
+        .update(ethers.getAddress(dataNftAddress) + chainId)
+        .digest('hex')
+
+    const didV4 =
+      'did:op:' +
+      createHash('sha256')
+        .update(ethers.getAddress(dataNftAddress) + chainId)
+        .digest('hex')
+    return id === didV4 || id === didV5
   }
 
   async handle(task: DecryptDDOCommand): Promise<P2PCommandResponse> {
@@ -338,30 +354,13 @@ export class DecryptDdoHandler extends Handler {
 
       // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
-      const ddoInstance = DDOManager.getDDOClass(ddo)
-      if (ddo.id !== ddoInstance.makeDid(dataNftAddress, chainId)) {
+      if (ddo.id && !this.checkId(ddo.id, dataNftAddress, chainId)) {
         CORE_LOGGER.error(`Decrypted DDO ID is not matching the generated hash for DID.`)
         return {
           stream: null,
           status: {
             httpStatus: 400,
             error: 'Decrypt DDO: did does not match'
-          }
-        }
-      }
-
-      // checksum matches
-      const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
-      if (decryptedDocumentHash !== documentHash) {
-        CORE_LOGGER.logMessage(
-          `Decrypt DDO: error checksum does not match ${decryptedDocumentHash} with ${documentHash}`,
-          true
-        )
-        return {
-          stream: null,
-          status: {
-            httpStatus: 400,
-            error: 'Decrypt DDO: checksum does not match'
           }
         }
       }
@@ -408,6 +407,25 @@ export class DecryptDdoHandler extends Handler {
         const storage = Storage.getStorageClass(ddoObject.remote, config)
         const result = await storage.getReadableStream()
         stream = result.stream as Readable
+      } else {
+        // checksum matches
+        const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
+        if (decryptedDocumentHash !== documentHash) {
+          console.log(
+            'in the decryptedDocumentHash !== documentHash) !!!!!!!!!!!!!!!!!!!'
+          )
+          CORE_LOGGER.logMessage(
+            `Decrypt DDO: error checksum does not match ${decryptedDocumentHash} with ${documentHash}`,
+            true
+          )
+          return {
+            stream: null,
+            status: {
+              httpStatus: 400,
+              error: 'Decrypt DDO: checksum does not match'
+            }
+          }
+        }
       }
 
       return {
