@@ -2,7 +2,7 @@ import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/template
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
 import axios from 'axios'
 import { createHash } from 'crypto'
-import { AssetLastEvent, DDOManager } from 'ddo.js'
+import { AssetLastEvent, DDOManager } from '@oceanprotocol/ddo-js'
 import {
   Interface,
   JsonRpcApiProvider,
@@ -754,7 +754,7 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
       if (
         stats &&
         services[serviceIndex].datatokenAddress?.toLowerCase() ===
-          event.address?.toLowerCase()
+        event.address?.toLowerCase()
       ) {
         newStats.orders += 1
       } else {

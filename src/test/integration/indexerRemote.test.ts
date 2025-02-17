@@ -36,7 +36,7 @@ import { homedir } from 'os'
 import { OceanNode } from '../../OceanNode.js'
 import axios from 'axios'
 import { getConfiguration } from '../../utils/index.js'
-import { DDOManager } from 'ddo.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 
 function uploadToIpfs(data: any): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -44,8 +44,8 @@ function uploadToIpfs(data: any): Promise<string> {
       .post(
         'http://172.15.0.16:5001/api/v0/add',
         '--------------------------a28d68b1c872c96f\r\nContent-Disposition: form-data; name="file"; filename="ddo.json"\r\nContent-Type: application/octet-stream\r\n\r\n' +
-          data +
-          '\r\n--------------------------a28d68b1c872c96f--\r\n',
+        data +
+        '\r\n--------------------------a28d68b1c872c96f--\r\n',
         {
           headers: {
             'Content-Type':

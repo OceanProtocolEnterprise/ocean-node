@@ -6,7 +6,7 @@ import { Service } from '../../../@types/DDO/Service.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { OceanNode } from '../../../OceanNode.js'
 import { getConfiguration, hasP2PInterface } from '../../../utils/config.js'
-import { DDOManager } from 'ddo.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 
 /**
  * Check if the specified ddo is cached and if the cached version is recent enough
@@ -23,8 +23,7 @@ export function hasCachedDDO(task: FindDDOCommand, node: OceanP2P): boolean {
     }
     CORE_LOGGER.log(
       LOG_LEVELS_STR.LEVEL_INFO,
-      `DDO cache for ${task.id} has expired, cache age(secs): ${
-        (now - cacheTime) / 1000
+      `DDO cache for ${task.id} has expired, cache age(secs): ${(now - cacheTime) / 1000
       }`,
       true
     )

@@ -12,7 +12,7 @@ import { ElasticsearchSchema } from './ElasticSchemas.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 import { validateObject } from '../core/utils/validateDdoHandler.js'
-import { DDOManager } from 'ddo.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 
 export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
   private client: Client
@@ -505,7 +505,7 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       } else {
         DATABASE_LOGGER.logMessageWithEmoji(
           `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-            JSON.stringify(validation[1]),
+          JSON.stringify(validation[1]),
           true,
           GENERIC_EMOJIS.EMOJI_CROSS_MARK,
           LOG_LEVELS_STR.LEVEL_ERROR

@@ -14,7 +14,7 @@ import {
   AbstractLogDatabase,
   AbstractOrderDatabase
 } from './BaseDatabase.js'
-import { DDOManager } from 'ddo.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 
 export class TypesenseOrderDatabase extends AbstractOrderDatabase {
   private provider: Typesense
@@ -410,7 +410,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       } else {
         DATABASE_LOGGER.logMessageWithEmoji(
           `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-            JSON.stringify(validation[1]),
+          JSON.stringify(validation[1]),
           true,
           GENERIC_EMOJIS.EMOJI_CROSS_MARK,
           LOG_LEVELS_STR.LEVEL_ERROR
@@ -508,7 +508,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
           // Log error other than not found
           DATABASE_LOGGER.logMessageWithEmoji(
             `Error when retrieving DDO entry ${id} from schema ${schema.name}: ` +
-              error.message,
+            error.message,
             true,
             GENERIC_EMOJIS.EMOJI_CROSS_MARK,
             LOG_LEVELS_STR.LEVEL_ERROR
@@ -585,7 +585,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
           // Log error other than not found
           DATABASE_LOGGER.logMessageWithEmoji(
             `Error when deleting DDO entry ${did} from schema ${schema.name}: ` +
-              error.message,
+            error.message,
             true,
             GENERIC_EMOJIS.EMOJI_CROSS_MARK,
             LOG_LEVELS_STR.LEVEL_ERROR

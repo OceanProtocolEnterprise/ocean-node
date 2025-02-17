@@ -3,7 +3,7 @@ import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { create256Hash } from '../../../utils/crypt.js'
 import { getProviderWallet } from './feesHandler.js'
 // @ts-ignore
-import { validateDDO } from 'ddo.js'
+import { validateDDO } from '@oceanprotocol/ddo-js'
 
 export function validateObject(
   obj: Record<string, any>

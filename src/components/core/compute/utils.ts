@@ -12,7 +12,7 @@ import { fetchFileMetadata } from '../../../utils/asset.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { createHash } from 'crypto'
 import { FindDdoHandler } from '../../core/handler/ddoHandler.js'
-import { DDOManager } from 'ddo.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 import { DDO } from '../../../@types/DDO/DDO.js'
 
 export async function getAlgoChecksums(

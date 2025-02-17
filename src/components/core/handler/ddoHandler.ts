@@ -44,7 +44,7 @@ import {
   wasNFTDeployedByOurFactory
 } from '../../Indexer/utils.js'
 import { validateDDOHash } from '../../../utils/asset.js'
-import { DDOManager } from 'ddo.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 import { createHash } from 'crypto'
 
 const MAX_NUM_PROVIDERS = 5

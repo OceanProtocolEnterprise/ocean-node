@@ -42,7 +42,7 @@ import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { getNFTContract } from '../../Indexer/utils.js'
 import { OrdableAssetResponse } from '../../../@types/Asset.js'
 import { PolicyServer } from '../../policyServer/index.js'
-import { DDOManager } from 'ddo.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 export const FILE_ENCRYPTION_ALGORITHM = 'aes-256-cbc'
 
 export function isOrderingAllowedForAsset(
@@ -203,7 +203,7 @@ export function validateFilesStructure(
   if (
     decriptedFileObject.nftAddress?.toLowerCase() !== nftAddress?.toLowerCase() ||
     decriptedFileObject.datatokenAddress?.toLowerCase() !==
-      service.datatokenAddress?.toLowerCase()
+    service.datatokenAddress?.toLowerCase()
   ) {
     return false
   }
@@ -310,7 +310,7 @@ export class DownloadHandler extends Handler {
     if (!nonceCheckResult.valid) {
       CORE_LOGGER.logMessage(
         'Invalid nonce or signature, unable to proceed with download: ' +
-          nonceCheckResult.error,
+        nonceCheckResult.error,
         true
       )
       return {
