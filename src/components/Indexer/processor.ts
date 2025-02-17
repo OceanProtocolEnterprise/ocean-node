@@ -754,7 +754,7 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
       if (
         stats &&
         services[serviceIndex].datatokenAddress?.toLowerCase() ===
-        event.address?.toLowerCase()
+          event.address?.toLowerCase()
       ) {
         newStats.orders += 1
       } else {

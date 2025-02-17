@@ -23,7 +23,8 @@ export function hasCachedDDO(task: FindDDOCommand, node: OceanP2P): boolean {
     }
     CORE_LOGGER.log(
       LOG_LEVELS_STR.LEVEL_INFO,
-      `DDO cache for ${task.id} has expired, cache age(secs): ${(now - cacheTime) / 1000
+      `DDO cache for ${task.id} has expired, cache age(secs): ${
+        (now - cacheTime) / 1000
       }`,
       true
     )

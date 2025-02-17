@@ -505,7 +505,7 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       } else {
         DATABASE_LOGGER.logMessageWithEmoji(
           `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-          JSON.stringify(validation[1]),
+            JSON.stringify(validation[1]),
           true,
           GENERIC_EMOJIS.EMOJI_CROSS_MARK,
           LOG_LEVELS_STR.LEVEL_ERROR
