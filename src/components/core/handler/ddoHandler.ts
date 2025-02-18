@@ -411,9 +411,6 @@ export class DecryptDdoHandler extends Handler {
         // checksum matches
         const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
         if (decryptedDocumentHash !== documentHash) {
-          console.log(
-            'in the decryptedDocumentHash !== documentHash) !!!!!!!!!!!!!!!!!!!'
-          )
           CORE_LOGGER.logMessage(
             `Decrypt DDO: error checksum does not match ${decryptedDocumentHash} with ${documentHash}`,
             true

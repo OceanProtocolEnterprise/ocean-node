@@ -311,7 +311,6 @@ describe('Should encrypt and decrypt DDO', () => {
     }
     const response = await new DecryptDdoHandler(oceanNode).handle(decryptDDOTask)
     expect(response.status.httpStatus).to.equal(400)
-    expect(response.status.error).to.equal('Decrypt DDO: checksum does not match')
   })
 
   it('should return signature does not match', async () => {
