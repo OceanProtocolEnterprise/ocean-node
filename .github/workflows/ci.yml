@@ -129,19 +129,6 @@ jobs:
           bash -x start_ocean.sh --no-aquarius --no-provider --no-dashboard --with-c2d --with-typesense 2>&1 > start_ocean.log &
       - run: npm ci
       - run: npm run build
-      - run: docker image ls
-      - name: Delete default runner images
-        run: |
-          docker image rm node:20
-          docker image rm node:20-alpine
-          docker image rm node:18
-          docker image rm node:18-alpine
-          docker image rm debian:10
-          docker image rm debian:11
-          docker image rm ubuntu:22.04
-          docker image rm ubuntu:20.04
-          docker image rm moby/buildkit:latest
-          rm -rf /usr/share/swift/
       - name: Wait for contracts deployment and C2D cluster to be ready
         working-directory: ${{ github.workspace }}/barge
         run: |
@@ -223,20 +210,6 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - run: docker image ls
-      - name: Delete default runner images
-        run: |
-          docker image rm node:20
-          docker image rm node:20-alpine
-          docker image rm node:18
-          docker image rm node:18-alpine
-          docker image rm debian:10
-          docker image rm debian:11
-          docker image rm ubuntu:22.04
-          docker image rm ubuntu:20.04
-          docker image rm moby/buildkit:latest
-          rm -rf /usr/share/swift/
-
       - name: Wait for contracts deployment and C2D cluster to be ready
         working-directory: ${{ github.workspace }}/barge
         run: |
