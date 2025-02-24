@@ -9,10 +9,7 @@ export type ElasticsearchSchema = {
   body: {
     mappings: {
       properties: {
-        [field: string]: {
-          type: string
-          [options: string]: any
-        }
+        [field: string]: any
       }
     }
   }
@@ -46,19 +43,7 @@ export function readElasticsearchJsonSchemas(): ElasticsearchSchema[] {
           index: jsonFile.name,
           body: {
             mappings: {
-              properties: jsonFile.fields.reduce((acc: any, field: any) => {
-                acc[field.name] = { type: convertToElasticsearchType(field.type) }
-                if (field.sort) {
-                  acc[field.name].index = true
-                }
-                if (field.optional) {
-                  acc[field.name].null_value = null
-                }
-                if (field.enum) {
-                  acc[field.name].enum = field.enum
-                }
-                return acc
-              }, {})
+              properties: mapFields(jsonFile.fields)
             }
           }
         }
@@ -76,6 +61,34 @@ export function readElasticsearchJsonSchemas(): ElasticsearchSchema[] {
     )
   }
   return []
+}
+
+function mapFields(fields: any[]): any {
+  return fields.reduce((acc: any, field: any) => {
+    if (field.type === 'object' || field.type === 'nested') {
+      acc[field.name] = {
+        type: field.type,
+        properties: mapFields(field.fields || [])
+      }
+    } else if (field.type === 'array') {
+      acc[field.name] = {
+        type: 'nested',
+        properties: mapFields(field.items || [])
+      }
+    } else {
+      acc[field.name] = { type: convertToElasticsearchType(field.type) }
+      if (field.sort) {
+        acc[field.name].index = true
+      }
+      if (field.optional) {
+        acc[field.name].null_value = null
+      }
+      if (field.enum) {
+        acc[field.name].enum = field.enum
+      }
+    }
+    return acc
+  }, {})
 }
 
 function convertToElasticsearchType(typesenseType: string): string {
