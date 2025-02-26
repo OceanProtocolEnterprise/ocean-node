@@ -95,7 +95,10 @@ function convertToElasticsearchType(typesenseType: string): string {
   const typeMapping: { [key: string]: string } = {
     int64: 'long',
     string: 'keyword',
-    bool: 'boolean'
+    bool: 'boolean',
+    text: 'text',
+    date: 'date',
+    double: 'double'
   }
   return typeMapping[typesenseType] || 'text'
 }
