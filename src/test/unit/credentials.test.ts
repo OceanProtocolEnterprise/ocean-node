@@ -52,7 +52,7 @@ describe('credentials', () => {
       allow: [
         {
           type: 'address',
-          values: ['0x123']
+          values: [{ address: '0x123' }]
         }
       ]
     }
@@ -65,7 +65,7 @@ describe('credentials', () => {
       deny: [
         {
           type: 'address',
-          values: ['0x456']
+          values: [{ address: '0x456' }]
         }
       ]
     }
@@ -84,7 +84,7 @@ describe('credentials', () => {
       deny: [
         {
           type: 'address',
-          values: ['0x123']
+          values: [{ address: '0x123' }]
         }
       ]
     }
@@ -97,7 +97,7 @@ describe('credentials', () => {
       allow: [
         {
           type: 'address',
-          values: ['0x456']
+          values: [{ address: '0x456' }]
         }
       ],
       deny: [

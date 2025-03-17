@@ -100,7 +100,7 @@ export class PolicyServer {
       fileIndex,
       transferTxId,
       consumerAddress,
-      policyServer
+      policyServer: typeof policyServer === 'string' ? JSON.parse(policyServer) : null
     }
     return await this.askServer(command)
   }

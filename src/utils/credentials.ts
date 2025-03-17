@@ -7,18 +7,22 @@ export function findCredential(
   return credentials.find((credential) => {
     if (Array.isArray(credential?.values)) {
       if (credential.values.length > 0) {
-        const credentialType = String(credential?.type)?.toLowerCase()
-        const credentialValues = credential.values.map((v) => String(v)?.toLowerCase())
+        const credentialType = String(credential.type ?? '').toLowerCase()
+        if (credentialType !== 'address') {
+          return false
+        }
+        const credentialValues = credential.values.map((v) => v.address)
         return (
           credentialType === consumerCredentials.type &&
-          credentialValues.includes(consumerCredentials.values[0])
+          credentialValues
+            .map((address) => address.toLowerCase())
+            .includes(consumerCredentials.values[0].address)
         )
       }
     }
     return false
   })
 }
-
 /**
  * This method checks credentials
  * @param credentials credentials
@@ -27,7 +31,7 @@ export function findCredential(
 export function checkCredentials(credentials: Credentials, consumerAddress: string) {
   const consumerCredentials = {
     type: 'address',
-    values: [String(consumerAddress)?.toLowerCase()]
+    values: [{ address: String(consumerAddress)?.toLowerCase() }]
   }
   // check deny access
   if (Array.isArray(credentials?.deny) && credentials.deny.length > 0) {
