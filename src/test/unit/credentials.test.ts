@@ -48,11 +48,11 @@ describe('credentials', () => {
     expect(accessGranted).to.equal(false)
   })
   it('should allow access with address in allow list', () => {
-    const credentials: Credentials = {
+    const credentials: any = {
       allow: [
         {
           type: 'address',
-          values: [{ address: '0x123' }]
+          values: ['0x123']
         }
       ]
     }
@@ -61,11 +61,11 @@ describe('credentials', () => {
     expect(accessGranted).to.equal(true)
   })
   it('should allow access with address not in deny list', () => {
-    const credentials: Credentials = {
+    const credentials: any = {
       deny: [
         {
           type: 'address',
-          values: [{ address: '0x456' }]
+          values: ['0x456']
         }
       ]
     }
@@ -74,7 +74,7 @@ describe('credentials', () => {
     expect(accessGranted).to.equal(true)
   })
   it('should deny access with address in deny list', () => {
-    const credentials: Credentials = {
+    const credentials: any = {
       allow: [
         {
           type: 'address',
@@ -84,7 +84,7 @@ describe('credentials', () => {
       deny: [
         {
           type: 'address',
-          values: [{ address: '0x123' }]
+          values: ['0x123']
         }
       ]
     }
@@ -93,11 +93,11 @@ describe('credentials', () => {
     expect(accessGranted).to.equal(false)
   })
   it('should deny access with address not in allow list', () => {
-    const credentials: Credentials = {
+    const credentials: any = {
       allow: [
         {
           type: 'address',
-          values: [{ address: '0x456' }]
+          values: ['0x456']
         }
       ],
       deny: [

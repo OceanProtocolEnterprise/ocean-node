@@ -11,7 +11,9 @@ export function findCredential(
         if (credentialType !== 'address') {
           return false
         }
-        const credentialValues = credential.values.map((v) => v.address)
+        const credentialValues = credential.values.map((v) =>
+          typeof v === 'object' && 'address' in v ? v.address : v
+        )
         return (
           credentialType === consumerCredentials.type &&
           credentialValues

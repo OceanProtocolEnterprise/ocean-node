@@ -1,11 +1,8 @@
 export const KNOWN_CREDENTIALS_TYPES = ['address', 'accessList']
 
-export interface Address {
-  address: string
-}
 export interface Credential {
   type?: string
-  values?: Address[]
+  values?: any
 }
 export interface Credentials {
   allow?: Credential[]

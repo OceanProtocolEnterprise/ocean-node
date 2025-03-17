@@ -1,5 +1,3 @@
-import { Credentials } from '../../@types/DDO/Credentials'
-
 export const downloadAsset = {
   '@context': ['https://w3id.org/did/v1'],
   id: '',
@@ -60,30 +58,30 @@ export const downloadAsset = {
   }
 }
 
-const nftLevelCredentials: Credentials = {
+const nftLevelCredentials: any = {
   allow: [
     {
       type: 'address',
-      values: [{ address: '0xBE5449a6A97aD46c8558A3356267Ee5D2731ab5e' }]
+      values: ['0xBE5449a6A97aD46c8558A3356267Ee5D2731ab5e']
     },
     {
       type: 'address',
-      values: [{ address: '0xA78deb2Fa79463945C247991075E2a0e98Ba7A09' }]
+      values: ['0xA78deb2Fa79463945C247991075E2a0e98Ba7A09']
     }
   ],
   deny: [
     {
       type: 'address',
-      values: [{ address: '0x02354A1F160A3fd7ac8b02ee91F04104440B28E7' }]
+      values: ['0x02354A1F160A3fd7ac8b02ee91F04104440B28E7']
     }
   ]
 }
 
-const serviceLevelCredentials: Credentials = {
+const serviceLevelCredentials: any = {
   deny: [
     {
       type: 'address',
-      values: [{ address: '0xA78deb2Fa79463945C247991075E2a0e98Ba7A09' }]
+      values: ['0xA78deb2Fa79463945C247991075E2a0e98Ba7A09']
     }
   ]
 }
