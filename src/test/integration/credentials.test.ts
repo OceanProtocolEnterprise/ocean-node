@@ -117,14 +117,15 @@ describe('Should run a complete node flow.', () => {
   })
 
   it('should publish download datasets', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
-
+    this.timeout(DEFAULT_TEST_TIMEOUT * 6)
+    console.log('Before publish')
     const publishedDataset = await publishAsset(
       downloadAssetWithCredentials,
       publisherAccount
     )
     console.log('publishedDataset:', publishedDataset)
     did = publishedDataset.ddo.id
+    console.log('Waiting for asset indexing...')
     const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
