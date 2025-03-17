@@ -123,13 +123,14 @@ describe('Should run a complete node flow.', () => {
       downloadAssetWithCredentials,
       publisherAccount
     )
-
+    console.log('publishedDataset:', publishedDataset)
     did = publishedDataset.ddo.id
     const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT * 3
     )
+    console.log('ddo:', ddo)
     if (!ddo) {
       assert(wasTimeout === true, 'published failed due to timeout!')
     }
