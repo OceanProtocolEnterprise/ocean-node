@@ -87,7 +87,6 @@ export class DecryptDdoHandler extends Handler {
   }
 
   async handle(task: DecryptDDOCommand): Promise<P2PCommandResponse> {
-    CORE_LOGGER.info(`Start task decrypt document`)
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
@@ -108,7 +107,6 @@ export class DecryptDdoHandler extends Handler {
       }
 
       const nonce = Number(task.nonce)
-      CORE_LOGGER.info(`Checking nonce ${task.nonce} if valid`)
       if (isNaN(nonce)) {
         CORE_LOGGER.logMessage(
           `Decrypt DDO: error ${task.nonce} value is not a number`,
@@ -126,7 +124,6 @@ export class DecryptDdoHandler extends Handler {
       const node = this.getOceanNode()
       const dbNonce = node.getDatabase().nonce
       const existingNonce = await dbNonce.retrieve(decrypterAddress)
-      CORE_LOGGER.info(`Checking if duplicate nonce`)
       if (existingNonce && existingNonce.nonce === nonce) {
         CORE_LOGGER.logMessage(`Decrypt DDO: error ${task.nonce} duplicate nonce`, true)
         return {
@@ -223,7 +220,6 @@ export class DecryptDdoHandler extends Handler {
       let encryptedDocument: Uint8Array
       let flags: number
       let documentHash: string
-      CORE_LOGGER.info(`Checking transaction id ${transactionId}`)
       if (transactionId) {
         try {
           const receipt = await provider.getTransactionReceipt(transactionId)
@@ -271,7 +267,6 @@ export class DecryptDdoHandler extends Handler {
           }
         }
       }
-      CORE_LOGGER.info(`Flag: ${flags}`)
       const templateContract = new ethers.Contract(
         dataNftAddress,
         ERC721Template.abi,
@@ -317,7 +312,6 @@ export class DecryptDdoHandler extends Handler {
       // check if DDO is ECIES encrypted
       if (flags & 2) {
         try {
-          CORE_LOGGER.info(`Decrypting with ECIES`)
           decryptedDocument = await decrypt(encryptedDocument, EncryptMethod.ECIES)
         } catch (error) {
           CORE_LOGGER.logMessage(`Decrypt DDO: error ${error}`, true)
@@ -333,7 +327,6 @@ export class DecryptDdoHandler extends Handler {
 
       if (flags & 1) {
         try {
-          CORE_LOGGER.info(`Decrypting document`)
           decryptedDocument = lzmajs.decompressFile(decryptedDocument)
           /*
           lzma.decompress(
@@ -357,7 +350,6 @@ export class DecryptDdoHandler extends Handler {
       }
 
       // did matches
-      CORE_LOGGER.info(`Checking id of decrypted document ${decryptedDocument}`)
       const ddo = JSON.parse(decryptedDocument.toString())
       if (ddo.id && !this.checkId(ddo.id, dataNftAddress, chainId)) {
         CORE_LOGGER.error(`Decrypted DDO ID is not matching the generated hash for DID.`)
@@ -402,20 +394,17 @@ export class DecryptDdoHandler extends Handler {
           }
         }
       }
-      CORE_LOGGER.info(`Checking if REMOTE OBJ`)
       const decryptedDocumentString = decryptedDocument.toString()
       const ddoObject = JSON.parse(decryptedDocumentString)
 
       let stream = Readable.from(decryptedDocumentString)
 
       if (isRemoteDDO(ddoObject)) {
-        CORE_LOGGER.info(`Read from storage`)
         const storage = Storage.getStorageClass(ddoObject.remote, config)
         const result = await storage.getReadableStream()
         stream = result.stream as Readable
       } else {
         // checksum matches
-        CORE_LOGGER.info(`Checksum matches`)
         const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
         if (decryptedDocumentHash !== documentHash) {
           CORE_LOGGER.logMessage(
