@@ -398,7 +398,11 @@ export class DownloadHandler extends Handler {
     }
     // check credentials on service level
     if (service.credentials) {
-      const accessGranted = checkCredentials(service.credentials, task.consumerAddress)
+      const accessGranted = checkCredentials(
+        service.credentials,
+        task.consumerAddress,
+        'service'
+      )
       if (!accessGranted) {
         CORE_LOGGER.logMessage(
           `Error: Access to service with id ${service.id} was denied`,

@@ -2,7 +2,8 @@ import { Credential, Credentials } from '../@types/DDO/Credentials'
 
 export function findCredential(
   credentials: Credential[],
-  consumerCredentials: Credential
+  consumerCredentials: Credential,
+  type?: string
 ) {
   return credentials.find((credential) => {
     if (Array.isArray(credential?.values)) {
@@ -25,6 +26,7 @@ export function findCredential(
         )
       }
     }
+    if (type === 'service') return true
     return false
   })
 }
@@ -33,21 +35,25 @@ export function findCredential(
  * @param credentials credentials
  * @param consumerAddress consumer address
  */
-export function checkCredentials(credentials: Credentials, consumerAddress: string) {
+export function checkCredentials(
+  credentials: Credentials,
+  consumerAddress: string,
+  type?: string
+) {
   const consumerCredentials = {
     type: 'address',
     values: [{ address: String(consumerAddress)?.toLowerCase() }]
   }
   // check deny access
   if (Array.isArray(credentials?.deny) && credentials.deny.length > 0) {
-    const accessDeny = findCredential(credentials.deny, consumerCredentials)
+    const accessDeny = findCredential(credentials.deny, consumerCredentials, type)
     if (accessDeny) {
       return false
     }
   }
   // check allow access
   if (Array.isArray(credentials?.allow) && credentials.allow.length > 0) {
-    const accessAllow = findCredential(credentials.allow, consumerCredentials)
+    const accessAllow = findCredential(credentials.allow, consumerCredentials, type)
     if (!accessAllow) {
       return false
     }
