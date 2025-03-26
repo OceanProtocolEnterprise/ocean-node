@@ -15,6 +15,8 @@ export function findCredential(
         const credentialValues = credential.values.map((v) =>
           typeof v === 'object' && 'address' in v ? v.address : v
         )
+        console.log('credentialValues:', JSON.stringify(credentialValues))
+        console.log('consumer', consumerCredentials.values[0].address)
         if (credentialValues.includes('*')) {
           return true
         }
