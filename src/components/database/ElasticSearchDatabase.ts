@@ -566,10 +566,18 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
             }
           })
           if (response.hits?.hits.length > 0) {
-            const nomalizedResponse = response.hits.hits.map((hit: any) => {
-              return normalizeDocumentId(hit._source, hit._id)
+            const totalHits =
+              typeof response.hits.total === 'number'
+                ? response.hits.total
+                : response.hits.total?.value || 0
+
+            const normalizedResults = response.hits.hits.map((hit: any) =>
+              normalizeDocumentId(hit._source, hit._id)
+            )
+            results.push({
+              results: normalizedResults,
+              totalResults: totalHits
             })
-            results.push(nomalizedResponse)
           }
         } catch (error) {
           const schemaErrorMsg = `Error for schema ${schema.index}: ${error.message}`
