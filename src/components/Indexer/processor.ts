@@ -738,7 +738,7 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     )
     INDEXER_LOGGER.logMessage(`Getted decodedEventData`, true)
     try {
-      const args = decodedEventData.args
+      const { args } = decodedEventData
 
       INDEXER_LOGGER.logMessage(
         `DecodedEventData.args: ${JSON.stringify(
@@ -762,8 +762,12 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
       INDEXER_LOGGER.logMessage(`Error logging args: ${e.message}`, true)
     }
 
-    const serviceIndex = parseInt(decodedEventData.args[3].toString())
-    const timestamp = parseInt(decodedEventData.args[4].toString())
+    const serviceIndex =
+      decodedEventData.args.length > 3 ? parseInt(decodedEventData.args[3].toString()) : 0
+    const timestamp =
+      decodedEventData.args.length > 4
+        ? parseInt(decodedEventData.args[4].toString())
+        : Math.floor(Date.now() / 1000)
     const consumer = decodedEventData.args[0].toString()
     const payer = decodedEventData.args[1].toString()
     INDEXER_LOGGER.logMessage(
@@ -776,11 +780,9 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     try {
       const { ddo: ddoDatabase, order: orderDatabase } = await getDatabase()
       let ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
-      console.log('ddo', ddo)
       const ddoInstance = DDOManager.getDDOClass(ddo)
       const { services } = ddoInstance.getDDOFields()
       const { stats } = ddoInstance.getAssetFields()
-      console.log('stats:', stats)
       const newStats = stats
       if (
         stats &&
@@ -793,9 +795,7 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
         // But it should update ONLY if first condition is met.
         newStats.orders = 1
       }
-      console.log('newStats:', newStats)
       ddo = ddoInstance.updateFields({ stats: newStats })
-      console.log('ddoUpdtae:', ddo)
       await orderDatabase.create(
         event.transactionHash,
         'startOrder',
