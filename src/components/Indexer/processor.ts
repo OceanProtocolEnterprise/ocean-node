@@ -737,7 +737,31 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
       ERC20Template.abi
     )
     INDEXER_LOGGER.logMessage(`Getted decodedEventData`, true)
-    INDEXER_LOGGER.logMessage(`DecodedEventData: ${decodedEventData}`, true)
+    try {
+      const args = decodedEventData.args
+
+      INDEXER_LOGGER.logMessage(
+        `DecodedEventData.args: ${JSON.stringify(
+          args,
+          (key, value) => {
+            // Handle ethers BigNumber
+            if (typeof value === 'object' && value?._isBigNumber) {
+              return value.toString()
+            }
+            // Handle native BigInt
+            if (typeof value === 'bigint') {
+              return value.toString()
+            }
+            return value
+          },
+          2
+        )}`,
+        true
+      )
+    } catch (e) {
+      INDEXER_LOGGER.logMessage(`Error logging args: ${e.message}`, true)
+    }
+
     const serviceIndex = parseInt(decodedEventData.args[3].toString())
     const timestamp = parseInt(decodedEventData.args[4].toString())
     const consumer = decodedEventData.args[0].toString()
