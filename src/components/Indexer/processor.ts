@@ -728,21 +728,20 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     signer: Signer,
     provider: JsonRpcApiProvider
   ): Promise<any> {
-    console.log('buyEvent')
+    INDEXER_LOGGER.logMessage(`Getting event data`, true)
     const decodedEventData = await this.getEventData(
       provider,
       event.transactionHash,
       ERC20Template.abi
     )
-    console.log('decodedEventData', decodedEventData.args)
+    INDEXER_LOGGER.logMessage(
+      `-- ${JSON.stringify(decodedEventData)} --  getted decodedEventData`,
+      true
+    )
     const serviceIndex = parseInt(decodedEventData.args[3].toString())
-    console.log('serviceIndex', serviceIndex)
     const timestamp = parseInt(decodedEventData.args[4].toString())
-    console.log('timestamp', timestamp)
     const consumer = decodedEventData.args[0].toString()
-    console.log('consumer', consumer)
     const payer = decodedEventData.args[1].toString()
-    console.log('payer', payer)
     INDEXER_LOGGER.logMessage(
       `Processed new order for service index ${serviceIndex} at ${timestamp}`,
       true

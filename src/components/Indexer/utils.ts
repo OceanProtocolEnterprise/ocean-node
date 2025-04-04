@@ -209,13 +209,16 @@ export const processChunkLogs = async (
         } else if (event.type === EVENTS.EXCHANGE_RATE_CHANGED) {
           storeEvents[event.type] = processExchangeRateChanged()
         } else if (event.type === EVENTS.ORDER_STARTED) {
+          INDEXER_LOGGER.logMessage(`-- ${event.type} --  getting processor`, true)
           const processor = getOrderStartedEventProcessor(chainId)
+          INDEXER_LOGGER.logMessage(`-- ${event.type} --  getted processor`, true)
           storeEvents[event.type] = await processor.processEvent(
             log,
             chainId,
             signer,
             provider
           )
+          INDEXER_LOGGER.logMessage(`-- ${event.type} --  processed event`, true)
         } else if (event.type === EVENTS.ORDER_REUSED) {
           const processor = getOrderReusedEventProcessor(chainId)
           storeEvents[event.type] = await processor.processEvent(
