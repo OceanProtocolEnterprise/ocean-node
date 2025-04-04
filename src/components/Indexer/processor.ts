@@ -58,7 +58,9 @@ class BaseEventProcessor {
     abi: any
   ): Promise<ethers.LogDescription> {
     const iface = new Interface(abi)
+    INDEXER_LOGGER.logMessage(`Getting transaction receipt for ${transactionHash}`, true)
     const receipt = await provider.getTransactionReceipt(transactionHash)
+    INDEXER_LOGGER.logMessage(`Getted transaction receipt ${receipt}`, true)
     const eventObj = {
       topics: receipt.logs[0].topics as string[],
       data: receipt.logs[0].data
@@ -734,10 +736,8 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
       event.transactionHash,
       ERC20Template.abi
     )
-    INDEXER_LOGGER.logMessage(
-      `-- ${JSON.stringify(decodedEventData)} --  getted decodedEventData`,
-      true
-    )
+    INDEXER_LOGGER.logMessage(`Getted decodedEventData`, true)
+    INDEXER_LOGGER.logMessage(`DecodedEventData: ${decodedEventData}`, true)
     const serviceIndex = parseInt(decodedEventData.args[3].toString())
     const timestamp = parseInt(decodedEventData.args[4].toString())
     const consumer = decodedEventData.args[0].toString()
