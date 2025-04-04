@@ -728,15 +728,21 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     signer: Signer,
     provider: JsonRpcApiProvider
   ): Promise<any> {
+    console.log('buyEvent')
     const decodedEventData = await this.getEventData(
       provider,
       event.transactionHash,
       ERC20Template.abi
     )
+    console.log('decodedEventData', decodedEventData.args)
     const serviceIndex = parseInt(decodedEventData.args[3].toString())
+    console.log('serviceIndex', serviceIndex)
     const timestamp = parseInt(decodedEventData.args[4].toString())
+    console.log('timestamp', timestamp)
     const consumer = decodedEventData.args[0].toString()
+    console.log('consumer', consumer)
     const payer = decodedEventData.args[1].toString()
+    console.log('payer', payer)
     INDEXER_LOGGER.logMessage(
       `Processed new order for service index ${serviceIndex} at ${timestamp}`,
       true
@@ -747,9 +753,11 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     try {
       const { ddo: ddoDatabase, order: orderDatabase } = await getDatabase()
       let ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
+      console.log('ddo', ddo)
       const ddoInstance = DDOManager.getDDOClass(ddo)
       const { services } = ddoInstance.getDDOFields()
       const { stats } = ddoInstance.getAssetFields()
+      console.log('stats:', stats)
       const newStats = stats
       if (
         stats &&
@@ -762,7 +770,9 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
         // But it should update ONLY if first condition is met.
         newStats.orders = 1
       }
+      console.log('newStats:', newStats)
       ddo = ddoInstance.updateFields({ stats: newStats })
+      console.log('ddoUpdtae:', ddo)
       await orderDatabase.create(
         event.transactionHash,
         'startOrder',
