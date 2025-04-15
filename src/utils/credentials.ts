@@ -5,6 +5,12 @@ export function findCredential(
   consumerCredentials: Credential,
   type?: string
 ) {
+  const hasAddressType = credentials.some((credential) => {
+    const type = String(credential.type ?? '').toLowerCase()
+    return type === 'address'
+  })
+  if (type === 'service' && !hasAddressType) return true
+
   return credentials.find((credential) => {
     if (Array.isArray(credential?.values)) {
       if (credential.values.length > 0) {
