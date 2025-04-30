@@ -1,4 +1,9 @@
-import { Credential, Credentials } from '../@types/DDO/Credentials'
+import {
+  Credential,
+  Credentials,
+  KNOWN_CREDENTIALS_TYPES
+} from '../@types/DDO/Credentials'
+import { isDefined } from './util'
 
 export function findCredential(
   credentials: Credential[],
@@ -65,4 +70,34 @@ export function checkCredentials(
     }
   }
   return true
+}
+
+export function areKnownCredentialTypes(credentials: Credentials): boolean {
+  if (isDefined(credentials)) {
+    if (isDefined(credentials.allow) && credentials.allow.length > 0) {
+      for (const credential of credentials.allow) {
+        if (!isKnownCredentialType(credential.type)) {
+          return false
+        }
+      }
+    }
+
+    if (isDefined(credentials.deny) && credentials.deny.length > 0) {
+      for (const credential of credentials.deny) {
+        if (!isKnownCredentialType(credential.type)) {
+          return false
+        }
+      }
+    }
+  }
+  return true
+}
+
+export function isKnownCredentialType(credentialType: string): boolean {
+  return (
+    isDefined(credentialType) &&
+    KNOWN_CREDENTIALS_TYPES.findIndex((type) => {
+      return type.toLowerCase() === credentialType.toLowerCase()
+    }) > -1
+  )
 }
