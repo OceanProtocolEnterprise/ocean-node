@@ -26,7 +26,7 @@ import {
 } from '../utils/address.js'
 import { CONFIG_LOGGER } from './logging/common.js'
 import { create256Hash } from './crypt.js'
-import { isDefined } from './util'
+import { isDefined } from './util.js'
 
 // usefull for lazy loading and avoid boilerplate on other places
 let previousConfiguration: OceanNodeConfig = null
