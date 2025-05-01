@@ -2,8 +2,8 @@ import {
   Credential,
   Credentials,
   KNOWN_CREDENTIALS_TYPES
-} from '../@types/DDO/Credentials'
-import { isDefined } from './util'
+} from '../@types/DDO/Credentials.js'
+import { isDefined } from './util.js'
 
 export function findCredential(
   credentials: Credential[],
