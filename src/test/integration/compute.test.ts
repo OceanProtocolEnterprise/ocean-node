@@ -291,7 +291,8 @@ describe('Compute', () => {
       getEnvironmentsTask
     )
     computeEnvironments = await streamToObject(response.stream as Readable)
-    firstEnv = computeEnvironments[DEVELOPMENT_CHAIN_ID][0]
+    console.log('computeEnvironments', computeEnvironments)
+    firstEnv = computeEnvironments[0]
 
     const initializeComputeTask: ComputeInitializeCommand = {
       datasets: [dataset],
