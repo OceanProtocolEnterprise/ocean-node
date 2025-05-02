@@ -253,6 +253,8 @@ describe('Compute', () => {
     expect(response.stream).to.be.instanceOf(Readable)
 
     computeEnvironments = await streamToObject(response.stream as Readable)
+    console.log('existing envs: ', computeEnvironments)
+
     // expect 2 envs
     expect(computeEnvironments[DEVELOPMENT_CHAIN_ID].length === 2, 'incorrect length')
     for (const computeEnvironment of computeEnvironments[DEVELOPMENT_CHAIN_ID]) {
@@ -290,9 +292,10 @@ describe('Compute', () => {
     const response = await new ComputeGetEnvironmentsHandler(oceanNode).handle(
       getEnvironmentsTask
     )
+    console.log('firstEnv', firstEnv)
     computeEnvironments = await streamToObject(response.stream as Readable)
     console.log('computeEnvironments', computeEnvironments)
-    firstEnv = computeEnvironments[0]
+    firstEnv = computeEnvironments[DEVELOPMENT_CHAIN_ID][0]
 
     const initializeComputeTask: ComputeInitializeCommand = {
       datasets: [dataset],
