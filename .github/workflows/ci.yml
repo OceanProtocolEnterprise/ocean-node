@@ -134,7 +134,7 @@ jobs:
         run: |
           for i in $(seq 1 250); do
             sleep 10
-            [ -f "$HOME/.ocean/ocean-contracts/artifacts/ready" -a -f "$HOME/.ocean/ocean-c2d/ready" ] && break
+            [ -f "$HOME/.ocean/ocean-contracts/artifacts/ready" ] && break
             done
       - name: docker logs
         run: docker logs ocean-ocean-contracts-1 && docker logs ocean-kindcluster-1 && docker logs ocean-computetodata-1 && docker logs ocean-typesense-1
