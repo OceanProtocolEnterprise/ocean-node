@@ -206,10 +206,16 @@ jobs:
       - name: Run Barge
         working-directory: ${{ github.workspace }}/barge
         run: |
-          bash -x start_ocean.sh --no-aquarius --no-provider --no-dashboard --with-c2d --with-typesense 2>&1 > start_ocean.log &
-
+          bash -x start_ocean.sh --no-aquarius --no-provider --no-dashboard --with-typesense 2>&1 > start_ocean.log &
+        env:
+          CONTRACTS_VERSION: escrow
       - run: npm ci
       - run: npm run build
+      - run: docker image ls
+      - name: Delete default runner images
+        run: |
+          rm -rf /usr/share/swift/
+
       - name: Wait for contracts deployment and C2D cluster to be ready
         working-directory: ${{ github.workspace }}/barge
         run: |
@@ -251,6 +257,8 @@ jobs:
           P2P_ENABLE_AUTONAT: 'false'
           ALLOWED_ADMINS: '["0xe2DD09d719Da89e5a3D0F2549c7E24566e947260"]'
           DB_TYPE: 'elasticsearch'
+          MAX_REQ_PER_MINUTE: 320
+          MAX_CONNECTIONS_PER_MINUTE: 320
       - name: Check Ocean Node is running
         run: |
           for i in $(seq 1 90); do
@@ -276,3 +284,5 @@ jobs:
       - name: Run system tests
         working-directory: ${{ github.workspace }}/ocean-cli
         run: npm run test:system
+        env:
+          AVOID_LOOP_RUN: true
