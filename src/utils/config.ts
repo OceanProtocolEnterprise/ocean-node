@@ -26,6 +26,7 @@ import {
 } from '../utils/address.js'
 import { CONFIG_LOGGER } from './logging/common.js'
 import { create256Hash } from './crypt.js'
+import { isDefined } from './util.js'
 
 // usefull for lazy loading and avoid boilerplate on other places
 let previousConfiguration: OceanNodeConfig = null
@@ -626,3 +627,7 @@ export async function printCurrentConfig() {
 
 // P2P routes related
 export const hasP2PInterface = (await (await getConfiguration())?.hasP2P) || false
+
+export function isPolicyServerConfigured(): boolean {
+  return isDefined(process.env.POLICY_SERVER_URL)
+}
