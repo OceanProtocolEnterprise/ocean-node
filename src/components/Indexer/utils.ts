@@ -140,12 +140,12 @@ export const processChunkLogs = async (
   chainId: number
 ): Promise<BlocksEvents> => {
   const storeEvents: BlocksEvents = {}
+  INDEXER_LOGGER.logMessage(`Processing ${logs.length} logs for chainId ${chainId}`, true)
   if (logs.length > 0) {
     const allowedValidators = getAllowedValidators()
     const checkMetadataValidated = allowedValidators.length > 0
     for (const log of logs) {
       const event = findEventByKey(log.topics[0])
-
       if (event && Object.values(EVENTS).includes(event.type)) {
         // only log & process the ones we support
         INDEXER_LOGGER.logMessage(

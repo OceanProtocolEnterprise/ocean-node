@@ -179,6 +179,9 @@ export async function processNetworkData(
           )
         }
         try {
+          INDEXER_LOGGER.logMessage(
+            `network: ${rpcDetails.network} processing ${chunkEvents.length} events ...`
+          )
           const processedBlocks = await processBlocks(
             chunkEvents,
             signer,
