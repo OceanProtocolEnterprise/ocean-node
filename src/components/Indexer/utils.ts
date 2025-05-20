@@ -95,6 +95,11 @@ export const retrieveChunkEvents = async (
       toBlock: lastIndexedBlock + count,
       topics: [eventHashes]
     })
+    const blockHash = '0xb7234723613b601b75f1c5be1687021b19bd37433674a4c9ae3aafe1ad5b17e8'
+    const blockLog = await provider.getLogs({ blockHash })
+    INDEXER_LOGGER.info(
+      `Block hash: ${blockHash} - Block logs: ${JSON.stringify(blockLog)}`
+    )
     return blockLogs
   } catch (error) {
     throw new Error(` Error processing chunk of blocks events ${error.message}`)
