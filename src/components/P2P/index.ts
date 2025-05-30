@@ -48,7 +48,6 @@ import { INDEXER_DDO_EVENT_EMITTER } from '../Indexer/index.js'
 import { P2P_LOGGER } from '../../utils/logging/common.js'
 import { CoreHandlersRegistry } from '../core/handler/coreHandlersRegistry'
 import { Multiaddr, multiaddr } from '@multiformats/multiaddr'
-import { DDOManager } from '@oceanprotocol/ddo-js'
 // import { getIPv4, getIPv6 } from '../../utils/ip.js'
 
 const DEFAULT_OPTIONS = {
@@ -605,7 +604,7 @@ export class OceanP2P extends EventEmitter {
         useNetwork: true
       })
       return data
-    } catch (e) { }
+    } catch (e) {}
     return null
   }
 
@@ -843,13 +842,10 @@ export class OceanP2P extends EventEmitter {
 
   // cache a ddos object
   cacheDDO(ddo: any) {
-    const ddoInstance = DDOManager.getDDOClass(ddo)
-    const { event } = ddoInstance.getAssetFields()
-    const { metadata } = ddoInstance.getDDOFields()
     this._ddoDHT.dht.set(ddo.id, {
       id: ddo.id,
-      lastUpdateTx: event ? event.txid : '', // some missing event? probably just bad test data
-      lastUpdateTime: metadata.updated,
+      lastUpdateTx: ddo.event ? ddo.event.tx : '', // some missing event? probably just bad test data
+      lastUpdateTime: ddo.metadata.updated,
       provider: this.getPeerId()
     })
   }

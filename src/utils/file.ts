@@ -14,7 +14,7 @@ import { isOrderingAllowedForAsset } from '../components/core/handler/downloadHa
 import { DDO, Service } from '@oceanprotocol/ddo-js'
 
 export async function getFile(
-  didOrDdo: string | DDO | Record<string, any>,
+  didOrDdo: string | DDO,
   serviceId: string,
   node: OceanNode
 ): Promise<UrlFileObject[] | ArweaveFileObject[] | IpfsFileObject[]> {

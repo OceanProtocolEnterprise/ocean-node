@@ -17,7 +17,6 @@ import { getNonce } from '../utils/nonceHandler.js'
 import { streamToString } from '../../../utils/util.js'
 import { isOrderingAllowedForAsset } from './downloadHandler.js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
-import { DDOManager } from '@oceanprotocol/ddo-js'
 
 export class FeesHandler extends CommandHandler {
   validate(command: GetFeesCommand): ValidateParams {

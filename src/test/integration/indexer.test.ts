@@ -80,7 +80,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
   let dataTokenContractWithNewSigner: any
   let orderEvent: any
   let reusedOrderEvent: any
-  // let initialOrderCount: number
+  let initialOrderCount: number
   let indexer: OceanIndexer
   const feeToken = '0x312213d6f6b5FCF9F56B7B8946A6C727Bf4Bc21f'
   const serviceIndex = 0 // dummy index
@@ -205,7 +205,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
     setMetaDataTxReceipt = await setMetaDataTx.wait()
     assert(setMetaDataTxReceipt, 'set metada failed')
     // for testing purpose
-    genericAsset.event.txid = setMetaDataTxReceipt.transactionHash
+    genericAsset.event.tx = setMetaDataTxReceipt.transactionHash
     genericAsset.event.block = setMetaDataTxReceipt.blockNumber
     genericAsset.event.from = setMetaDataTxReceipt.from
     genericAsset.event.contract = setMetaDataTxReceipt.contractAddress
@@ -229,7 +229,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
     assert(resolvedDDO.indexedMetadata.nft, 'NFT field is not present')
     assert(
       resolvedDDO.indexedMetadata.nft.address?.toLowerCase() ===
-      nftAddress?.toLowerCase(),
+        nftAddress?.toLowerCase(),
       'NFT address mismatch'
     )
     assert(resolvedDDO.indexedMetadata.nft.state === 0, 'NFT state mismatch') // ACTIVE
@@ -243,12 +243,12 @@ describe('Indexer stores a new metadata events and orders.', () => {
     )
     assert(
       resolvedDDO.indexedMetadata.nft.tokenURI ===
-      (await nftContract.tokenURI(await nftContract.getId())),
+        (await nftContract.tokenURI(await nftContract.getId())),
       'NFT tokeURI mismatch'
     )
     assert(
       resolvedDDO.indexedMetadata.nft.owner?.toLowerCase() ===
-      setMetaDataTxReceipt.from?.toLowerCase(),
+        setMetaDataTxReceipt.from?.toLowerCase(),
       'NFT owner mismatch'
     )
     assert(
@@ -452,7 +452,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
   })
 
   it('should get number of orders', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
     const { ddo, wasTimeout } = await waitToIndex(
       assetDID,
       EVENTS.ORDER_STARTED,
@@ -608,8 +608,8 @@ describe('Indexer stores a new metadata events and orders.', () => {
       expect(Object.keys(resolvedDDO).length).to.equal(5)
       expect(
         'id' in resolvedDDO &&
-        'nftAddress' in resolvedDDO &&
-        'nft' in resolvedDDO.indexedMetadata
+          'nftAddress' in resolvedDDO &&
+          'nft' in resolvedDDO.indexedMetadata
       ).to.equal(true)
     } else {
       expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)

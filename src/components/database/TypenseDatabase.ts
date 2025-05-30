@@ -14,7 +14,6 @@ import {
   AbstractOrderDatabase
 } from './BaseDatabase.js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
-import { validateObject } from '../core/utils/validateDdoHandler.js'
 
 export class TypesenseOrderDatabase extends AbstractOrderDatabase {
   private provider: Typesense
@@ -372,9 +371,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
   getDDOSchema(ddo: Record<string, any>): TypesenseSchema {
     // Find the schema based on the DDO version OR use the short DDO schema when state !== 0
     let schemaName: string
-    const ddoInstance = DDOManager.getDDOClass(ddo)
-    const { nft } = ddoInstance.getAssetFields()
-    if (nft?.state !== 0) {
+    if (ddo.indexedMetadata?.nft?.state !== 0) {
       schemaName = 'op_ddo_short'
     } else if (ddo.version) {
       schemaName = `op_ddo_v${ddo.version}`
@@ -391,32 +388,32 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
 
   async validateDDO(ddo: Record<string, any>): Promise<boolean> {
     const ddoInstance = DDOManager.getDDOClass(ddo)
-    const { nft } = ddoInstance.getAssetFields()
-    if (nft?.state !== 0) {
+    const { nft } = ddoInstance.getDDOFields() as any
+    if ('indexedMetadata' in ddoInstance.getDDOData() && nft?.state !== 0) {
       // Skipping validation for short DDOs as it currently doesn't work
       // TODO: DDO validation needs to be updated to consider the fields required by the schema
       // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
       return true
+    }
+
+    const validation = await ddoInstance.validate()
+    if (validation[0] === true) {
+      DATABASE_LOGGER.logMessageWithEmoji(
+        `Validation of DDO with did: ${ddo.id} has passed`,
+        true,
+        GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
+        LOG_LEVELS_STR.LEVEL_INFO
+      )
+      return true
     } else {
-      const validation = await validateObject(ddo)
-      if (validation[0] === true) {
-        DATABASE_LOGGER.logMessageWithEmoji(
-          `Validation of DDO with did: ${ddo.id} has passed`,
-          true,
-          GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
-          LOG_LEVELS_STR.LEVEL_INFO
-        )
-        return true
-      } else {
-        DATABASE_LOGGER.logMessageWithEmoji(
-          `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
+      DATABASE_LOGGER.logMessageWithEmoji(
+        `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
           JSON.stringify(validation[1]),
-          true,
-          GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-          LOG_LEVELS_STR.LEVEL_ERROR
-        )
-        return false
-      }
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return false
     }
   }
 
@@ -511,7 +508,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
           // Log error other than not found
           DATABASE_LOGGER.logMessageWithEmoji(
             `Error when retrieving DDO entry ${id} from schema ${schema.name}: ` +
-            error.message,
+              error.message,
             true,
             GENERIC_EMOJIS.EMOJI_CROSS_MARK,
             LOG_LEVELS_STR.LEVEL_ERROR
@@ -590,7 +587,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
           // Log error other than not found
           DATABASE_LOGGER.logMessageWithEmoji(
             `Error when deleting DDO entry ${did} from schema ${schema.name}: ` +
-            error.message,
+              error.message,
             true,
             GENERIC_EMOJIS.EMOJI_CROSS_MARK,
             LOG_LEVELS_STR.LEVEL_ERROR

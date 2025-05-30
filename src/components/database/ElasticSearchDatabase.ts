@@ -11,7 +11,6 @@ import { OceanNodeDBConfig } from '../../@types'
 import { ElasticsearchSchema } from './ElasticSchemas.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
-import { validateObject } from '../core/utils/validateDdoHandler.js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
 
 export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
@@ -240,7 +239,9 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
         return normalizeDocumentId(hit._source, hit._id)
       })
     } catch (error) {
-      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${error.message}`
+      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${
+        error.message
+      }`
       DATABASE_LOGGER.logMessageWithEmoji(
         errorMsg,
         true,
@@ -478,8 +479,6 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       schemaName = 'op_ddo_short'
     } else if (ddo.version) {
       schemaName = `op_ddo_v${ddo.version}`
-    } else {
-      schemaName = 'op_ddo_short'
     }
     const schema = this.getSchemas().find((s) => s.index === schemaName)
     DATABASE_LOGGER.logMessageWithEmoji(
@@ -493,8 +492,11 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
 
   async validateDDO(ddo: Record<string, any>): Promise<boolean> {
     const ddoInstance = DDOManager.getDDOClass(ddo)
-    const { nft } = ddoInstance.getAssetFields()
-    if (nft?.state !== 0) {
+    const { nft } = ddoInstance.getDDOFields() as any
+    if ('indexedMetadata' in ddoInstance.getDDOData() && nft?.state !== 0) {
+      // Skipping validation for short DDOs as it currently doesn't work
+      // TODO: DDO validation needs to be updated to consider the fields required by the schema
+      // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
       return true
     }
 
@@ -510,7 +512,7 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
     } else {
       DATABASE_LOGGER.logMessageWithEmoji(
         `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-        JSON.stringify(validation[1]),
+          JSON.stringify(validation[1]),
         true,
         GENERIC_EMOJIS.EMOJI_CROSS_MARK,
         LOG_LEVELS_STR.LEVEL_ERROR
@@ -536,18 +538,10 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
           }
         })
         if (response.hits?.hits.length > 0) {
-          const totalHits =
-            typeof response.hits.total === 'number'
-              ? response.hits.total
-              : response.hits.total?.value || 0
-
-          const normalizedResults = response.hits.hits.map((hit: any) =>
-            normalizeDocumentId(hit._source, hit._id)
-          )
-          results.push({
-            results: normalizedResults,
-            totalResults: totalHits
+          const nomalizedResponse = response.hits.hits.map((hit: any) => {
+            return normalizeDocumentId(hit._source, hit._id)
           })
+          results.push(nomalizedResponse)
         }
       } catch (error) {
         const schemaErrorMsg = `Error for schema ${query.index}: ${error.message}`
@@ -570,18 +564,10 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
             }
           })
           if (response.hits?.hits.length > 0) {
-            const totalHits =
-              typeof response.hits.total === 'number'
-                ? response.hits.total
-                : response.hits.total?.value || 0
-
-            const normalizedResults = response.hits.hits.map((hit: any) =>
-              normalizeDocumentId(hit._source, hit._id)
-            )
-            results.push({
-              results: normalizedResults,
-              totalResults: totalHits
+            const nomalizedResponse = response.hits.hits.map((hit: any) => {
+              return normalizeDocumentId(hit._source, hit._id)
             })
+            results.push(nomalizedResponse)
           }
         } catch (error) {
           const schemaErrorMsg = `Error for schema ${schema.index}: ${error.message}`
