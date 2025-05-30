@@ -1,6 +1,6 @@
 import { Stream } from 'stream'
 import { RPCS } from './blockchain'
-import { C2DClusterInfo } from './C2D'
+import { C2DClusterInfo } from './C2D/C2D'
 import { FeeStrategy } from './Fees'
 import { Schema } from '../components/database'
 
@@ -23,7 +23,12 @@ export interface OceanNodeKeys {
   privateKey: any
   ethAddress: string
 }
-
+/* eslint-disable no-unused-vars */
+export enum dhtFilterMethod {
+  filterPrivate = 'filterPrivate', // default, remove all private addresses from DHT
+  filterPublic = 'filterPublic', // remove all public addresses from DHT
+  filterNone = 'filterNone' // do not remove all any addresses from DHT
+}
 export interface OceanNodeP2PConfig {
   bootstrapNodes: string[]
   bootstrapTimeout: number
@@ -41,7 +46,7 @@ export interface OceanNodeP2PConfig {
   pubsubPeerDiscoveryInterval: number
   dhtMaxInboundStreams: number
   dhtMaxOutboundStreams: number
-  enableDHTServer: boolean
+  dhtFilter: dhtFilterMethod
   mDNSInterval: number
   connectionsMaxParallelDials: number
   connectionsDialTimeout: number
@@ -59,6 +64,7 @@ export interface OceanNodeP2PConfig {
   autoDialConcurrency: number
   maxPeerAddrsToDial: number
   autoDialInterval: number
+  enableNetworkStats: boolean
 }
 
 export interface OceanNodeDockerConfig {
@@ -70,30 +76,43 @@ export interface OceanNodeDockerConfig {
   certPath?: string
   keyPath?: string
 }
+
+export interface AccessListContract {
+  [chainId: string]: string[]
+}
+
 export interface OceanNodeConfig {
   authorizedDecrypters: string[]
+  authorizedDecryptersList: AccessListContract | null
   allowedValidators: string[]
+  allowedValidatorsList: AccessListContract | null
+  authorizedPublishers: string[]
+  authorizedPublishersList: AccessListContract | null
   keys: OceanNodeKeys
   hasP2P: boolean
   p2pConfig: OceanNodeP2PConfig | null
   hasIndexer: boolean
   hasHttp: boolean
-  hasDashboard: boolean
+  hasControlPanel: boolean
   dbConfig?: OceanNodeDBConfig
   httpPort: number
   feeStrategy: FeeStrategy
   supportedNetworks?: RPCS
+  claimDurationTimeout: number
   indexingNetworks?: RPCS
   c2dClusters: C2DClusterInfo[]
   c2dNodeUri: string
-  dockerConfig?: OceanNodeDockerConfig
   accountPurgatoryUrl: string
   assetPurgatoryUrl: string
   allowedAdmins?: string[]
+  allowedAdminsList?: AccessListContract | null
   codeHash?: string
-  rateLimit?: number
+  rateLimit?: number // per request ip or peer
+  maxConnections?: number // global, regardless of client address(es)
   denyList?: DenyList
   unsafeURLs?: string[]
+  isBootstrap?: boolean
+  validateUnsignedDDO?: boolean
 }
 
 export interface P2PStatusResponse {
@@ -138,7 +157,7 @@ export interface OceanNodeStatus {
   codeHash?: string
   allowedAdmins?: string[]
   // detailed information
-  c2dClusters?: C2DClusterInfo[]
+  c2dClusters?: any[]
   supportedSchemas?: Schema[]
 }
 

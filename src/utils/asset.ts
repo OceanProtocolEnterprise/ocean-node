@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { Service } from '../@types/DDO/Service'
+import { Service, DDOManager, DDO } from '@oceanprotocol/ddo-js'
 import { DDO_IDENTIFIER_PREFIX } from './constants.js'
 import { CORE_LOGGER } from './logging/common.js'
 import { createHash } from 'crypto'
@@ -8,8 +8,6 @@ import { KNOWN_CONFIDENTIAL_EVMS } from './address.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/interfaces/IERC20Template.sol/IERC20Template.json' assert { type: 'json' }
 import ERC20Template4 from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template4.sol/ERC20Template4.json' assert { type: 'json' }
 import { getContractAddress, getNFTFactory } from '../components/Indexer/utils.js'
-import { DDOManager } from '@oceanprotocol/ddo-js'
-import { DDO } from '../@types/DDO/DDO'
 
 // Notes:
 // Asset as per asset.py on provider, is a class there, while on ocean.Js we only have a type
@@ -97,6 +95,15 @@ export function validateDDOHash(
   return ddoID === hashAddressAndChain
 }
 
+export function deleteIndexedMetadataIfExists(ddo: DDO): DDO {
+  const ddoCopy: DDO = structuredClone(ddo)
+  if ('indexedMetadata' in ddoCopy) {
+    delete ddoCopy.indexedMetadata
+    return ddoCopy
+  }
+  return ddo
+}
+
 /**
  * Generates DDO Id given the chain and nft address provided
  * @param nftAddress the nft address
@@ -120,7 +127,7 @@ export function generateDDOHash(nftAddress: string, chainId: number): string | n
  * @param network name or chain id
  * @returns true if confidential evm
  */
-export function isConfidentialEVM(network: number): boolean {
+export function isConfidentialEVM(network: bigint): boolean {
   return KNOWN_CONFIDENTIAL_EVMS.includes(network)
 }
 
@@ -177,7 +184,7 @@ export async function isDataTokenTemplate4(
   }
 }
 
-export function isConfidentialChainDDO(ddoChain: number, ddoService: Service): boolean {
+export function isConfidentialChainDDO(ddoChain: bigint, ddoService: Service): boolean {
   const isConfidential = isConfidentialEVM(ddoChain)
   return isConfidential && (!ddoService.files || ddoService.files.length === 0)
 }
@@ -198,7 +205,10 @@ export async function getFilesObjectFromConfidentialEVM(
   signer: Signer,
   consumerAddress: string,
   consumerSignature: string,
-  consumerData: string // ddo id + nonce
+  consumerData: string
+  // NOTE about signatures consume data:
+  // ddo id + nonce (for downloading)
+  // consumerAddress + datasets[0].documentId + nonce (for start/init compute)
 ): Promise<string> {
   try {
     const currentProviderAddress = await signer.getAddress()

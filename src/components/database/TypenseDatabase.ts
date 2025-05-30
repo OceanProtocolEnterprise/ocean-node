@@ -5,7 +5,6 @@ import { TypesenseSearchParams } from '../../@types/index.js'
 import { LOG_LEVELS_STR, GENERIC_EMOJIS } from '../../utils/logging/Logger.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 
-import { validateObject } from '../core/utils/validateDdoHandler.js'
 import { ENVIRONMENT_VARIABLES, TYPESENSE_HITS_CAP } from '../../utils/constants.js'
 import {
   AbstractDdoDatabase,
@@ -15,6 +14,7 @@ import {
   AbstractOrderDatabase
 } from './BaseDatabase.js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
+import { validateObject } from '../core/utils/validateDdoHandler.js'
 
 export class TypesenseOrderDatabase extends AbstractOrderDatabase {
   private provider: Typesense
@@ -410,7 +410,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       } else {
         DATABASE_LOGGER.logMessageWithEmoji(
           `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-            JSON.stringify(validation[1]),
+          JSON.stringify(validation[1]),
           true,
           GENERIC_EMOJIS.EMOJI_CROSS_MARK,
           LOG_LEVELS_STR.LEVEL_ERROR
@@ -474,6 +474,9 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       throw new Error(`Schema for version ${ddo.version} not found`)
     }
     try {
+      // avoid failure because of schema
+      if (ddo?.indexedMetadata?.nft) delete ddo.nft
+
       const validation = await this.validateDDO(ddo)
       if (validation === true) {
         return await this.provider
@@ -508,7 +511,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
           // Log error other than not found
           DATABASE_LOGGER.logMessageWithEmoji(
             `Error when retrieving DDO entry ${id} from schema ${schema.name}: ` +
-              error.message,
+            error.message,
             true,
             GENERIC_EMOJIS.EMOJI_CROSS_MARK,
             LOG_LEVELS_STR.LEVEL_ERROR
@@ -535,6 +538,8 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       throw new Error(`Schema for version ${ddo.version} not found`)
     }
     try {
+      // avoid issue with nft fields, due to schema
+      if (ddo?.indexedMetadata?.nft) delete ddo.nft
       const validation = await this.validateDDO(ddo)
       if (validation === true) {
         return await this.provider
@@ -585,7 +590,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
           // Log error other than not found
           DATABASE_LOGGER.logMessageWithEmoji(
             `Error when deleting DDO entry ${did} from schema ${schema.name}: ` +
-              error.message,
+            error.message,
             true,
             GENERIC_EMOJIS.EMOJI_CROSS_MARK,
             LOG_LEVELS_STR.LEVEL_ERROR
@@ -636,6 +641,9 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
 
 export class TypesenseIndexerDatabase extends AbstractIndexerDatabase {
   private provider: Typesense
+
+  // constant for the node version document ID
+  private static readonly VERSION_DOC_ID = 'node_version'
 
   constructor(config: OceanNodeDBConfig, schema: TypesenseSchema) {
     super(config, schema)
@@ -810,7 +818,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
     moduleName?: string,
     level?: string,
     page?: number
-  ): Promise<Record<string, any>[] | null> {
+  ): Promise<Record<string, any>[]> {
     try {
       let filterConditions = `timestamp:>=${startTime.getTime()} && timestamp:<${endTime.getTime()}`
       if (moduleName) {
@@ -856,7 +864,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
         GENERIC_EMOJIS.EMOJI_CROSS_MARK,
         LOG_LEVELS_STR.LEVEL_ERROR
       )
-      return null
+      return []
     }
   }
 
@@ -907,7 +915,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
           }
         }
       }
-      return oldLogs ? oldLogs.length : 0
+      return oldLogs.length
     } catch (error) {
       DATABASE_LOGGER.logMessageWithEmoji(
         `Error when deleting old log entries: ${error.message}`,

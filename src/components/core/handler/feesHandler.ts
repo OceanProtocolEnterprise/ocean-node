@@ -1,4 +1,4 @@
-import { Handler } from './handler.js'
+import { CommandHandler } from './handler.js'
 import { GetFeesCommand } from '../../../@types/commands.js'
 import { P2PCommandResponse } from '../../../@types/OceanNode.js'
 import { createProviderFee } from '../utils/feesHandler.js'
@@ -17,8 +17,9 @@ import { getNonce } from '../utils/nonceHandler.js'
 import { streamToString } from '../../../utils/util.js'
 import { isOrderingAllowedForAsset } from './downloadHandler.js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 
-export class FeesHandler extends Handler {
+export class FeesHandler extends CommandHandler {
   validate(command: GetFeesCommand): ValidateParams {
     let validation = validateCommandParameters(command, ['ddoId', 'serviceId'])
     if (validation.valid) {
@@ -100,7 +101,7 @@ export class FeesHandler extends Handler {
     const nonce = await streamToString(nonceHandlerResponse.stream as Readable)
 
     try {
-      const providerFee = await createProviderFee(ddo, service, validUntil, null, null)
+      const providerFee = await createProviderFee(ddo, service, validUntil)
       if (providerFee) {
         const response: ProviderInitialize = {
           providerFee,
