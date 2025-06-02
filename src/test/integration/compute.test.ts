@@ -251,6 +251,11 @@ describe('Compute', () => {
       DEFAULT_TEST_TIMEOUT * 3,
       true
     )
+    if (!publishedComputeDataset.ddo) {
+      expect(expectedTimeoutFailure(this.test.title)).to.be.equal(
+        publishedComputeDataset.wasTimeout
+      )
+    }
     console.log('publishedComputeDataset', JSON.stringify(publishedComputeDataset))
     assert(
       publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms
