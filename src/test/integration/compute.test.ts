@@ -1190,6 +1190,7 @@ describe('Compute', () => {
 
         const datasetDDOTest = ddo
         const datasetInstance = DDOManager.getDDOClass(datasetDDO)
+        console.log('datasetDDOTest', datasetDDOTest)
         if (datasetDDOTest) {
           const result = await validateAlgoForDataset(
             algoDDOTest.id,
@@ -1198,6 +1199,8 @@ describe('Compute', () => {
             datasetDDOTest.services[0].id,
             oceanNode
           )
+          console.log('result', result)
+          console.log('setTrustedAlgosEmpty', setTrustedAlgosEmpty)
           expect(result).to.equal(!setTrustedAlgosEmpty)
         } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
       } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
