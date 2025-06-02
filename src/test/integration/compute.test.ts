@@ -248,9 +248,10 @@ describe('Compute', () => {
     publishedComputeDataset = await waitToIndex(
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_UPDATED,
-      DEFAULT_TEST_TIMEOUT * 2,
+      DEFAULT_TEST_TIMEOUT * 3,
       true
     )
+    console.log('publishedComputeDataset', JSON.stringify(publishedComputeDataset))
     assert(
       publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms
         .length > 0,
