@@ -4,7 +4,9 @@ import { FindDdoHandler } from '../core/handler/ddoHandler.js'
 import {
   ArweaveFileObject,
   IpfsFileObject,
-  UrlFileObject
+  UrlFileObject,
+  BaseFileObject,
+  EncryptMethod
 } from '../../@types/fileObject.js'
 import { getFile } from '../../utils/file.js'
 import urlJoin from 'url-join'
@@ -13,7 +15,6 @@ import { DDO, DDOManager } from '@oceanprotocol/ddo-js'
 import { deleteKeysFromObject, sanitizeServiceFiles } from '../../utils/util.js'
 
 import { decrypt } from '../../utils/crypt.js'
-import { BaseFileObject, EncryptMethod } from '../../@types/fileObject.js'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
 import { AlgoChecksums, ComputeJob, DBComputeJob } from '../../@types/index.js'
 export { C2DEngine } from './compute_engine_base.js'

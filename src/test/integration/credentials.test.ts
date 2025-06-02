@@ -357,7 +357,7 @@ describe('Should run a complete node flow.', () => {
     printCurrentConfig()
     expect(
       config.authorizedPublishers.length === 1 &&
-      config.authorizedPublishers[0] === authorizedAccount,
+        config.authorizedPublishers[0] === authorizedAccount,
       'Unable to set AUTHORIZED_PUBLISHERS'
     )
 
