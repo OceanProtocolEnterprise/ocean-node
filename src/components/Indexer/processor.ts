@@ -69,7 +69,6 @@ export const processChunkLogs = async (
       (allowedValidatorsList && Object.keys(allowedValidatorsList).length > 0)
     for (const log of logs) {
       const event = findEventByKey(log.topics[0])
-
       if (event && Object.values(EVENTS).includes(event.type)) {
         // only log & process the ones we support
         INDEXER_LOGGER.logMessage(
@@ -170,7 +169,6 @@ export const processChunkLogs = async (
         }
       }
     }
-
     return storeEvents
   }
 
@@ -190,7 +188,6 @@ export const processBlocks = async (
       blockLogs && blockLogs.length > 0
         ? await processChunkLogs(blockLogs, signer, provider, network)
         : []
-
     return {
       lastBlock: lastIndexedBlock + count,
       foundEvents: events

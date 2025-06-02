@@ -9,7 +9,8 @@ import {
   toUtf8Bytes,
   hexlify,
   getBytes,
-  toUtf8String
+  toUtf8String,
+  getAddress
 } from 'ethers'
 import { Readable } from 'winston-transport'
 import { DecryptDDOCommand } from '../../../@types/commands.js'
@@ -26,6 +27,8 @@ import { streamToString } from '../../../utils/util.js'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
+import { createHash } from 'node:crypto'
+import { AbstractDdoDatabase } from '../../database/BaseDatabase.js'
 
 export abstract class BaseEventProcessor {
   protected networkId: number
@@ -155,7 +158,6 @@ export abstract class BaseEventProcessor {
 
         return saveDDO
       }
-
       const saveDDO = await ddoDatabase.update({ ...ddo.getDDOData() })
       await ddoState.update(
         this.networkId,
@@ -193,6 +195,37 @@ export abstract class BaseEventProcessor {
       return false
     }
     return true
+  }
+
+  protected async getDDO(
+    ddoDatabase: AbstractDdoDatabase,
+    nftAddress: string,
+    chainId: number
+  ): Promise<any> {
+    const did =
+      'did:op:' +
+      createHash('sha256')
+        .update(getAddress(nftAddress) + chainId.toString(10))
+        .digest('hex')
+    const didOpe =
+      'did:ope:' +
+      createHash('sha256')
+        .update(getAddress(nftAddress) + chainId.toString(10))
+        .digest('hex')
+
+    let ddo = await ddoDatabase.retrieve(did)
+    if (!ddo) {
+      INDEXER_LOGGER.logMessage(
+        `Detected OrderStarted changed for ${did}, but it does not exists, try with ddo:ope.`
+      )
+      ddo = await ddoDatabase.retrieve(didOpe)
+      if (!ddo) {
+        INDEXER_LOGGER.logMessage(
+          `Detected OrderStarted changed for ${didOpe}, but it does not exists.`
+        )
+      }
+    }
+    return ddo
   }
 
   protected async decryptDDO(
@@ -363,6 +396,36 @@ export abstract class BaseEventProcessor {
     }
 
     return ddo
+  }
+
+  protected decryptDDOIPFS(
+    decryptorURL: string,
+    eventCreator: string,
+    metadata: any
+  ): Promise<any> {
+    INDEXER_LOGGER.logMessage(
+      `Decompressing DDO  from network: ${this.networkId} created by: ${eventCreator} ecnrypted by: ${decryptorURL}`
+    )
+    const byteArray = getBytes(metadata)
+    const utf8String = toUtf8String(byteArray)
+    const proof = JSON.parse(utf8String)
+    return proof
+  }
+
+  protected getDataFromProof(
+    proof: any
+  ): { header: any; ddoObj: Record<string, any>; signature: string } | null {
+    INDEXER_LOGGER.logMessage(`Decompressing JWT`)
+    const data = proof.split('.')
+    if (data.length > 2) {
+      const header = JSON.parse(Buffer.from(data[0], 'base64').toString('utf-8'))
+      let ddoObj = JSON.parse(Buffer.from(data[1], 'base64').toString('utf-8'))
+      if (ddoObj.vc) ddoObj = ddoObj.vc
+      const signature = data[2]
+
+      return { header, ddoObj, signature }
+    }
+    return null
   }
 
   public abstract processEvent(

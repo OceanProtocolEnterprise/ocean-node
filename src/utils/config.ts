@@ -501,9 +501,9 @@ function getDockerComputeEnvironments(isStartup?: boolean): C2DDockerConfig[] {
         if (errors.length > 1) {
           CONFIG_LOGGER.error(
             'Please check your compute env settings: ' +
-            errors +
-            'for env: ' +
-            JSON.stringify(config)
+              errors +
+              'for env: ' +
+              JSON.stringify(config)
           )
         } else {
           dockerC2Ds.push(config)

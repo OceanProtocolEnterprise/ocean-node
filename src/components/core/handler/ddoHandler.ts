@@ -18,7 +18,7 @@ import { ethers, isAddress } from 'ethers'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
 // import lzma from 'lzma-native'
 import lzmajs from 'lzma-purejs-requirejs'
-import { getValidationSignature } from '../utils/validateDdoHandler.js'
+import { getValidationSignature, isRemoteDDO } from '../utils/validateDdoHandler.js'
 import { getConfiguration, hasP2PInterface } from '../../../utils/config.js'
 import {
   GetDdoCommand,
@@ -40,6 +40,8 @@ import {
 import { deleteIndexedMetadataIfExists, validateDDOHash } from '../../../utils/asset.js'
 import { Asset, DDO, DDOManager } from '@oceanprotocol/ddo-js'
 import { checkCredentialOnAccessList } from '../../../utils/credentials.js'
+import { createHash } from 'crypto'
+import { Storage } from '../../../components/storage/index.js'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -63,6 +65,21 @@ export class DecryptDdoHandler extends CommandHandler {
       }
     }
     return validation
+  }
+
+  checkId(id: string, dataNftAddress: string, chainId: string): Boolean {
+    const didV5 =
+      'did:ope:' +
+      createHash('sha256')
+        .update(ethers.getAddress(dataNftAddress) + chainId)
+        .digest('hex')
+
+    const didV4 =
+      'did:op:' +
+      createHash('sha256')
+        .update(ethers.getAddress(dataNftAddress) + chainId)
+        .digest('hex')
+    return id === didV4 || id === didV5
   }
 
   async handle(task: DecryptDDOCommand): Promise<P2PCommandResponse> {
@@ -223,7 +240,6 @@ export class DecryptDdoHandler extends CommandHandler {
       let encryptedDocument: Uint8Array
       let flags: number
       let documentHash: string
-
       if (transactionId) {
         try {
           const receipt = await provider.getTransactionReceipt(transactionId)
@@ -272,7 +288,6 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       }
-
       const templateContract = new ethers.Contract(
         dataNftAddress,
         ERC721Template.abi,
@@ -296,7 +311,6 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       }
-
       if (
         ![
           MetadataStates.ACTIVE,
@@ -330,7 +344,6 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       }
-
       if (flags & 1) {
         try {
           decryptedDocument = lzmajs.decompressFile(decryptedDocument)
@@ -357,10 +370,7 @@ export class DecryptDdoHandler extends CommandHandler {
 
       // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
-      const clonedDdo = structuredClone(ddo)
-      const updatedDdo = deleteIndexedMetadataIfExists(clonedDdo)
-      const ddoInstance = DDOManager.getDDOClass(updatedDdo)
-      if (updatedDdo.id !== ddoInstance.makeDid(dataNftAddress, chainId)) {
+      if (ddo.id && !this.checkId(ddo.id, dataNftAddress, chainId)) {
         CORE_LOGGER.error(`Decrypted DDO ID is not matching the generated hash for DID.`)
         return {
           stream: null,
@@ -370,19 +380,28 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       }
+      const decryptedDocumentString = decryptedDocument.toString()
+      const ddoObject = JSON.parse(decryptedDocumentString)
 
-      // checksum matches
-      const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
-      if (decryptedDocumentHash !== documentHash) {
-        CORE_LOGGER.logMessage(
-          `Decrypt DDO: error checksum does not match ${decryptedDocumentHash} with ${documentHash}`,
-          true
-        )
-        return {
-          stream: null,
-          status: {
-            httpStatus: 400,
-            error: 'Decrypt DDO: checksum does not match'
+      let stream = Readable.from(decryptedDocumentString)
+      if (isRemoteDDO(ddoObject)) {
+        const storage = Storage.getStorageClass(ddoObject.remote, config)
+        const result = await storage.getReadableStream()
+        stream = result.stream as Readable
+      } else {
+        // checksum matches
+        const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
+        if (decryptedDocumentHash !== documentHash) {
+          CORE_LOGGER.logMessage(
+            `Decrypt DDO: error checksum does not match ${decryptedDocumentHash} with ${documentHash}`,
+            true
+          )
+          return {
+            stream: null,
+            status: {
+              httpStatus: 400,
+              error: 'Decrypt DDO: checksum does not match'
+            }
           }
         }
       }
@@ -413,7 +432,7 @@ export class DecryptDdoHandler extends CommandHandler {
       }
 
       return {
-        stream: Readable.from(decryptedDocument.toString()),
+        stream,
         status: { httpStatus: 200 }
       }
     } catch (error) {

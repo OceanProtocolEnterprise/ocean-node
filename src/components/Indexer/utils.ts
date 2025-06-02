@@ -271,15 +271,17 @@ export async function getPricingStatsForDddo(
   ddo: VersionedDDO,
   signer: Signer
 ): Promise<VersionedDDO> {
-  if (!ddo.getAssetFields().indexedMetadata) {
-    ddo.getDDOData().indexedMetadata = {}
+  const ddoData = ddo.getDDOData()
+
+  if (!ddoData.indexedMetadata) {
+    ddoData.indexedMetadata = {}
   }
 
-  if (!Array.isArray(ddo.getAssetFields().indexedMetadata.stats)) {
-    ddo.getDDOData().indexedMetadata.stats = []
+  if (!Array.isArray(ddoData.indexedMetadata?.stats)) {
+    ddoData.indexedMetadata.stats = []
   }
 
-  const stats = ddo.getAssetFields().indexedMetadata?.stats || []
+  const stats = ddoData.indexedMetadata?.stats || []
 
   for (const service of ddo.getDDOFields().services) {
     const datatoken = new ethers.Contract(

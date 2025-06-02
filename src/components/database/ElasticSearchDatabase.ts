@@ -472,9 +472,8 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
   }
 
   getDDOSchema(ddo: Record<string, any>) {
-    const ddoInstance = DDOManager.getDDOClass(ddo)
-    const { nft } = ddoInstance.getDDOFields() as any
     let schemaName: string | undefined
+    const nft = ddo.nft || ddo.credentialSubject.nft
     if (nft?.state !== 0) {
       schemaName = 'op_ddo_short'
     } else if (ddo.version) {

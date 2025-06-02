@@ -40,7 +40,7 @@ import {
 import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { OrdableAssetResponse } from '../../../@types/Asset.js'
 import { PolicyServer } from '../../policyServer/index.js'
-import { Asset, DDO, Service } from '@oceanprotocol/ddo-js'
+import { Asset, DDO, DDOManager, Service } from '@oceanprotocol/ddo-js'
 export const FILE_ENCRYPTION_ALGORITHM = 'aes-256-cbc'
 
 export function isOrderingAllowedForAsset(asset: Asset): OrdableAssetResponse {
@@ -191,12 +191,14 @@ export async function handleDownloadUrlCommand(
 }
 
 export function validateFilesStructure(
-  ddo: DDO,
+  ddo: DDO | Record<string, any>,
   service: Service,
   decriptedFileObject: any
 ): boolean {
+  const ddoInstance = DDOManager.getDDOClass(ddo)
+  const { nftAddress } = ddoInstance.getDDOFields()
   if (
-    decriptedFileObject.nftAddress?.toLowerCase() !== ddo.nftAddress?.toLowerCase() ||
+    decriptedFileObject.nftAddress?.toLowerCase() !== nftAddress?.toLowerCase() ||
     decriptedFileObject.datatokenAddress?.toLowerCase() !==
       service.datatokenAddress?.toLowerCase()
   ) {
@@ -260,7 +262,14 @@ export class DownloadHandler extends CommandHandler {
     }
 
     // 2. Validate ddo and credentials
-    if (!ddo.chainId || !ddo.nftAddress || !ddo.metadata) {
+    const ddoInstance = DDOManager.getDDOClass(ddo)
+    const {
+      chainId: ddoChainId,
+      metadata,
+      nftAddress,
+      credentials
+    } = ddoInstance.getDDOFields()
+    if (!ddoChainId || !nftAddress || !metadata) {
       CORE_LOGGER.logMessage('Error: DDO malformed or disabled', true)
       return {
         stream: null,
@@ -273,7 +282,7 @@ export class DownloadHandler extends CommandHandler {
 
     // check credentials (DDO level)
     let accessGrantedDDOLevel: boolean
-    if (ddo.credentials) {
+    if (credentials) {
       // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
       // It will just use the existing code and let PolicyServer decide.
       if (isPolicyServerConfigured()) {
@@ -289,10 +298,11 @@ export class DownloadHandler extends CommandHandler {
           )
         ).success
       } else {
-        accessGrantedDDOLevel = areKnownCredentialTypes(ddo.credentials)
-          ? checkCredentials(ddo.credentials, task.consumerAddress)
+        accessGrantedDDOLevel = areKnownCredentialTypes(credentials as any)
+          ? checkCredentials(credentials as any, task.consumerAddress)
           : true
       }
+      console.log(accessGrantedDDOLevel)
       if (!accessGrantedDDOLevel) {
         CORE_LOGGER.logMessage(`Error: Access to asset ${ddo.id} was denied`, true)
         return {
@@ -330,7 +340,7 @@ export class DownloadHandler extends CommandHandler {
     }
     // from now on, we need blockchain checks
     const config = await getConfiguration()
-    const { rpc, network, chainId, fallbackRPCs } = config.supportedNetworks[ddo.chainId]
+    const { rpc, network, chainId, fallbackRPCs } = config.supportedNetworks[ddoChainId]
     let provider
     let blockchain
     try {
@@ -358,14 +368,14 @@ export class DownloadHandler extends CommandHandler {
     }
     if (!rpc) {
       CORE_LOGGER.logMessage(
-        `Cannot proceed with download. RPC not configured for this chain ${ddo.chainId}`,
+        `Cannot proceed with download. RPC not configured for this chain ${ddoChainId}`,
         true
       )
       return {
         stream: null,
         status: {
           httpStatus: 500,
-          error: `Cannot proceed with download. RPC not configured for this chain ${ddo.chainId}`
+          error: `Cannot proceed with download. RPC not configured for this chain ${ddoChainId}`
         }
       }
     }
@@ -423,7 +433,7 @@ export class DownloadHandler extends CommandHandler {
 
       const environments = await this.getOceanNode()
         .getC2DEngines()
-        .fetchEnvironments(ddo.chainId)
+        .fetchEnvironments(ddoChainId)
       for (const env of environments)
         computeAddrs.push(env.consumerAddress?.toLowerCase())
 
@@ -461,7 +471,7 @@ export class DownloadHandler extends CommandHandler {
       task.transferTxId,
       task.consumerAddress,
       provider,
-      ddo.nftAddress,
+      nftAddress,
       service.datatokenAddress,
       AssetUtils.getServiceIndexById(ddo, task.serviceId),
       service.timeout,
@@ -514,13 +524,13 @@ export class DownloadHandler extends CommandHandler {
       let decriptedFileObject: any = null
       let decryptedFileData: any = null
       // check if confidential EVM
-      const confidentialEVM = isConfidentialChainDDO(BigInt(ddo.chainId), service)
+      const confidentialEVM = isConfidentialChainDDO(BigInt(ddoChainId), service)
       // check that files is missing and template 4 is active on the chain
       if (confidentialEVM) {
         const signer = blockchain.getSigner()
         const isTemplate4 = await isDataTokenTemplate4(service.datatokenAddress, signer)
 
-        if (!isTemplate4 || !(await isERC20Template4Active(ddo.chainId, signer))) {
+        if (!isTemplate4 || !(await isERC20Template4Active(ddoChainId, signer))) {
           const errorMsg =
             'Cannot decrypt DDO files, Template 4 is not active for confidential EVM!'
           CORE_LOGGER.error(errorMsg)

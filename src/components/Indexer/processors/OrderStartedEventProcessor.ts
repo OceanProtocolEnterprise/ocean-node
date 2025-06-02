@@ -32,10 +32,12 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     const datatokenContract = getDtContract(signer, event.address)
 
     const nftAddress = await datatokenContract.getERC721Address()
+    console.log(nftAddress, 'nftAddress')
     const did = getDid(nftAddress, chainId)
+    console.log('did:', did)
     try {
       const { ddo: ddoDatabase, order: orderDatabase } = await getDatabase()
-      const ddo = await ddoDatabase.retrieve(did)
+      const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
       if (!ddo) {
         INDEXER_LOGGER.logMessage(
           `Detected OrderStarted changed for ${did}, but it does not exists.`
@@ -43,29 +45,27 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
         return
       }
       const ddoInstance = DDOManager.getDDOClass(ddo)
-      if (!ddoInstance.getAssetFields().indexedMetadata) {
+      if (!ddoInstance.getDDOData().indexedMetadata) {
         ddoInstance.updateFields({ indexedMetadata: {} })
       }
-
-      if (!Array.isArray(ddoInstance.getAssetFields().indexedMetadata.stats)) {
+      if (!Array.isArray(ddoInstance.getDDOData().indexedMetadata.stats)) {
         ddoInstance.updateFields({ indexedMetadata: { stats: [] } })
       }
-
       if (
-        ddoInstance.getAssetFields().indexedMetadata.stats.length !== 0 &&
+        ddoInstance.getDDOData().indexedMetadata.stats.length !== 0 &&
         ddoInstance
           .getDDOFields()
           .services[serviceIndex].datatokenAddress?.toLowerCase() ===
           event.address?.toLowerCase()
       ) {
-        for (const stat of ddoInstance.getAssetFields().indexedMetadata.stats) {
+        for (const stat of ddoInstance.getDDOData().indexedMetadata.stats) {
           if (stat.datatokenAddress.toLowerCase() === event.address?.toLowerCase()) {
             stat.orders += 1
             break
           }
         }
-      } else if (ddoInstance.getAssetFields().indexedMetadata.stats.length === 0) {
-        const existingStats = ddoInstance.getAssetFields().indexedMetadata.stats
+      } else if (ddoInstance.getDDOData().indexedMetadata.stats.length === 0) {
+        const existingStats = ddoInstance.getDDOData().indexedMetadata.stats
         existingStats.push({
           datatokenAddress: event.address,
           name: await datatokenContract.name(),
