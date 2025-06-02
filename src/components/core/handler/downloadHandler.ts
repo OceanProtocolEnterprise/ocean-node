@@ -302,7 +302,6 @@ export class DownloadHandler extends CommandHandler {
           ? checkCredentials(credentials as any, task.consumerAddress)
           : true
       }
-      console.log(accessGrantedDDOLevel)
       if (!accessGrantedDDOLevel) {
         CORE_LOGGER.logMessage(`Error: Access to asset ${ddo.id} was denied`, true)
         return {

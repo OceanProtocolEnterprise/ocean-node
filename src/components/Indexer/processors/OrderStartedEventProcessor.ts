@@ -32,9 +32,7 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     const datatokenContract = getDtContract(signer, event.address)
 
     const nftAddress = await datatokenContract.getERC721Address()
-    console.log(nftAddress, 'nftAddress')
     const did = getDid(nftAddress, chainId)
-    console.log('did:', did)
     try {
       const { ddo: ddoDatabase, order: orderDatabase } = await getDatabase()
       const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)

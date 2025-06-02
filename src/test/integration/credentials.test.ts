@@ -82,7 +82,6 @@ describe('Should run a complete node flow.', () => {
   before(async () => {
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
-
     // override and save configuration (always before calling getConfig())
     previousConfiguration = await setupEnvironment(
       TEST_ENV_CONFIG_FILE,
@@ -297,7 +296,7 @@ describe('Should run a complete node flow.', () => {
       const response = await new DownloadHandler(oceanNode).handle(downloadTask)
       assert(response)
       assert(response.stream === null, 'stream is present')
-      assert(response.status.httpStatus === 500, 'http status not 500')
+      assert(response.status.httpStatus === 403, 'http status not 403')
     }
 
     setTimeout(() => {
