@@ -2,7 +2,7 @@ import { Credentials } from '@oceanprotocol/ddo-js'
 
 export const downloadAsset = {
   '@context': ['https://w3id.org/did/v1'],
-  id: '',
+  id: 'did:op:ae13',
   nftAddress: '',
   version: '4.1.0',
   chainId: 80001,
@@ -90,7 +90,7 @@ const serviceLevelCredentials: Credentials = {
 
 export const downloadAssetWithCredentials = {
   '@context': ['https://w3id.org/did/v1'],
-  id: '',
+  id: 'did:op:ae13',
   nftAddress: '',
   version: '4.1.0',
   chainId: 80001,

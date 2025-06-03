@@ -177,19 +177,17 @@ describe('Should run a complete node flow.', () => {
   })
 
   it('should publish download datasets', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
-    printCurrentConfig()
+    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
     const publishedDataset = await publishAsset(
       downloadAssetWithCredentials,
       publisherAccount
     )
     console.log('publishedDataset', publishedDataset)
     did = publishedDataset?.ddo?.id
-    await new Promise((resolve) => setTimeout(resolve, 5000))
     const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT * 3
+      DEFAULT_TEST_TIMEOUT
     )
     if (!ddo) {
       assert(wasTimeout === true, 'published failed due to timeout!')
@@ -377,7 +375,7 @@ describe('Should run a complete node flow.', () => {
   })
 
   it('should publish download datasets with undefined credential at service level', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
     const downalodAssetWithoutServiceCredentials = {
       ...downloadAssetWithCredentials,
       services: [
@@ -389,7 +387,6 @@ describe('Should run a complete node flow.', () => {
         }
       ]
     }
-    printCurrentConfig()
     const publishedDataset = await publishAsset(
       downalodAssetWithoutServiceCredentials,
       publisherAccount
@@ -400,7 +397,7 @@ describe('Should run a complete node flow.', () => {
     const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT * 3
+      DEFAULT_TEST_TIMEOUT
     )
     if (!ddo) {
       assert(wasTimeout === true, 'published failed due to timeout!')
