@@ -178,10 +178,12 @@ describe('Should run a complete node flow.', () => {
 
   it('should publish download datasets', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+    printCurrentConfig()
     const publishedDataset = await publishAsset(
       downloadAssetWithCredentials,
       publisherAccount
     )
+    console.log('publishedDataset', publishedDataset)
     did = publishedDataset.ddo.id
     await new Promise((resolve) => setTimeout(resolve, 5000))
     const { ddo, wasTimeout } = await waitToIndex(
@@ -387,13 +389,14 @@ describe('Should run a complete node flow.', () => {
         }
       ]
     }
+    printCurrentConfig()
     const publishedDataset = await publishAsset(
       downalodAssetWithoutServiceCredentials,
       publisherAccount
     )
     console.log('publishedDataset', publishedDataset)
-    did = publishedDataset.ddo.id
-    await new Promise((resolve) => setTimeout(resolve, 5000))
+    did = publishedDataset?.ddo?.id
+    // await new Promise((resolve) => setTimeout(resolve, 5000))
     const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
@@ -459,6 +462,7 @@ describe('Should run a complete node flow.', () => {
         command: PROTOCOL_COMMANDS.DOWNLOAD
       }
       const response = await new DownloadHandler(oceanNode).handle(downloadTask)
+      console.log('response', response)
       assert(response)
       assert(response.stream, 'stream not present')
       assert(response.status.httpStatus === 200, 'http status not 200')
