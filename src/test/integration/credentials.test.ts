@@ -391,6 +391,7 @@ describe('Should run a complete node flow.', () => {
       downalodAssetWithoutServiceCredentials,
       publisherAccount
     )
+    console.log('publishedDataset', publishedDataset)
     did = publishedDataset.ddo.id
     await new Promise((resolve) => setTimeout(resolve, 5000))
     const { ddo, wasTimeout } = await waitToIndex(
