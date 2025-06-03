@@ -255,18 +255,18 @@ describe('Compute', () => {
       expect(expectedTimeoutFailure(this.test.title)).to.be.equal(
         publishedComputeDataset.wasTimeout
       )
+    } else {
+      assert(
+        publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms
+          .length > 0,
+        'Trusted algorithms not updated'
+      )
+      assert(
+        publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms[0]
+          .did === publishedAlgoDataset.ddo.id,
+        'Algorithm DID mismatch in trusted algorithms'
+      )
     }
-    console.log('publishedComputeDataset', JSON.stringify(publishedComputeDataset))
-    assert(
-      publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms
-        .length > 0,
-      'Trusted algorithms not updated'
-    )
-    assert(
-      publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms[0]
-        .did === publishedAlgoDataset.ddo.id,
-      'Algorithm DID mismatch in trusted algorithms'
-    )
   })
 
   it('Get compute environments', async () => {
