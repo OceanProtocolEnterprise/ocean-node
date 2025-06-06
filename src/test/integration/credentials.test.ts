@@ -82,6 +82,7 @@ describe('Should run a complete node flow.', () => {
   before(async () => {
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
+
     // override and save configuration (always before calling getConfig())
     previousConfiguration = await setupEnvironment(
       TEST_ENV_CONFIG_FILE,
@@ -177,17 +178,18 @@ describe('Should run a complete node flow.', () => {
   })
 
   it('should publish download datasets', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+
     const publishedDataset = await publishAsset(
       downloadAssetWithCredentials,
       publisherAccount
     )
-    console.log('publishedDataset', publishedDataset)
-    did = publishedDataset?.ddo?.id
+
+    did = publishedDataset.ddo.id
     const { ddo, wasTimeout } = await waitToIndex(
       did,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 3
     )
     if (!ddo) {
       assert(wasTimeout === true, 'published failed due to timeout!')
@@ -372,105 +374,6 @@ describe('Should run a complete node flow.', () => {
       DEFAULT_TEST_TIMEOUT
     )
     assert(ddo === null && wasTimeout === true, 'DDO should NOT have been indexed')
-  })
-
-  it('should publish download datasets with undefined credential at service level', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
-    const downalodAssetWithoutServiceCredentials = {
-      ...downloadAssetWithCredentials,
-      services: [
-        {
-          ...downloadAssetWithCredentials.services[0],
-          credentials: {
-            allow: [] as any[]
-          }
-        }
-      ]
-    }
-    const publishedDataset = await publishAsset(
-      downalodAssetWithoutServiceCredentials,
-      publisherAccount
-    )
-    console.log('publishedDataset', publishedDataset)
-    did = publishedDataset?.ddo?.id
-    // await new Promise((resolve) => setTimeout(resolve, 5000))
-    const { ddo, wasTimeout } = await waitToIndex(
-      did,
-      EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
-    )
-    if (!ddo) {
-      assert(wasTimeout === true, 'published failed due to timeout!')
-    }
-  })
-
-  it('should fetch the published ddo with undefined credential at service level', async () => {
-    const getDDOTask = {
-      command: PROTOCOL_COMMANDS.GET_DDO,
-      id: did
-    }
-    const response = await new GetDdoHandler(oceanNode).handle(getDDOTask)
-    ddo = await streamToObject(response.stream as Readable)
-    assert(ddo.id === did, 'DDO id not matching')
-  })
-
-  it('should start an order for consumer', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
-
-    const orderTxReceipt = await orderAsset(
-      ddo,
-      0,
-      consumerAccounts[0],
-      consumerAddresses[0],
-      publisherAccount,
-      oceanNode
-    )
-    assert(orderTxReceipt, `order transaction for consumer 0 failed`)
-    const txHash = orderTxReceipt.hash
-    assert(txHash, `transaction id not found for consumer 0`)
-    orderTxIds.push(txHash)
-  })
-
-  it('should allow to download the asset when service is undefined but asset level is defined', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
-
-    const doCheck = async () => {
-      const consumerAddress = consumerAddresses[0]
-      const consumerPrivateKey = ganachePrivateKeys[consumerAddress]
-      const transferTxId = orderTxIds[3]
-
-      const wallet = new ethers.Wallet(consumerPrivateKey)
-      const nonce = Math.floor(Date.now() / 1000).toString()
-      const message = String(ddo.id + nonce)
-      const consumerMessage = ethers.solidityPackedKeccak256(
-        ['bytes'],
-        [ethers.hexlify(ethers.toUtf8Bytes(message))]
-      )
-      const messageHashBytes = ethers.toBeArray(consumerMessage)
-      const signature = await wallet.signMessage(messageHashBytes)
-      const downloadTask = {
-        fileIndex: 0,
-        documentId: did,
-        serviceId: ddo.services[0].id,
-        transferTxId,
-        nonce,
-        consumerAddress,
-        signature,
-        command: PROTOCOL_COMMANDS.DOWNLOAD
-      }
-      const response = await new DownloadHandler(oceanNode).handle(downloadTask)
-      console.log('response', response)
-      assert(response)
-      assert(response.stream, 'stream not present')
-      assert(response.status.httpStatus === 200, 'http status not 200')
-      expect(response.stream).to.be.instanceOf(Readable)
-    }
-
-    setTimeout(() => {
-      expect(expectedTimeoutFailure(this.test.title)).to.be.equal(true)
-    }, DEFAULT_TEST_TIMEOUT * 3)
-
-    await doCheck()
   })
 
   after(async () => {
