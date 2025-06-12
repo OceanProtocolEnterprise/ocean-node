@@ -573,7 +573,7 @@ export class FindDdoHandler extends CommandHandler {
             if (isResponseLegit) {
               const ddoInfo: FindDDOResponse = {
                 id: ddo.id,
-                lastUpdateTx: ddo.indexedMetadata.event.tx,
+                lastUpdateTx: ddo.indexedMetadata.event.txid,
                 lastUpdateTime: ddo.metadata.updated,
                 provider: peer
               }
@@ -990,7 +990,7 @@ async function checkIfDDOResponseIsLegit(ddo: any): Promise<boolean> {
   }
 
   // check events on logs
-  const txId: string = indexedMetadata.event.tx // NOTE: DDO is txid, Asset is tx
+  const txId: string = indexedMetadata.event.txid || indexedMetadata.event.tx // NOTE: DDO is txid, Asset is tx
   if (!txId) {
     CORE_LOGGER.error(`DDO event missing tx data, cannot confirm transaction`)
     return false

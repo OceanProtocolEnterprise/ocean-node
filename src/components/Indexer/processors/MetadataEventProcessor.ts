@@ -243,14 +243,14 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
         const fieldsToUpdate = {
           indexedMetadata: {
-            nft
-          },
-          event: {
-            tx: event.transactionHash,
-            from,
-            contract: event.address,
-            block,
-            datetime
+            nft,
+            event: {
+              txid: event.transactionHash,
+              from,
+              contract: event.address,
+              block,
+              datetime
+            }
           }
         }
         ddoWithPricing.updateFields(fieldsToUpdate)
