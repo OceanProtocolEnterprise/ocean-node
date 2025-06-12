@@ -67,7 +67,8 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadata
       )
       let ddo = await this.processDDO(decryptedDDO)
-
+      INDEXER_LOGGER.logMessage(`ddo: ${JSON.stringify(ddo)}`)
+      INDEXER_LOGGER.logMessage(`metadataHash: ${metadataHash}`)
       if (
         !isRemoteDDO(decryptedDDO) &&
         parseInt(flag) !== 2 &&
