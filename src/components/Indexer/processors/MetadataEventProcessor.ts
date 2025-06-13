@@ -67,8 +67,6 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadata
       )
       let ddo = await this.processDDO(decryptedDDO)
-      INDEXER_LOGGER.logMessage(`ddo: ${JSON.stringify(ddo)}`)
-      INDEXER_LOGGER.logMessage(`metadataHash: ${metadataHash}`)
       if (
         !isRemoteDDO(decryptedDDO) &&
         parseInt(flag) !== 2 &&
@@ -90,7 +88,6 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         })
       }
       const clonedDdo = structuredClone(ddo)
-      INDEXER_LOGGER.logMessage(`clonedDdo: ${JSON.stringify(clonedDdo)}`)
       const updatedDdo = deleteIndexedMetadataIfExists(clonedDdo)
       const ddoInstance = DDOManager.getDDOClass(updatedDdo)
       if (updatedDdo.id !== ddoInstance.makeDid(event.address, chainId.toString(10))) {

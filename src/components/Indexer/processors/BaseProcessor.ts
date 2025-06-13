@@ -190,7 +190,6 @@ export abstract class BaseEventProcessor {
   protected checkDdoHash(decryptedDocument: any, documentHashFromContract: any): boolean {
     const utf8Bytes = toUtf8Bytes(JSON.stringify(decryptedDocument))
     const expectedMetadata = hexlify(utf8Bytes)
-    INDEXER_LOGGER.logMessage(`expectedMetadata: ${expectedMetadata}`)
     if (create256Hash(expectedMetadata.toString()) !== documentHashFromContract) {
       INDEXER_LOGGER.error(`DDO checksum does not match.`)
       return false
