@@ -1,60 +1,22 @@
-import { JsonRpcApiProvider, Signer, ethers, getAddress, Interface } from 'ethers'
+import { JsonRpcApiProvider, Signer, ethers, getAddress } from 'ethers'
 import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' assert { type: 'json' }
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
 import {
   ENVIRONMENT_VARIABLES,
-  EVENTS,
   EVENT_HASHES,
-  existsEnvironmentVariable,
-  getAllowedValidators
+  existsEnvironmentVariable
 } from '../../utils/index.js'
-import { BlocksEvents, NetworkEvent, ProcessingEvents } from '../../@types/blockchain.js'
-import {
-  MetadataEventProcessor,
-  MetadataStateEventProcessor,
-  OrderReusedEventProcessor,
-  OrderStartedEventProcessor
-} from './processor.js'
+import { NetworkEvent } from '../../@types/blockchain.js'
 import { INDEXER_LOGGER } from '../../utils/logging/common.js'
-import { fetchEventFromTransaction } from '../../utils/util.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
-import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 import { getOceanArtifactsAdressesByChainId } from '../../utils/address.js'
 import { CommandStatus, JobStatus } from '../../@types/commands.js'
 import { create256Hash } from '../../utils/crypt.js'
-
-let metadataEventProccessor: MetadataEventProcessor
-let metadataStateEventProcessor: MetadataStateEventProcessor
-let orderReusedEventProcessor: OrderReusedEventProcessor
-let orderStartedEventProcessor: OrderStartedEventProcessor
-
-function getMetadataEventProcessor(chainId: number): MetadataEventProcessor {
-  if (!metadataEventProccessor) {
-    metadataEventProccessor = new MetadataEventProcessor(chainId)
-  }
-  return metadataEventProccessor
-}
-
-function getMetadataStateEventProcessor(chainId: number): MetadataStateEventProcessor {
-  if (!metadataStateEventProcessor) {
-    metadataStateEventProcessor = new MetadataStateEventProcessor(chainId)
-  }
-  return metadataStateEventProcessor
-}
-
-function getOrderReusedEventProcessor(chainId: number): OrderReusedEventProcessor {
-  if (!orderReusedEventProcessor) {
-    orderReusedEventProcessor = new OrderReusedEventProcessor(chainId)
-  }
-  return orderReusedEventProcessor
-}
-
-function getOrderStartedEventProcessor(chainId: number): OrderStartedEventProcessor {
-  if (!orderStartedEventProcessor) {
-    orderStartedEventProcessor = new OrderStartedEventProcessor(chainId)
-  }
-  return orderStartedEventProcessor
-}
+import Dispenser from '@oceanprotocol/contracts/artifacts/contracts/pools/dispenser/Dispenser.sol/Dispenser.json' assert { type: 'json' }
+import FixedRateExchange from '@oceanprotocol/contracts/artifacts/contracts/pools/fixedRate/FixedRateExchange.sol/FixedRateExchange.json' assert { type: 'json' }
+import { createHash } from 'crypto'
+import { ServicePrice } from '../../@types/IndexedMetadata.js'
+import { VersionedDDO } from '@oceanprotocol/ddo-js'
 
 export const getContractAddress = (chainId: number, contractName: string): string => {
   const addressFile = getOceanArtifactsAdressesByChainId(chainId)
@@ -101,29 +63,6 @@ export const retrieveChunkEvents = async (
   }
 }
 
-export const processBlocks = async (
-  blockLogs: ethers.Log[],
-  signer: Signer,
-  provider: JsonRpcApiProvider,
-  network: number,
-  lastIndexedBlock: number,
-  count: number
-): Promise<ProcessingEvents> => {
-  try {
-    const events: any[] | BlocksEvents =
-      blockLogs && blockLogs.length > 0
-        ? await processChunkLogs(blockLogs, signer, provider, network)
-        : []
-
-    return {
-      lastBlock: lastIndexedBlock + count,
-      foundEvents: events
-    }
-  } catch (error) {
-    throw new Error(` Error processing chunk of blocks events ${error.message}`)
-  }
-}
-
 export function findEventByKey(keyToFind: string): NetworkEvent {
   for (const [key, value] of Object.entries(EVENT_HASHES)) {
     if (key === keyToFind) {
@@ -131,123 +70,6 @@ export function findEventByKey(keyToFind: string): NetworkEvent {
     }
   }
   return null
-}
-
-export const processChunkLogs = async (
-  logs: readonly ethers.Log[],
-  signer: Signer,
-  provider: JsonRpcApiProvider,
-  chainId: number
-): Promise<BlocksEvents> => {
-  const storeEvents: BlocksEvents = {}
-  INDEXER_LOGGER.logMessage(`Processing ${logs.length} logs for chainId ${chainId}`, true)
-  if (logs.length > 0) {
-    const allowedValidators = getAllowedValidators()
-    const checkMetadataValidated = allowedValidators.length > 0
-    for (const log of logs) {
-      const event = findEventByKey(log.topics[0])
-      if (event && Object.values(EVENTS).includes(event.type)) {
-        // only log & process the ones we support
-        INDEXER_LOGGER.logMessage(
-          `-- ${event.type} -- triggered for ${log.transactionHash}`,
-          true
-        )
-        if (
-          event.type === EVENTS.METADATA_CREATED ||
-          event.type === EVENTS.METADATA_UPDATED ||
-          event.type === EVENTS.METADATA_STATE
-        ) {
-          if (checkMetadataValidated) {
-            const txReceipt = await provider.getTransactionReceipt(log.transactionHash)
-            const metadataProofs = fetchEventFromTransaction(
-              txReceipt,
-              'MetadataValidated',
-              new Interface(ERC20Template.abi)
-            )
-            if (!metadataProofs) {
-              INDEXER_LOGGER.log(
-                LOG_LEVELS_STR.LEVEL_ERROR,
-                `Metadata Proof validator not allowed`,
-                true
-              )
-              continue
-            }
-            const validators = metadataProofs.map((metadataProof) =>
-              getAddress(metadataProof.args[0].toString())
-            )
-            const allowed = allowedValidators.filter(
-              (allowedValidator) => validators.indexOf(allowedValidator) !== -1
-            )
-            if (!allowed.length) {
-              INDEXER_LOGGER.log(
-                LOG_LEVELS_STR.LEVEL_ERROR,
-                `Metadata Proof validators list is empty`,
-                true
-              )
-              continue
-            }
-          }
-        }
-        if (
-          event.type === EVENTS.METADATA_CREATED ||
-          event.type === EVENTS.METADATA_UPDATED
-        ) {
-          const processor = getMetadataEventProcessor(chainId)
-          const rets = await processor.processEvent(
-            log,
-            chainId,
-            signer,
-            provider,
-            event.type
-          )
-          if (rets) storeEvents[event.type] = rets
-        } else if (event.type === EVENTS.METADATA_STATE) {
-          const processor = getMetadataStateEventProcessor(chainId)
-          storeEvents[event.type] = await processor.processEvent(log, chainId, provider)
-        } else if (event.type === EVENTS.EXCHANGE_CREATED) {
-          storeEvents[event.type] = procesExchangeCreated()
-        } else if (event.type === EVENTS.EXCHANGE_RATE_CHANGED) {
-          storeEvents[event.type] = processExchangeRateChanged()
-        } else if (event.type === EVENTS.ORDER_STARTED) {
-          INDEXER_LOGGER.logMessage(`-- ${event.type} --  getting processor`, true)
-          const processor = getOrderStartedEventProcessor(chainId)
-          INDEXER_LOGGER.logMessage(`-- ${event.type} --  getted processor`, true)
-          storeEvents[event.type] = await processor.processEvent(
-            log,
-            chainId,
-            signer,
-            provider
-          )
-          INDEXER_LOGGER.logMessage(`-- ${event.type} --  processed event`, true)
-        } else if (event.type === EVENTS.ORDER_REUSED) {
-          const processor = getOrderReusedEventProcessor(chainId)
-          storeEvents[event.type] = await processor.processEvent(
-            log,
-            chainId,
-            signer,
-            provider
-          )
-        } else if (event.type === EVENTS.TOKEN_URI_UPDATE) {
-          storeEvents[event.type] = processTokenUriUpadate()
-        }
-      }
-    }
-    return storeEvents
-  }
-
-  return {}
-}
-
-const procesExchangeCreated = (): string => {
-  return 'EXCHANGE_CREATED'
-}
-
-const processExchangeRateChanged = (): string => {
-  return 'EXCHANGE_RATE_CHANGED'
-}
-
-const processTokenUriUpadate = (): string => {
-  return 'TOKEN_URI_UPDATE'
 }
 
 export const getNFTContract = (signer: Signer, address: string): ethers.Contract => {
@@ -332,4 +154,243 @@ export function buildJobIdentifier(command: string, extra: string[]): JobStatus 
     status: CommandStatus.DELIVERED,
     hash: create256Hash(extra.join(''))
   }
+}
+
+export function findServiceIdByDatatoken(
+  ddo: VersionedDDO,
+  datatokenAddress: string
+): string {
+  for (const s of ddo.getDDOFields().services) {
+    if (s.datatokenAddress.toLowerCase() === datatokenAddress.toLowerCase()) {
+      return s.id
+    }
+  }
+  return null
+}
+
+export function doesDispenserAlreadyExist(
+  dispenserAddress: string,
+  prices: ServicePrice[]
+): [boolean, ServicePrice?] {
+  for (const price of prices) {
+    if (dispenserAddress.toLowerCase() === price.contract.toLowerCase()) {
+      return [true, price]
+    }
+  }
+  return [false, null]
+}
+
+export function doesFreAlreadyExist(
+  exchangeId: ethers.BytesLike,
+  prices: ServicePrice[]
+): [boolean, ServicePrice?] {
+  for (const price of prices) {
+    if (exchangeId === price.exchangeId) {
+      return [true, price]
+    }
+  }
+  return [false, null]
+}
+
+export async function getPricesByDt(
+  datatoken: ethers.Contract,
+  signer: Signer
+): Promise<ServicePrice[]> {
+  let dispensers = []
+  let fixedRates = []
+  let prices: ServicePrice[] = []
+  try {
+    dispensers = await datatoken.getDispensers()
+  } catch (e) {
+    INDEXER_LOGGER.error(`[GET PRICES] failure when retrieving dispensers: ${e}`)
+  }
+  try {
+    fixedRates = await datatoken.getFixedRates()
+  } catch (e) {
+    INDEXER_LOGGER.error(
+      `[GET PRICES] failure when retrieving fixed rate exchanges: ${e}`
+    )
+  }
+  if (dispensers.length === 0 && fixedRates.length === 0) {
+    prices = []
+  } else {
+    if (dispensers) {
+      for (const dispenser of dispensers) {
+        const dispenserContract = new ethers.Contract(dispenser, Dispenser.abi, signer)
+        try {
+          const [isActive, ,] = await dispenserContract.status(
+            await datatoken.getAddress()
+          )
+          if (isActive === true) {
+            prices.push({
+              type: 'dispenser',
+              price: '0',
+              contract: dispenser,
+              token: await datatoken.getAddress()
+            })
+          }
+        } catch (e) {
+          INDEXER_LOGGER.error(
+            `[GET PRICES] failure when retrieving dispenser status from contracts: ${e}`
+          )
+        }
+      }
+    }
+
+    if (fixedRates) {
+      for (const fixedRate of fixedRates) {
+        const fixedRateContract = new ethers.Contract(
+          fixedRate[0],
+          FixedRateExchange.abi,
+          signer
+        )
+        try {
+          const [, , , baseTokenAddress, , pricing, isActive, , , , , ,] =
+            await fixedRateContract.getExchange(fixedRate[1])
+          if (isActive === true) {
+            prices.push({
+              type: 'fixedrate',
+              price: ethers.formatEther(pricing),
+              token: baseTokenAddress,
+              contract: fixedRate[0],
+              exchangeId: fixedRate[1]
+            })
+          }
+        } catch (e) {
+          INDEXER_LOGGER.error(
+            `[GET PRICES] failure when retrieving exchange status from contracts: ${e}`
+          )
+        }
+      }
+    }
+  }
+  return prices
+}
+
+export async function getPricingStatsForDddo(
+  ddo: VersionedDDO,
+  signer: Signer
+): Promise<VersionedDDO> {
+  const ddoData = ddo.getDDOData()
+
+  if (!ddoData.indexedMetadata) {
+    ddoData.indexedMetadata = {}
+  }
+
+  if (!Array.isArray(ddoData.indexedMetadata?.stats)) {
+    ddoData.indexedMetadata.stats = []
+  }
+
+  const stats = ddoData.indexedMetadata?.stats || []
+
+  for (const service of ddo.getDDOFields().services) {
+    const datatoken = new ethers.Contract(
+      service.datatokenAddress,
+      ERC20Template.abi,
+      signer
+    )
+    let dispensers = []
+    let fixedRates = []
+    const prices: ServicePrice[] = []
+    try {
+      dispensers = await datatoken.getDispensers()
+    } catch (e) {
+      INDEXER_LOGGER.error(`Contract call fails when retrieving dispensers: ${e}`)
+    }
+    try {
+      fixedRates = await datatoken.getFixedRates()
+    } catch (e) {
+      INDEXER_LOGGER.error(
+        `Contract call fails when retrieving fixed rate exchanges: ${e}`
+      )
+    }
+    if (dispensers.length === 0 && fixedRates.length === 0) {
+      stats.push({
+        datatokenAddress: service.datatokenAddress,
+        name: await datatoken.name(),
+        symbol: await datatoken.symbol(),
+        serviceId: service.id,
+        orders: 0,
+        prices: []
+      })
+    } else {
+      if (dispensers) {
+        for (const dispenser of dispensers) {
+          const dispenserContract = new ethers.Contract(dispenser, Dispenser.abi, signer)
+          try {
+            const [isActive, ,] = await dispenserContract.status(
+              await datatoken.getAddress()
+            )
+            if (isActive === true) {
+              prices.push({
+                type: 'dispenser',
+                price: '0',
+                contract: dispenser,
+                token: service.datatokenAddress
+              })
+              stats.push({
+                datatokenAddress: service.datatokenAddress,
+                name: await datatoken.name(),
+                symbol: await datatoken.symbol(),
+                serviceId: service.id,
+                orders: 0,
+                prices
+              })
+            }
+          } catch (e) {
+            INDEXER_LOGGER.error(
+              `[GET PRICES] failure when retrieving dispenser status from contracts: ${e}`
+            )
+          }
+        }
+      }
+    }
+
+    if (fixedRates) {
+      for (const fixedRate of fixedRates) {
+        const fixedRateContract = new ethers.Contract(
+          fixedRate[0],
+          FixedRateExchange.abi,
+          signer
+        )
+        try {
+          const [, , , baseTokenAddress, , pricing, isActive, , , , , ,] =
+            await fixedRateContract.getExchange(fixedRate[1])
+          if (isActive === true) {
+            prices.push({
+              type: 'fixedrate',
+              price: ethers.formatEther(pricing),
+              token: baseTokenAddress,
+              contract: fixedRate[0],
+              exchangeId: fixedRate[1]
+            })
+            stats.push({
+              datatokenAddress: service.datatokenAddress,
+              name: await datatoken.name(),
+              symbol: await datatoken.symbol(),
+              serviceId: service.id,
+              orders: 0, // just created
+              prices
+            })
+          }
+        } catch (e) {
+          INDEXER_LOGGER.error(
+            `[GET PRICES] failure when retrieving exchange status from contracts: ${e}`
+          )
+        }
+      }
+    }
+  }
+
+  ddo.updateFields({ indexedMetadata: { stats } })
+  return ddo
+}
+
+export function getDid(nftAddress: string, chainId: number): string {
+  return (
+    'did:op:' +
+    createHash('sha256')
+      .update(getAddress(nftAddress) + chainId.toString(10))
+      .digest('hex')
+  )
 }

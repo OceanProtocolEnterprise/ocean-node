@@ -2,29 +2,6 @@ import { ethers } from 'ethers'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { create256Hash } from '../../../utils/crypt.js'
 import { getProviderWallet } from './feesHandler.js'
-// @ts-ignore
-import { validateDDO } from '@oceanprotocol/ddo-js'
-
-export function validateObject(
-  obj: Record<string, any>
-): Promise<[boolean, Record<string, string[]>]> {
-  return validateDDO(obj)
-}
-
-export function isRemoteDDO(ddo: any): boolean {
-  let keys
-  try {
-    keys = Object.keys(ddo)
-  } catch (e) {
-    return false
-  }
-
-  if (keys.length === 1 && keys[0] === 'remote') {
-    return true
-  }
-
-  return false
-}
 
 export async function getValidationSignature(ddo: string): Promise<any> {
   try {
@@ -46,4 +23,19 @@ export async function getValidationSignature(ddo: string): Promise<any> {
     CORE_LOGGER.logMessage(`Validation signature error: ${error}`, true)
     return { hash: '', publicKey: '', r: '', s: '', v: '' }
   }
+}
+
+export function isRemoteDDO(ddo: any): boolean {
+  let keys
+  try {
+    keys = Object.keys(ddo)
+  } catch (e) {
+    return false
+  }
+
+  if (keys.length === 1 && keys[0] === 'remote') {
+    return true
+  }
+
+  return false
 }

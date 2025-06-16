@@ -1,5 +1,5 @@
 import { OceanNode } from '../../../OceanNode.js'
-import { AlgoChecksums } from '../../../@types/C2D.js'
+import { AlgoChecksums } from '../../../@types/C2D/C2D.js'
 import {
   ArweaveFileObject,
   IpfsFileObject,
@@ -12,8 +12,7 @@ import { fetchFileMetadata } from '../../../utils/asset.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { createHash } from 'crypto'
 import { FindDdoHandler } from '../../core/handler/ddoHandler.js'
-import { DDOManager } from '@oceanprotocol/ddo-js'
-import { DDO } from '../../../@types/DDO/DDO.js'
+import { DDOManager, VersionedDDO } from '@oceanprotocol/ddo-js'
 
 export async function getAlgoChecksums(
   algoDID: string,
@@ -47,6 +46,7 @@ export async function getAlgoChecksums(
       const { contentChecksum } = await fetchFileMetadata(url, 'get', false)
       checksums.files = checksums.files.concat(contentChecksum)
     }
+
     const ddoInstance = DDOManager.getDDOClass(algoDDO)
     const { metadata } = ddoInstance.getDDOFields()
     checksums.container = createHash('sha256')
@@ -67,12 +67,11 @@ export async function validateAlgoForDataset(
     files: string
     container: string
   },
-  datasetDDO: DDO | Record<string, any>,
+  ddoInstance: VersionedDDO,
   datasetServiceId: string,
   oceanNode: OceanNode
 ) {
   try {
-    const ddoInstance = DDOManager.getDDOClass(datasetDDO)
     const { services } = ddoInstance.getDDOFields() as any
     const datasetService = services.find(
       (service: any) => service.id === datasetServiceId
@@ -88,8 +87,10 @@ export async function validateAlgoForDataset(
     if (algoDID) {
       if (
         // if not set allow them all
-        !compute.publisherTrustedAlgorithms &&
-        !compute.publisherTrustedAlgorithmPublishers
+        (!Array.isArray(compute.publisherTrustedAlgorithms) ||
+          compute.publisherTrustedAlgorithms.length === 0) &&
+        (!Array.isArray(compute.publisherTrustedAlgorithmPublishers) ||
+          compute.publisherTrustedAlgorithmPublishers.length === 0)
       ) {
         return true
       }

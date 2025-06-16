@@ -2,11 +2,10 @@ import { OceanP2P, CACHE_TTL } from '../../P2P/index.js'
 import { FindDDOCommand } from '../../../@types/commands.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { FindDDOResponse } from '../../../@types/index.js'
-import { Service } from '../../../@types/DDO/Service.js'
+import { Service } from '@oceanprotocol/ddo-js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { OceanNode } from '../../../OceanNode.js'
 import { getConfiguration, hasP2PInterface } from '../../../utils/config.js'
-import { DDOManager } from '@oceanprotocol/ddo-js'
 
 /**
  * Check if the specified ddo is cached and if the cached version is recent enough
@@ -61,25 +60,22 @@ export async function findDDOLocally(
 ): Promise<FindDDOResponse> | undefined {
   const ddo = await node.getDatabase().ddo.retrieve(id)
   if (ddo) {
-    const ddoInstance = DDOManager.getDDOClass(ddo)
-    const { metadata } = ddoInstance.getDDOFields()
-    const { event } = ddoInstance.getAssetFields()
     // node has ddo
     const p2pNode: OceanP2P = node.getP2PNode()
     if (!p2pNode || !hasP2PInterface) {
       const peerId: string = await (await getConfiguration()).keys.peerId.toString()
       return {
         id: ddo.id,
-        lastUpdateTx: event.txid,
-        lastUpdateTime: metadata.updated,
+        lastUpdateTx: ddo.event.tx,
+        lastUpdateTime: ddo.metadata.updated,
         provider: peerId
       }
     }
 
     const ddoInfo: FindDDOResponse = {
       id: ddo.id,
-      lastUpdateTx: event.txid,
-      lastUpdateTime: metadata.updated,
+      lastUpdateTx: ddo.event.tx,
+      lastUpdateTime: ddo.metadata.updated,
       provider: p2pNode.getPeerId()
     }
     // not in the cache yet

@@ -39,7 +39,7 @@ import {
   getOceanArtifactsAdresses,
   getOceanArtifactsAdressesByChainId
 } from '../../utils/address.js'
-import { publishAsset, orderAsset, updateAssetMetadata } from '../utils/assets.js'
+import { publishAsset, orderAsset } from '../utils/assets.js'
 import { downloadAsset } from '../data/assets.js'
 import { genericDDO } from '../data/ddo.js'
 import { homedir } from 'os'
@@ -56,6 +56,7 @@ describe('Should run a complete node flow.', () => {
   let publishedDataset: any
   let actualDDO: any
   let indexer: OceanIndexer
+  let anotherConsumer: ethers.Wallet
 
   const mockSupportedNetworks: RPCS = getMockSupportedNetworks()
   const serviceId = '0'
@@ -88,7 +89,7 @@ describe('Should run a complete node flow.', () => {
 
     config = await getConfiguration(true) // Force reload the configuration
     database = await new Database(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(database)
+    oceanNode = await OceanNode.getInstance(config, database)
     indexer = new OceanIndexer(database, config.indexingNetworks)
     oceanNode.addIndexer(indexer)
 
@@ -98,6 +99,10 @@ describe('Should run a complete node flow.', () => {
     }
 
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
+    anotherConsumer = new ethers.Wallet(
+      ENVIRONMENT_VARIABLES.NODE2_PRIVATE_KEY.value,
+      provider
+    )
 
     publisherAccount = (await provider.getSigner(0)) as Signer
     consumerAccount = (await provider.getSigner(1)) as Signer
@@ -240,7 +245,7 @@ describe('Should run a complete node flow.', () => {
       const wallet = new ethers.Wallet(
         '0xef4b441145c1d0f3b4bc6d61d29f5c6e502359481152f869247c7a4244d45209'
       )
-      const nonce = Math.floor(Date.now() / 1000).toString()
+      const nonce = Date.now().toString()
       const message = String(publishedDataset.ddo.id + nonce)
       const consumerMessage = ethers.solidityPackedKeccak256(
         ['bytes'],
@@ -294,7 +299,7 @@ describe('Should run a complete node flow.', () => {
         serviceId,
         transferTxId: orderTxId,
         nonce: Date.now().toString(),
-        consumerAddress: '0xBE5449a6A97aD46c8558A3356267Ee5D2731ab57',
+        consumerAddress: await anotherConsumer.getAddress(),
         signature: '0xBE5449a6',
         command: PROTOCOL_COMMANDS.DOWNLOAD
       }
@@ -310,84 +315,6 @@ describe('Should run a complete node flow.', () => {
 
     await doCheck()
   })
-
-  it('should update state of the service to 1 - end of life', async () => {
-    const updatedDDO = {
-      ...actualDDO,
-      services: [
-        {
-          ...actualDDO.services[0],
-          state: 1
-        }
-      ]
-    }
-    await updateAssetMetadata(actualDDO.nftAddress, updatedDDO, publisherAccount)
-    await waitToIndex(updatedDDO.id, EVENTS.METADATA_UPDATED, DEFAULT_TEST_TIMEOUT, true)
-  })
-  it('should fetch the updated ddo', async () => {
-    const getDDOTask = {
-      command: PROTOCOL_COMMANDS.GET_DDO,
-      id: actualDDO.id
-    }
-    const response = await new GetDdoHandler(oceanNode).handle(getDDOTask)
-    actualDDO = await streamToObject(response.stream as Readable)
-
-    assert(actualDDO.services[0], 'Service not present')
-    assert(actualDDO.services[0].state === 1, 'Service state not updated to 1')
-  })
-  it('should start an order', async function () {
-    const orderTxReceipt = await orderAsset(
-      actualDDO,
-      0,
-      consumerAccount,
-      await consumerAccount.getAddress(),
-      publisherAccount,
-      oceanNode
-    )
-    assert(orderTxReceipt, 'order transaction failed')
-    orderTxId = orderTxReceipt.hash
-    assert(orderTxId, 'transaction id not found')
-  })
-  it('should not allow to download end of life service', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
-
-    const doCheck = async () => {
-      const wallet = new ethers.Wallet(
-        '0xef4b441145c1d0f3b4bc6d61d29f5c6e502359481152f869247c7a4244d45209'
-      )
-      const nonce = Date.now().toString()
-      const message = String(actualDDO.id + nonce)
-      const consumerMessage = ethers.solidityPackedKeccak256(
-        ['bytes'],
-        [ethers.hexlify(ethers.toUtf8Bytes(message))]
-      )
-      const messageHashBytes = ethers.toBeArray(consumerMessage)
-      const signature = await wallet.signMessage(messageHashBytes)
-
-      const downloadTask = {
-        fileIndex: 0,
-        documentId: actualDDO.id,
-        serviceId: actualDDO.services[0].id,
-        transferTxId: orderTxId,
-        nonce,
-        consumerAddress,
-        signature,
-        command: PROTOCOL_COMMANDS.DOWNLOAD
-      }
-      const response = await new DownloadHandler(oceanNode).handle(downloadTask)
-
-      assert(response)
-      assert(response.stream === null, 'stream is present')
-      assert(response.status.httpStatus === 500, 'http status not 500')
-    }
-
-    setTimeout(() => {
-      expect(expectedTimeoutFailure(this.test.title)).to.be.equal(true)
-    }, DEFAULT_TEST_TIMEOUT * 3)
-
-    await doCheck()
-  })
-
   after(async () => {
     await tearDownEnvironment(previousConfiguration)
     indexer.stopAllThreads()

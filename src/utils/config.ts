@@ -2,19 +2,25 @@ import type {
   DenyList,
   OceanNodeConfig,
   OceanNodeKeys,
-  OceanNodeDockerConfig
+  AccessListContract
 } from '../@types/OceanNode'
-import type { C2DClusterInfo } from '../@types/C2D.js'
-import { C2DClusterType } from '../@types/C2D.js'
+import { dhtFilterMethod } from '../@types/OceanNode.js'
+import type { C2DClusterInfo, C2DDockerConfig } from '../@types/C2D/C2D.js'
+import { C2DClusterType } from '../@types/C2D/C2D.js'
 import { createFromPrivKey } from '@libp2p/peer-id-factory'
 import { keys } from '@libp2p/crypto'
 import {
-  DEFAULT_RATE_LIMIT_PER_SECOND,
+  computeCodebaseHash,
+  DEFAULT_RATE_LIMIT_PER_MINUTE,
   ENVIRONMENT_VARIABLES,
   EnvVariable,
   hexStringToByteArray
 } from '../utils/index.js'
-import { defaultBootstrapAddresses, knownUnsafeURLs } from '../utils/constants.js'
+import {
+  DEFAULT_MAX_CONNECTIONS_PER_MINUTE,
+  defaultBootstrapAddresses,
+  knownUnsafeURLs
+} from '../utils/constants.js'
 
 import { LOG_LEVELS_STR, GENERIC_EMOJIS, getLoggerLevelEmoji } from './logging/Logger.js'
 import { RPCS } from '../@types/blockchain'
@@ -27,6 +33,8 @@ import {
 import { CONFIG_LOGGER } from './logging/common.js'
 import { create256Hash } from './crypt.js'
 import { isDefined } from './util.js'
+import { fileURLToPath } from 'url'
+import path from 'path'
 
 // usefull for lazy loading and avoid boilerplate on other places
 let previousConfiguration: OceanNodeConfig = null
@@ -54,7 +62,10 @@ export async function getPeerIdFromPrivateKey(
 
 function getEnvValue(env: any, defaultValue: any) {
   /* Gets value for an ENV var, returning defaultValue if not defined */
-  return env != null ? (env as string) : defaultValue
+  if (env === null || env === undefined || (env as string).length === 0) {
+    return defaultValue
+  }
+  return env as string
 }
 
 function getIntEnvValue(env: any, defaultValue: number) {
@@ -103,9 +114,12 @@ function getSupportedChains(): RPCS | null {
 
 function getIndexingNetworks(supportedNetworks: RPCS): RPCS | null {
   const indexerNetworksEnv = process.env.INDEXER_NETWORKS
+
+  const defaultErrorMsg =
+    'Missing or invalid "INDEXER_NETWORKS" variable. Running Indexer with all supported networks defined in RPCS env variable...'
   if (!indexerNetworksEnv) {
     CONFIG_LOGGER.logMessageWithEmoji(
-      'INDEXER_NETWORKS is not defined, running Indexer with all supported networks defined in RPCS env variable ...',
+      defaultErrorMsg,
       true,
       GENERIC_EMOJIS.EMOJI_CHECK_MARK,
       LOG_LEVELS_STR.LEVEL_INFO
@@ -115,9 +129,10 @@ function getIndexingNetworks(supportedNetworks: RPCS): RPCS | null {
   try {
     const indexerNetworks: number[] = JSON.parse(indexerNetworksEnv)
 
+    // env var exists but is wrong, so it does not index anything, but we still log the error
     if (indexerNetworks.length === 0) {
       CONFIG_LOGGER.logMessageWithEmoji(
-        'INDEXER_NETWORKS is an empty array, Running node without the Indexer component...',
+        '"INDEXER_NETWORKS" is an empty array, Running node without the Indexer component...',
         true,
         GENERIC_EMOJIS.EMOJI_CROSS_MARK,
         LOG_LEVELS_STR.LEVEL_ERROR
@@ -133,16 +148,53 @@ function getIndexingNetworks(supportedNetworks: RPCS): RPCS | null {
       return acc
     }, {})
 
+    // if variables are not aligned we might end up not running indexer at all, so at least we should log a warning
+    if (Object.keys(filteredNetworks).length === 0) {
+      CONFIG_LOGGER.logMessageWithEmoji(
+        `"RPCS" chains: "${Object.keys(
+          supportedNetworks
+        )}" and "INDEXER_NETWORKS" chains: "${indexerNetworks}" mismatch! Running node without the Indexer component...`,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+    }
     return filteredNetworks
   } catch (e) {
     CONFIG_LOGGER.logMessageWithEmoji(
-      'Missing or Invalid INDEXER_NETWORKS env variable format,running Indexer with all supported networks defined in RPCS env variable ...',
+      defaultErrorMsg,
       true,
       GENERIC_EMOJIS.EMOJI_CROSS_MARK,
       LOG_LEVELS_STR.LEVEL_ERROR
     )
     return supportedNetworks
   }
+}
+// valid publishers (what we will index)
+function getAuthorizedPublishers(isStartup?: boolean): string[] {
+  if (existsEnvironmentVariable(ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS, isStartup)) {
+    return readAddressListFromEnvVariable(
+      ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS,
+      isStartup
+    )
+  }
+  return []
+}
+
+function getAuthorizedPublishersList(isStartup?: boolean): AccessListContract | null {
+  if (
+    existsEnvironmentVariable(ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS_LIST, isStartup)
+  ) {
+    try {
+      const publisherAccessList = JSON.parse(
+        ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS_LIST.value
+      ) as AccessListContract
+      return publisherAccessList
+    } catch (err) {
+      CONFIG_LOGGER.error(err.message)
+    }
+  }
+  return null
 }
 // valid decrypthers
 function getAuthorizedDecrypters(isStartup?: boolean): string[] {
@@ -151,6 +203,22 @@ function getAuthorizedDecrypters(isStartup?: boolean): string[] {
     isStartup
   )
 }
+
+function getAuthorizedDecryptersList(isStartup?: boolean): AccessListContract | null {
+  if (
+    existsEnvironmentVariable(ENVIRONMENT_VARIABLES.AUTHORIZED_DECRYPTERS_LIST, isStartup)
+  ) {
+    try {
+      const decryptersAccessList = JSON.parse(
+        ENVIRONMENT_VARIABLES.AUTHORIZED_DECRYPTERS_LIST.value
+      ) as AccessListContract
+      return decryptersAccessList
+    } catch (err) {
+      CONFIG_LOGGER.error(err.message)
+    }
+  }
+  return null
+}
 // allowed validators
 export function getAllowedValidators(isStartup?: boolean): string[] {
   return readAddressListFromEnvVariable(
@@ -158,9 +226,39 @@ export function getAllowedValidators(isStartup?: boolean): string[] {
     isStartup
   )
 }
+
+function getAllowedValidatorsList(isStartup?: boolean): AccessListContract | null {
+  if (
+    existsEnvironmentVariable(ENVIRONMENT_VARIABLES.ALLOWED_VALIDATORS_LIST, isStartup)
+  ) {
+    try {
+      const publisherAccessList = JSON.parse(
+        ENVIRONMENT_VARIABLES.ALLOWED_VALIDATORS_LIST.value
+      ) as AccessListContract
+      return publisherAccessList
+    } catch (err) {
+      CONFIG_LOGGER.error(err.message)
+    }
+  }
+  return null
+}
 // valid node admins
-export function getAllowedAdmins(isStartup?: boolean): string[] {
+function getAllowedAdmins(isStartup?: boolean): string[] {
   return readAddressListFromEnvVariable(ENVIRONMENT_VARIABLES.ALLOWED_ADMINS, isStartup)
+}
+
+function getAllowedAdminsList(isStartup?: boolean): AccessListContract | null {
+  if (existsEnvironmentVariable(ENVIRONMENT_VARIABLES.ALLOWED_ADMINS_LIST, isStartup)) {
+    try {
+      const adminAccessList = JSON.parse(
+        ENVIRONMENT_VARIABLES.ALLOWED_ADMINS_LIST.value
+      ) as AccessListContract
+      return adminAccessList
+    } catch (err) {
+      CONFIG_LOGGER.error(err.message)
+    }
+  }
+  return null
 }
 
 // whenever we want to read an array of strings from an env variable, use this common function
@@ -306,18 +404,6 @@ function getOceanNodeFees(supportedNetworks: RPCS, isStartup?: boolean): FeeStra
   }
 }
 
-function getC2DDockerConfig(isStartup?: boolean): OceanNodeDockerConfig {
-  const config = {
-    socketPath: getEnvValue(process.env.DOCKER_SOCKET_PATH, null),
-    protocol: getEnvValue(process.env.DOCKER_PROTOCOL, null),
-    host: getEnvValue(process.env.DOCKER_HOST, null),
-    port: getIntEnvValue(process.env.DOCKER_PORT, 0),
-    caPath: getEnvValue(process.env.DOCKER_CA_PATH, null),
-    certPath: getEnvValue(process.env.DOCKER_CERT_PATH, null),
-    keyPath: getEnvValue(process.env.DOCKER_KEY_PATH, null)
-  }
-  return config
-}
 // get C2D environments
 function getC2DClusterEnvironment(isStartup?: boolean): C2DClusterInfo[] {
   const clusters: C2DClusterInfo[] = []
@@ -344,8 +430,101 @@ function getC2DClusterEnvironment(isStartup?: boolean): C2DClusterInfo[] {
       )
     }
   }
+  const dockerC2Ds = getDockerComputeEnvironments(isStartup)
+  for (const dockerC2d of dockerC2Ds) {
+    if (dockerC2d.socketPath || dockerC2d.host) {
+      const hash = create256Hash(JSON.stringify(dockerC2d))
+      // get env values
+      clusters.push({
+        connection: dockerC2d,
+        hash,
+        type: C2DClusterType.DOCKER,
+        tempFolder: './c2d_storage/' + hash
+      })
+    }
+  }
 
   return clusters
+}
+
+/**
+ * Reads a partial ComputeEnvironment setting (array of)
+ * @param isStartup for logging purposes
+ * @returns 
+ * 
+ * example:
+ * {
+    "cpuNumber": 2,
+    "ramGB": 4,
+    "diskGB": 10,
+    "desc": "2Cpu,2gbRam - price 1 OCEAN/minute, max 1 hour",
+    "maxJobs": 10,
+    "storageExpiry": 36000,
+    "maxJobDuration": 3600,
+    "chainId": 1,
+    "feeToken": "0x967da4048cD07aB37855c090aAF366e4ce1b9F48",
+    "priceMin": 1
+  },
+ */
+function getDockerComputeEnvironments(isStartup?: boolean): C2DDockerConfig[] {
+  const dockerC2Ds: C2DDockerConfig[] = []
+  if (
+    existsEnvironmentVariable(
+      ENVIRONMENT_VARIABLES.DOCKER_COMPUTE_ENVIRONMENTS,
+      isStartup
+    )
+  ) {
+    try {
+      const configs: C2DDockerConfig[] = JSON.parse(
+        process.env.DOCKER_COMPUTE_ENVIRONMENTS
+      ) as C2DDockerConfig[]
+
+      for (const config of configs) {
+        let errors = ''
+        if (!isDefined(config.fees)) {
+          errors += ' There is no fees configuration!'
+        }
+
+        if (config.storageExpiry < config.maxJobDuration) {
+          errors += ' "storageExpiry" should be greater than "maxJobDuration"! '
+        }
+        // for docker there is no way of getting storage space
+        let foundDisk = false
+        if ('resources' in config) {
+          for (const resource of config.resources) {
+            if (resource.id === 'disk' && resource.total) foundDisk = true
+          }
+        }
+        if (!foundDisk) {
+          errors += ' There is no "disk" resource configured.This is mandatory '
+        }
+        if (errors.length > 1) {
+          CONFIG_LOGGER.error(
+            'Please check your compute env settings: ' +
+              errors +
+              'for env: ' +
+              JSON.stringify(config)
+          )
+        } else {
+          dockerC2Ds.push(config)
+        }
+      }
+      return dockerC2Ds
+    } catch (error) {
+      CONFIG_LOGGER.logMessageWithEmoji(
+        `Invalid "${ENVIRONMENT_VARIABLES.DOCKER_COMPUTE_ENVIRONMENTS.name}" env variable => ${process.env.DOCKER_COMPUTE_ENVIRONMENTS}...`,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      console.log(error)
+    }
+  } else if (isStartup) {
+    CONFIG_LOGGER.warn(
+      `No options for ${ENVIRONMENT_VARIABLES.DOCKER_COMPUTE_ENVIRONMENTS.name} were specified.`
+    )
+  }
+  return []
 }
 
 // connect interfaces (p2p or/and http)
@@ -412,21 +591,43 @@ function logMissingVariableWithDefault(envVariable: EnvVariable) {
     true
   )
 }
-// have a rate limit for handler calls
+// have a rate limit for handler calls (per IP address or peer id)
 function getRateLimit(isStartup: boolean = false) {
-  if (!existsEnvironmentVariable(ENVIRONMENT_VARIABLES.MAX_REQ_PER_SECOND)) {
+  if (!existsEnvironmentVariable(ENVIRONMENT_VARIABLES.MAX_REQ_PER_MINUTE)) {
     if (isStartup) {
-      logMissingVariableWithDefault(ENVIRONMENT_VARIABLES.MAX_REQ_PER_SECOND)
+      logMissingVariableWithDefault(ENVIRONMENT_VARIABLES.MAX_REQ_PER_MINUTE)
     }
-    return DEFAULT_RATE_LIMIT_PER_SECOND
+    return DEFAULT_RATE_LIMIT_PER_MINUTE
   } else {
     try {
-      return getIntEnvValue(process.env.MAX_REQ_PER_SECOND, DEFAULT_RATE_LIMIT_PER_SECOND)
+      return getIntEnvValue(process.env.MAX_REQ_PER_MINUTE, DEFAULT_RATE_LIMIT_PER_MINUTE)
     } catch (err) {
       CONFIG_LOGGER.error(
-        `Invalid "${ENVIRONMENT_VARIABLES.MAX_REQ_PER_SECOND.name}" env variable...`
+        `Invalid "${ENVIRONMENT_VARIABLES.MAX_REQ_PER_MINUTE.name}" env variable...`
       )
-      return DEFAULT_RATE_LIMIT_PER_SECOND
+      return DEFAULT_RATE_LIMIT_PER_MINUTE
+    }
+  }
+}
+
+// Global requests limit
+function getConnectionsLimit(isStartup: boolean = false) {
+  if (!existsEnvironmentVariable(ENVIRONMENT_VARIABLES.MAX_CONNECTIONS_PER_MINUTE)) {
+    if (isStartup) {
+      logMissingVariableWithDefault(ENVIRONMENT_VARIABLES.MAX_CONNECTIONS_PER_MINUTE)
+    }
+    return DEFAULT_RATE_LIMIT_PER_MINUTE
+  } else {
+    try {
+      return getIntEnvValue(
+        process.env.MAX_CONNECTIONS_PER_MINUTE,
+        DEFAULT_MAX_CONNECTIONS_PER_MINUTE
+      )
+    } catch (err) {
+      CONFIG_LOGGER.error(
+        `Invalid "${ENVIRONMENT_VARIABLES.MAX_CONNECTIONS_PER_MINUTE.name}" env variable...`
+      )
+      return DEFAULT_MAX_CONNECTIONS_PER_MINUTE
     }
   }
 }
@@ -461,6 +662,12 @@ export async function getConfiguration(
   if (!previousConfiguration || forceReload) {
     previousConfiguration = await getEnvConfig(isStartup)
   }
+  if (!previousConfiguration.codeHash) {
+    const __filename = fileURLToPath(import.meta.url)
+    const __dirname = path.dirname(__filename.replace('utils/', ''))
+    previousConfiguration.codeHash = await computeCodebaseHash(__dirname)
+  }
+
   return previousConfiguration
 }
 
@@ -499,9 +706,25 @@ async function getEnvConfig(isStartup?: boolean): Promise<OceanNodeConfig> {
   const interfaces = getNodeInterfaces(isStartup)
   let bootstrapTtl = getIntEnvValue(process.env.P2P_BOOTSTRAP_TTL, 120000)
   if (bootstrapTtl === 0) bootstrapTtl = Infinity
+  let dhtFilterOption
+  switch (getIntEnvValue(process.env.P2P_DHT_FILTER, 0)) {
+    case 1:
+      dhtFilterOption = dhtFilterMethod.filterPrivate
+      break
+    case 2:
+      dhtFilterOption = dhtFilterMethod.filterPublic
+      break
+    default:
+      dhtFilterOption = dhtFilterMethod.filterNone
+  }
+
   const config: OceanNodeConfig = {
     authorizedDecrypters: getAuthorizedDecrypters(isStartup),
+    authorizedDecryptersList: getAuthorizedDecryptersList(isStartup),
     allowedValidators: getAllowedValidators(isStartup),
+    allowedValidatorsList: getAllowedValidatorsList(isStartup),
+    authorizedPublishers: getAuthorizedPublishers(isStartup),
+    authorizedPublishersList: getAuthorizedPublishersList(isStartup),
     keys,
     // Only enable indexer if we have a DB_URL and supportedNetworks
     hasIndexer: !!(!!getEnvValue(process.env.DB_URL, '') && !!indexingNetworks),
@@ -535,7 +758,7 @@ async function getEnvConfig(isStartup?: boolean): Promise<OceanNodeConfig> {
       ),
       dhtMaxInboundStreams: getIntEnvValue(process.env.P2P_dhtMaxInboundStreams, 500),
       dhtMaxOutboundStreams: getIntEnvValue(process.env.P2P_dhtMaxOutboundStreams, 500),
-      enableDHTServer: getBoolEnvValue(process.env.P2P_ENABLE_DHT_SERVER, false),
+      dhtFilter: dhtFilterOption,
       mDNSInterval: getIntEnvValue(process.env.P2P_mDNSInterval, 20e3), // 20 seconds
       connectionsMaxParallelDials: getIntEnvValue(
         process.env.P2P_connectionsMaxParallelDials,
@@ -577,9 +800,12 @@ async function getEnvConfig(isStartup?: boolean): Promise<OceanNodeConfig> {
       ),
       autoDialConcurrency: getIntEnvValue(process.env.P2P_AUTODIALCONCURRENCY, 5),
       maxPeerAddrsToDial: getIntEnvValue(process.env.P2P_MAXPEERADDRSTODIAL, 5),
-      autoDialInterval: getIntEnvValue(process.env.P2P_AUTODIALINTERVAL, 5000)
+      autoDialInterval: getIntEnvValue(process.env.P2P_AUTODIALINTERVAL, 5000),
+      enableNetworkStats: getBoolEnvValue('P2P_ENABLE_NETWORK_STATS', false)
     },
-    hasDashboard: process.env.DASHBOARD !== 'false',
+    // keep this for backwards compatibility for now
+    hasControlPanel:
+      process.env.CONTROL_PANEL !== 'false' || process.env.DASHBOARD !== 'false',
     httpPort: getIntEnvValue(process.env.HTTP_API_PORT, 8000),
     dbConfig: {
       url: getEnvValue(process.env.DB_URL, ''),
@@ -591,18 +817,22 @@ async function getEnvConfig(isStartup?: boolean): Promise<OceanNodeConfig> {
     indexingNetworks,
     feeStrategy: getOceanNodeFees(supportedNetworks, isStartup),
     c2dClusters: getC2DClusterEnvironment(isStartup),
-    dockerConfig: getC2DDockerConfig(isStartup),
     c2dNodeUri: getEnvValue(process.env.C2D_NODE_URI, ''),
     accountPurgatoryUrl: getEnvValue(process.env.ACCOUNT_PURGATORY_URL, ''),
     assetPurgatoryUrl: getEnvValue(process.env.ASSET_PURGATORY_URL, ''),
     allowedAdmins: getAllowedAdmins(isStartup),
+    allowedAdminsList: getAllowedAdminsList(isStartup),
     rateLimit: getRateLimit(isStartup),
+    maxConnections: getConnectionsLimit(isStartup),
     denyList: getDenyList(isStartup),
     unsafeURLs: readListFromEnvVariable(
       ENVIRONMENT_VARIABLES.UNSAFE_URLS,
       isStartup,
       knownUnsafeURLs
-    )
+    ),
+    isBootstrap: getBoolEnvValue('IS_BOOTSTRAP', false),
+    claimDurationTimeout: getIntEnvValue(process.env.ESCROW_CLAIM_TIMEOUT, 600),
+    validateUnsignedDDO: getBoolEnvValue('VALIDATE_UNSIGNED_DDO', true)
   }
 
   if (!previousConfiguration) {
@@ -622,12 +852,14 @@ function configChanged(previous: OceanNodeConfig, current: OceanNodeConfig): boo
 // useful for debugging purposes
 export async function printCurrentConfig() {
   const conf = await getConfiguration(true)
+  conf.keys.privateKey = '[*** HIDDEN CONTENT ***]' // hide private key
   console.log(JSON.stringify(conf, null, 4))
 }
 
 // P2P routes related
 export const hasP2PInterface = (await (await getConfiguration())?.hasP2P) || false
 
+// is there a policy server defined?
 export function isPolicyServerConfigured(): boolean {
   return isDefined(process.env.POLICY_SERVER_URL)
 }

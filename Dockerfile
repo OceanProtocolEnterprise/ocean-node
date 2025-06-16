@@ -4,7 +4,7 @@ COPY .nvmrc /usr/src/app/
 RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 ENV NVM_DIR /usr/local/nvm
 RUN mkdir $NVM_DIR
-ENV NODE_VERSION=v20.16.0
+ENV NODE_VERSION=v20.19.0
 # Install nvm with node and npm
 RUN curl https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh | bash \
     && source $NVM_DIR/nvm.sh \
@@ -27,8 +27,8 @@ COPY . /usr/src/app
 WORKDIR /usr/src/app/
 COPY --from=builder /usr/src/app/node_modules/ /usr/src/app/node_modules/
 RUN npm run build
-# Remove the dashboard folder to reduce the image size and avoid shipping development files
-RUN rm -rf dashboard
+# Remove the controlpanel folder to reduce the image size and avoid shipping development files
+RUN rm -rf controlpanel
 ENV P2P_ipV4BindTcpPort=9000
 EXPOSE 9000
 ENV P2P_ipV4BindWsPort=9001
