@@ -196,7 +196,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           const signer = blockchain.getSigner()
           // let's see if we can access this asset
           // check if oasis evm or similar
-          const confidentialEVM = isConfidentialChainDDO(BigInt(ddo.chainId), service)
+          const confidentialEVM = isConfidentialChainDDO(BigInt(ddoChainId), service)
           let canDecrypt = false
           try {
             if (!confidentialEVM) {
