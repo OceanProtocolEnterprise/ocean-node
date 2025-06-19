@@ -5,6 +5,7 @@ import { EscrowAuthorization, EscrowLock } from '../../../@types/Escrow.js'
 import { getOceanArtifactsAdressesByChainId } from '../../../utils/address.js'
 import { RPCS } from '../../../@types/blockchain.js'
 import { create256Hash } from '../../../utils/crypt.js'
+import { CORE_LOGGER } from '../../../utils/logging/common.js'
 export class Escrow {
   private networks: RPCS
   private claimDurationTimeout: number
@@ -115,18 +116,35 @@ export class Escrow {
     const signer = blockchain.getSigner()
     const contract = await this.getContract(chainId, signer)
     if (!contract) throw new Error(`Failed to initialize escrow contract`)
+    CORE_LOGGER.info(
+      `get info for: ${JSON.stringify({
+        amount,
+        chain,
+        token
+      })}`
+    )
     const wei = await this.getPaymentAmountInWei(amount, chain, token)
     const userBalance = await this.getUserAvailableFunds(chain, payer, token)
+    CORE_LOGGER.info(
+      `userBalance: ${JSON.stringify({
+        userBalance: userBalance.toString()
+      })}`
+    )
     if (BigInt(userBalance.toString()) < BigInt(wei)) {
       // not enough funds
       throw new Error(`User ${payer} does not have enough funds`)
     }
-
+    CORE_LOGGER.info('before auth')
     const auths = await this.getAuthorizations(
       chain,
       token,
       payer,
       await signer.getAddress()
+    )
+    CORE_LOGGER.info(
+      `auths: ${JSON.stringify({
+        auths
+      })}`
     )
     if (!auths || auths.length !== 1) {
       throw new Error(`No escrow auths found`)
@@ -149,7 +167,23 @@ export class Escrow {
     try {
       const gas = await contract.createLock.estimateGas(jobId, token, payer, wei, expiry)
       const gasOptions = await blockchain.getGasOptions(gas, 1.2)
+      CORE_LOGGER.info(
+        `gas: ${JSON.stringify({
+          gas,
+          gasOptions,
+          jobId,
+          token,
+          payer,
+          wei,
+          expiry
+        })}`
+      )
       const tx = await contract.createLock(jobId, token, payer, wei, expiry, gasOptions)
+      CORE_LOGGER.info(
+        `tx: ${JSON.stringify({
+          tx
+        })}`
+      )
       return tx.hash
     } catch (e) {
       console.log(e)
