@@ -141,11 +141,6 @@ export class Escrow {
       payer,
       await signer.getAddress()
     )
-    CORE_LOGGER.info(
-      `auths: ${JSON.stringify({
-        auths
-      })}`
-    )
     if (!auths || auths.length !== 1) {
       throw new Error(`No escrow auths found`)
     }
