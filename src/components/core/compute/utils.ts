@@ -72,14 +72,37 @@ export async function validateAlgoForDataset(
   oceanNode: OceanNode
 ) {
   try {
+    CORE_LOGGER.info(
+      `validateAlgoForDataset params: ${JSON.stringify({
+        algoDID,
+        algoChecksums,
+        datasetServiceId
+      })}`
+    )
+
     const { services } = ddoInstance.getDDOFields() as any
+    CORE_LOGGER.info(
+      `services: ${JSON.stringify({
+        services
+      })}`
+    )
     const datasetService = services.find(
       (service: any) => service.id === datasetServiceId
+    )
+    CORE_LOGGER.info(
+      `datasetService: ${JSON.stringify({
+        datasetService
+      })}`
     )
     if (!datasetService) {
       throw new Error('Dataset service not found')
     }
     const { compute } = datasetService
+    CORE_LOGGER.info(
+      `compute: ${JSON.stringify({
+        compute
+      })}`
+    )
     if (datasetService.type !== 'compute' || !compute) {
       throw new Error('Service not compute')
     }
@@ -110,6 +133,11 @@ export async function validateAlgoForDataset(
         const trustedAlgo = compute.publisherTrustedAlgorithms.find(
           (algo: any) => algo.did === algoDID
         )
+        CORE_LOGGER.info(
+          `trustedAlgo: ${JSON.stringify({
+            trustedAlgo
+          })}`
+        )
         if (trustedAlgo) {
           return (
             trustedAlgo.filesChecksum === algoChecksums.files &&
@@ -126,6 +154,7 @@ export async function validateAlgoForDataset(
         const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
         const algoInstance = DDOManager.getDDOClass(algoDDO)
         const { nftAddress } = algoInstance.getDDOFields()
+        CORE_LOGGER.info(`nftAddress: ${nftAddress})}`)
         if (algoDDO) {
           return compute.publisherTrustedAlgorithmPublishers
             .map((address: string) => address?.toLowerCase())
