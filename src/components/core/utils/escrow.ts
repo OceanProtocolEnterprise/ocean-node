@@ -120,7 +120,10 @@ export class Escrow {
     const userBalance = await this.getUserAvailableFunds(chain, payer, token)
     CORE_LOGGER.info(
       `userBalance: ${JSON.stringify({
-        userBalance: userBalance.toString()
+        userBalance: userBalance.toString(),
+        wei,
+        token,
+        payer
       })}`
     )
     if (BigInt(userBalance.toString()) < BigInt(wei)) {
@@ -156,9 +159,7 @@ export class Escrow {
     try {
       const gas = await contract.createLock.estimateGas(jobId, token, payer, wei, expiry)
       const gasOptions = await blockchain.getGasOptions(gas, 1.2)
-      CORE_LOGGER.info('before tx')
       const tx = await contract.createLock(jobId, token, payer, wei, expiry, gasOptions)
-      CORE_LOGGER.info('after tx')
       return tx.hash
     } catch (e) {
       console.log(e)
