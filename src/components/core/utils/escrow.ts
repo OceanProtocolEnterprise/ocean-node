@@ -134,6 +134,7 @@ export class Escrow {
       payer,
       await signer.getAddress()
     )
+    CORE_LOGGER.info('after auth')
     if (!auths || auths.length !== 1) {
       throw new Error(`No escrow auths found`)
     }
@@ -155,23 +156,9 @@ export class Escrow {
     try {
       const gas = await contract.createLock.estimateGas(jobId, token, payer, wei, expiry)
       const gasOptions = await blockchain.getGasOptions(gas, 1.2)
-      CORE_LOGGER.info(
-        `gas: ${JSON.stringify({
-          gas,
-          gasOptions,
-          jobId,
-          token,
-          payer,
-          wei,
-          expiry
-        })}`
-      )
+      CORE_LOGGER.info('before tx')
       const tx = await contract.createLock(jobId, token, payer, wei, expiry, gasOptions)
-      CORE_LOGGER.info(
-        `tx: ${JSON.stringify({
-          tx
-        })}`
-      )
+      CORE_LOGGER.info('after tx')
       return tx.hash
     } catch (e) {
       console.log(e)
