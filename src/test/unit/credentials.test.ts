@@ -123,13 +123,13 @@ describe('credentials', () => {
     const credentials: any = {
       allow: [
         {
-          type: 'address',
+          type: CREDENTIALS_TYPES.ADDRESS,
           values: []
         }
       ],
       deny: [
         {
-          type: 'address',
+          type: CREDENTIALS_TYPES.ADDRESS,
           values: ['0x123']
         }
       ]
@@ -142,13 +142,13 @@ describe('credentials', () => {
     const credentials: any = {
       allow: [
         {
-          type: 'address',
+          type: CREDENTIALS_TYPES.ADDRESS,
           values: ['0x456']
         }
       ],
       deny: [
         {
-          type: 'address',
+          type: CREDENTIALS_TYPES.ADDRESS,
           values: []
         }
       ]
