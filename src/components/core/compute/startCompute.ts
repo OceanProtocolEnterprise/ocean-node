@@ -305,8 +305,8 @@ export class PaidComputeStartHandler extends CommandHandler {
           }
           result.validOrder = elem.transferTxId
 
-          if (!('meta' in algorithm) && ddo.metadata.type === 'algorithm') {
-            const { entrypoint, image, tag, checksum } = ddo.metadata.algorithm.container
+          if (!('meta' in algorithm) && metadata.type === 'algorithm') {
+            const { entrypoint, image, tag, checksum } = metadata.algorithm.container
             const container = { entrypoint, image, tag, checksum }
             algorithm.meta = {
               language: metadata.algorithm.language,
