@@ -260,11 +260,6 @@ export class PaidComputeStartHandler extends CommandHandler {
               services[0].id,
               node
             )
-            CORE_LOGGER.info(
-              `validAlgoForDataset: ${JSON.stringify({
-                validAlgoForDataset
-              })}`
-            )
             if (!validAlgoForDataset) {
               return {
                 stream: null,
@@ -304,11 +299,6 @@ export class PaidComputeStartHandler extends CommandHandler {
             service.timeout,
             blockchain.getSigner()
           )
-          CORE_LOGGER.info(
-            `paymentValidation: ${JSON.stringify({
-              paymentValidation
-            })}`
-          )
           if (paymentValidation.isValid === false) {
             const error = `TxId Service ${elem.transferTxId} is not valid for DDO ${elem.documentId} and service ${service.id}`
             return {
@@ -337,11 +327,6 @@ export class PaidComputeStartHandler extends CommandHandler {
         env,
         task.payment.chainId,
         task.payment.token
-      )
-      CORE_LOGGER.info(
-        `prices: ${JSON.stringify({
-          prices
-        })}`
       )
       if (!prices) {
         return {
@@ -383,7 +368,6 @@ export class PaidComputeStartHandler extends CommandHandler {
         task.payment.token,
         task.maxJobDuration
       )
-      CORE_LOGGER.info(`cost: ${cost})}`)
       let agreementId
       try {
         agreementId = await engine.escrow.createLock(
@@ -393,11 +377,6 @@ export class PaidComputeStartHandler extends CommandHandler {
           task.consumerAddress,
           cost,
           task.maxJobDuration
-        )
-        CORE_LOGGER.info(
-          `agreementId: ${JSON.stringify({
-            agreementId
-          })}`
         )
       } catch (e) {
         return {
@@ -409,11 +388,6 @@ export class PaidComputeStartHandler extends CommandHandler {
         }
       }
       try {
-        CORE_LOGGER.info(
-          `before response: ${JSON.stringify({
-            task
-          })}`
-        )
         const response = await engine.startComputeJob(
           task.datasets,
           algorithm,
