@@ -336,6 +336,7 @@ export class ComputeInitializeHandler extends CommandHandler {
             message: false
           }
           result.consumerAddress = env.consumerAddress
+          CORE_LOGGER.info(`elem: ${JSON.stringify(elem)}`)
           if ('transferTxId' in elem && elem.transferTxId) {
             // search for that compute env and see if it has access to dataset
             const paymentValidation = await validateOrderTransaction(
@@ -348,6 +349,8 @@ export class ComputeInitializeHandler extends CommandHandler {
               service.timeout,
               blockchain.getSigner()
             )
+            CORE_LOGGER.info(`paymentValidation: ${JSON.stringify(paymentValidation)}`)
+
             if (paymentValidation.isValid === true) {
               // order is valid, so let's check providerFees
               result.validOrder = elem.transferTxId
