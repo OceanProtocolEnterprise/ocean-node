@@ -239,8 +239,9 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
         return normalizeDocumentId(hit._source, hit._id)
       })
     } catch (error) {
-      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${error.message
-        }`
+      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${
+        error.message
+      }`
       DATABASE_LOGGER.logMessageWithEmoji(
         errorMsg,
         true,
@@ -366,6 +367,7 @@ export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
     did: string,
     startOrderId?: string
   ) {
+    DATABASE_LOGGER.info(`index: ${this.getSchema().index}`)
     try {
       const document = {
         orderId,
@@ -378,6 +380,9 @@ export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
         did,
         startOrderId
       }
+      DATABASE_LOGGER.info(`document: ${JSON.stringify(document)}`)
+      DATABASE_LOGGER.info(`orderid: ${orderId}`)
+
       await this.provider.index({
         index: this.getSchema().index,
         id: orderId,
@@ -511,7 +516,7 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
     } else {
       DATABASE_LOGGER.logMessageWithEmoji(
         `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-        JSON.stringify(validation[1]),
+          JSON.stringify(validation[1]),
         true,
         GENERIC_EMOJIS.EMOJI_CROSS_MARK,
         LOG_LEVELS_STR.LEVEL_ERROR
