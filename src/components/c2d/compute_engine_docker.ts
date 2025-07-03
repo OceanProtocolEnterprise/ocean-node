@@ -566,7 +566,7 @@ export class C2DEngineDocker extends C2DEngine {
     const jobs = await this.db.getRunningJobs(this.getC2DConfig().hash)
 
     if (jobs.length === 0) {
-      CORE_LOGGER.info('No C2D jobs found for engine ' + this.getC2DConfig().hash)
+      // CORE_LOGGER.info('No C2D jobs found for engine ' + this.getC2DConfig().hash)
       this.setNewTimer()
       return
     } else {
