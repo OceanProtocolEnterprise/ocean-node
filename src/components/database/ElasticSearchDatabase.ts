@@ -367,7 +367,6 @@ export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
     did: string,
     startOrderId?: string
   ) {
-    DATABASE_LOGGER.info(`index: ${this.getSchema().index}`)
     try {
       const document = {
         orderId,
@@ -380,8 +379,6 @@ export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
         did,
         startOrderId
       }
-      DATABASE_LOGGER.info(`document: ${JSON.stringify(document)}`)
-      DATABASE_LOGGER.info(`orderid: ${orderId}`)
 
       await this.provider.index({
         index: this.getSchema().index,

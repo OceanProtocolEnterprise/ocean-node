@@ -326,7 +326,7 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
             })
             resolve(filtered)
           } else {
-            DATABASE_LOGGER.info('Could not find any running C2D jobs!')
+            // DATABASE_LOGGER.info('Could not find any running C2D jobs!')
             resolve([])
           }
         }
