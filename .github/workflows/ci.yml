@@ -231,7 +231,7 @@ jobs:
           done
 
       - name: docker logs
-        run: docker logs ocean-ocean-contracts-1 && docker logs ocean-typesense-1
+        run: docker logs ocean-contracts-1 && docker logs ocean-typesense-1
         if: ${{ failure() }}
 
       - name: Checkout Ocean Node
@@ -282,7 +282,6 @@ jobs:
         with:
           repository: 'oceanprotocol/ocean-cli'
           path: 'ocean-cli'
-          ref: 'fix-tests-for-node'
       - name: Setup Ocean CLI
         working-directory: ${{ github.workspace }}/ocean-cli
         run: |
