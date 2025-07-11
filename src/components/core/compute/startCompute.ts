@@ -342,6 +342,7 @@ export class PaidComputeStartHandler extends CommandHandler {
               services[0].id,
               node
             )
+            console.log('validAlgoForDataset: ', validAlgoForDataset)
             if (!validAlgoForDataset) {
               return {
                 stream: null,
