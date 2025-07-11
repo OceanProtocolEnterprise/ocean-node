@@ -2,7 +2,7 @@ import { Credentials, CREDENTIALS_TYPES } from '@oceanprotocol/ddo-js'
 
 export const downloadAsset = {
   '@context': ['https://w3id.org/did/v1'],
-  id: 'did:op:ae13',
+  id: '',
   nftAddress: '',
   version: '4.1.0',
   chainId: 80001,
@@ -59,7 +59,7 @@ export const downloadAsset = {
   datatokens: [] as any
 }
 
-const nftLevelCredentials: any = {
+const nftLevelCredentials: Credentials = {
   allow: [
     {
       type: CREDENTIALS_TYPES.ADDRESS,
@@ -90,7 +90,7 @@ const serviceLevelCredentials: Credentials = {
 
 export const downloadAssetWithCredentials = {
   '@context': ['https://w3id.org/did/v1'],
-  id: 'did:op:ae13',
+  id: '',
   nftAddress: '',
   version: '4.1.0',
   chainId: 80001,
@@ -190,14 +190,8 @@ export const computeAssetWithCredentials = {
       compute: {
         allowRawAlgorithm: false,
         allowNetworkAccess: true,
-        publisherTrustedAlgorithmPublishers: ['*'],
-        publisherTrustedAlgorithms: [
-          {
-            did: '*',
-            filesChecksum: '*',
-            containerSectionChecksum: '*'
-          }
-        ]
+        publisherTrustedAlgorithmPublishers: [] as any,
+        publisherTrustedAlgorithms: [] as any
       }
     }
   ],
@@ -271,19 +265,7 @@ export const algoAssetWithCredentials = {
       },
       credentials: serviceLevelCredentials,
       timeout: 86400,
-      serviceEndpoint: 'https://v4.provider.oceanprotocol.com',
-      compute: {
-        allowRawAlgorithm: false,
-        allowNetworkAccess: true,
-        publisherTrustedAlgorithmPublishers: ['*'],
-        publisherTrustedAlgorithms: [
-          {
-            did: '*',
-            filesChecksum: '*',
-            containerSectionChecksum: '*'
-          }
-        ]
-      }
+      serviceEndpoint: 'https://v4.provider.oceanprotocol.com'
     }
   ],
   stats: {
@@ -342,14 +324,8 @@ export const computeAsset = {
       compute: {
         allowRawAlgorithm: false,
         allowNetworkAccess: true,
-        publisherTrustedAlgorithmPublishers: ['*'],
-        publisherTrustedAlgorithms: [
-          {
-            did: '*',
-            filesChecksum: '*',
-            containerSectionChecksum: '*'
-          }
-        ]
+        publisherTrustedAlgorithmPublishers: [] as any,
+        publisherTrustedAlgorithms: [] as any
       }
     }
   ],
@@ -408,7 +384,7 @@ export const algoAsset = {
   services: [
     {
       id: 'db164c1b981e4d2974e90e61bda121512e6909c1035c908d68933ae4cfaba6b0',
-      type: 'compute',
+      type: 'access',
       files: {
         files: [
           {
@@ -421,19 +397,7 @@ export const algoAsset = {
         ]
       },
       timeout: 86400,
-      serviceEndpoint: 'https://v4.provider.oceanprotocol.com',
-      compute: {
-        allowRawAlgorithm: false,
-        allowNetworkAccess: true,
-        publisherTrustedAlgorithmPublishers: ['*'],
-        publisherTrustedAlgorithms: [
-          {
-            did: '*',
-            filesChecksum: '*',
-            containerSectionChecksum: '*'
-          }
-        ]
-      }
+      serviceEndpoint: 'https://v4.provider.oceanprotocol.com'
     }
   ],
   stats: {
