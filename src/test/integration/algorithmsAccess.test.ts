@@ -44,7 +44,7 @@ import { ProviderComputeInitializeResults } from '../../@types/Fees.js'
 import { homedir } from 'os'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
-// import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' assert { type: 'json' }
+import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' assert { type: 'json' }
 import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' assert { type: 'json' }
 import { createHash } from 'crypto'
 import { getAlgoChecksums } from '../../components/core/compute/utils.js'
@@ -64,7 +64,7 @@ describe('Trusted algorithms Flow', () => {
   let datasetOrderTxId: any
   let algoOrderTxId: any
   let paymentToken: any
-  // let paymentTokenContract: any
+  let paymentTokenContract: any
   let escrowContract: any
   let indexer: OceanIndexer
   // const now = new Date().getTime() / 1000
@@ -117,11 +117,11 @@ describe('Trusted algorithms Flow', () => {
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
     consumerAccount = (await provider.getSigner(1)) as Signer
-    // paymentTokenContract = new ethers.Contract(
-    //   paymentToken,
-    //   OceanToken.abi,
-    //   publisherAccount
-    // )
+    paymentTokenContract = new ethers.Contract(
+      paymentToken,
+      OceanToken.abi,
+      publisherAccount
+    )
     escrowContract = new ethers.Contract(
       artifactsAddresses.development.Escrow,
       EscrowJson.abi,
@@ -267,74 +267,74 @@ describe('Trusted algorithms Flow', () => {
     algoOrderTxId = orderTxReceipt.hash
     assert(algoOrderTxId, 'transaction id not found')
   })
-  // it('should not start a compute job because algorithm is not trusted by dataset', async () => {
-  //   let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
-  //   const nonce = Date.now().toString()
-  //   const message = String(
-  //     (await consumerAccount.getAddress()) + publishedComputeDataset.ddo.id + nonce
-  //   )
-  //   // sign message/nonce
-  //   const consumerMessage = ethers.solidityPackedKeccak256(
-  //     ['bytes'],
-  //     [ethers.hexlify(ethers.toUtf8Bytes(message))]
-  //   )
-  //   const messageHashBytes = ethers.toBeArray(consumerMessage)
-  //   const signature = await wallet.signMessage(messageHashBytes)
-  //   const startComputeTask: PaidComputeStartCommand = {
-  //     command: PROTOCOL_COMMANDS.COMPUTE_START,
-  //     consumerAddress: await consumerAccount.getAddress(),
-  //     signature,
-  //     nonce,
-  //     environment: firstEnv.id,
-  //     datasets: [
-  //       {
-  //         documentId: publishedComputeDataset.ddo.id,
-  //         serviceId: publishedComputeDataset.ddo.services[0].id,
-  //         transferTxId: datasetOrderTxId
-  //       }
-  //     ],
-  //     algorithm: {
-  //       documentId: publishedAlgoDataset.ddo.id,
-  //       serviceId: publishedAlgoDataset.ddo.services[0].id,
-  //       transferTxId: algoOrderTxId,
-  //       meta: publishedAlgoDataset.ddo.metadata.algorithm
-  //     },
-  //     output: {},
-  //     payment: {
-  //       chainId: DEVELOPMENT_CHAIN_ID,
-  //       token: paymentToken
-  //     },
-  //     maxJobDuration: computeJobDuration
-  //   }
-  //   // let's put funds in escrow & create an auth
-  //   balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
-  //   await paymentTokenContract
-  //     .connect(consumerAccount)
-  //     .approve(initializeResponse.payment.escrowAddress, balance)
-  //   await escrowContract
-  //     .connect(consumerAccount)
-  //     .deposit(initializeResponse.payment.token, balance)
-  //   await escrowContract
-  //     .connect(consumerAccount)
-  //     .authorize(
-  //       initializeResponse.payment.token,
-  //       firstEnv.consumerAddress,
-  //       balance,
-  //       computeJobDuration,
-  //       10
-  //     )
+  it('should not start a compute job because algorithm is not trusted by dataset', async () => {
+    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    const nonce = Date.now().toString()
+    const message = String(
+      (await consumerAccount.getAddress()) + publishedComputeDataset.ddo.id + nonce
+    )
+    // sign message/nonce
+    const consumerMessage = ethers.solidityPackedKeccak256(
+      ['bytes'],
+      [ethers.hexlify(ethers.toUtf8Bytes(message))]
+    )
+    const messageHashBytes = ethers.toBeArray(consumerMessage)
+    const signature = await wallet.signMessage(messageHashBytes)
+    const startComputeTask: PaidComputeStartCommand = {
+      command: PROTOCOL_COMMANDS.COMPUTE_START,
+      consumerAddress: await consumerAccount.getAddress(),
+      signature,
+      nonce,
+      environment: firstEnv.id,
+      datasets: [
+        {
+          documentId: publishedComputeDataset.ddo.id,
+          serviceId: publishedComputeDataset.ddo.services[0].id,
+          transferTxId: datasetOrderTxId
+        }
+      ],
+      algorithm: {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: algoOrderTxId,
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      },
+      output: {},
+      payment: {
+        chainId: DEVELOPMENT_CHAIN_ID,
+        token: paymentToken
+      },
+      maxJobDuration: computeJobDuration
+    }
+    // let's put funds in escrow & create an auth
+    balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    await paymentTokenContract
+      .connect(consumerAccount)
+      .approve(initializeResponse.payment.escrowAddress, balance)
+    await escrowContract
+      .connect(consumerAccount)
+      .deposit(initializeResponse.payment.token, balance)
+    await escrowContract
+      .connect(consumerAccount)
+      .authorize(
+        initializeResponse.payment.token,
+        firstEnv.consumerAddress,
+        balance,
+        computeJobDuration,
+        10
+      )
 
-  //   const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
-  //   console.log('response: ', response)
-  //   assert(response, 'Failed to get response')
-  //   assert(response.status.httpStatus === 400, 'Failed to get 400 response')
-  //   assert(
-  //     response.status.error ===
-  //       `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
-  //     'Inconsistent error message'
-  //   )
-  //   assert(response.stream === null, 'Failed to get stream')
-  // })
+    const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    console.log('response: ', response)
+    assert(response, 'Failed to get response')
+    assert(response.status.httpStatus === 400, 'Failed to get 400 response')
+    assert(
+      response.status.error ===
+        `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
+      'Inconsistent error message'
+    )
+    assert(response.stream === null, 'Failed to get stream')
+  })
   it('should add the algorithm to the dataset trusted algorithm list', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 5)
     const algoChecksums = await getAlgoChecksums(
