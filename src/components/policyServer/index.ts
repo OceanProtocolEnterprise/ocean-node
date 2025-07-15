@@ -100,7 +100,8 @@ export class PolicyServer {
       ddo,
       serviceId,
       consumerAddress,
-      policyServer: typeof policyServer === 'string' ? JSON.parse(policyServer) : null
+      policyServer:
+        typeof policyServer === 'string' ? JSON.parse(policyServer) : policyServer
     }
     return await this.askServer(command)
   }
