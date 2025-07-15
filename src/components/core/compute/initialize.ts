@@ -227,12 +227,20 @@ export class ComputeInitializeHandler extends CommandHandler {
                 task.consumerAddress,
                 task.policyServer
               )
+              CORE_LOGGER.logMessage(
+                `Response policyServer check start compute: ${JSON.stringify(response)}`,
+                true
+              )
               accessGrantedDDOLevel = response.success
             } else {
               accessGrantedDDOLevel = areKnownCredentialTypes(credentials as Credentials)
                 ? checkCredentials(credentials as Credentials, task.consumerAddress)
                 : true
             }
+            CORE_LOGGER.logMessage(
+              `accessGrantedDDOLevel: ${accessGrantedDDOLevel}`,
+              true
+            )
             if (!accessGrantedDDOLevel) {
               CORE_LOGGER.logMessage(
                 `Error: Access to asset ${ddoInstance.getDid()} was denied`,
