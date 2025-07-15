@@ -101,8 +101,9 @@ export class PolicyServer {
       serviceId,
       consumerAddress,
       policyServer:
-        typeof policyServer === 'string' ? JSON.parse(policyServer) : policyServer
+        typeof policyServer === 'string' ? [JSON.parse(policyServer)] : [policyServer]
     }
+    console.log('checkStartCompute command:', command)
     return await this.askServer(command)
   }
 
