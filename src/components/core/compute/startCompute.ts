@@ -627,6 +627,7 @@ export class FreeComputeStartHandler extends CommandHandler {
               task.consumerAddress,
               task.policyServer
             )
+            CORE_LOGGER.logMessage(`Response PS: ${JSON.stringify(response)}`, true)
             accessGrantedDDOLevel = response.success
           } else {
             accessGrantedDDOLevel = areKnownCredentialTypes(credentials as Credentials)
