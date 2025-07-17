@@ -619,6 +619,10 @@ export class FreeComputeStartHandler extends CommandHandler {
         if (credentials) {
           // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
           // It will just use the existing code and let PolicyServer decide.
+          CORE_LOGGER.logMessage(
+            `Response PS: ${JSON.stringify(task.policyServer)}`,
+            true
+          )
           if (isPolicyServerConfigured()) {
             const response = await policyServer.checkStartCompute(
               ddoInstance.getDid(),
