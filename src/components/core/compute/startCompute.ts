@@ -151,7 +151,6 @@ export class PaidComputeStartHandler extends CommandHandler {
       const policyServer = new PolicyServer()
       // check algo
       for (const elem of [...[task.algorithm], ...task.datasets]) {
-        console.log(elem)
         const result: any = { validOrder: false }
         if ('documentId' in elem && elem.documentId) {
           result.did = elem.documentId
@@ -170,7 +169,6 @@ export class PaidComputeStartHandler extends CommandHandler {
           const ddoInstance = DDOManager.getDDOClass(ddo)
           const {
             chainId: ddoChainId,
-            services,
             metadata,
             nftAddress,
             credentials
@@ -335,14 +333,18 @@ export class PaidComputeStartHandler extends CommandHandler {
             }
           }
           if (metadata.type !== 'algorithm') {
+            const index = task.datasets.findIndex(
+              (d) => d.documentId === ddoInstance.getDid()
+            )
+            const safeIndex = index === -1 ? 0 : index
+
             const validAlgoForDataset = await validateAlgoForDataset(
               task.algorithm.documentId,
               algoChecksums,
               ddoInstance,
-              services[0].id,
+              task.datasets[safeIndex].serviceId,
               node
             )
-            console.log('validAlgoForDataset: ', validAlgoForDataset)
             if (!validAlgoForDataset) {
               return {
                 stream: null,
