@@ -325,6 +325,7 @@ describe('Trusted algorithms Flow', () => {
       )
 
     const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    console.log('response: ', response)
     assert(response, 'Failed to get response')
     assert(response.status.httpStatus === 400, 'Failed to get 400 response')
     assert(
