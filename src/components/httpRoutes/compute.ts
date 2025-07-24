@@ -30,7 +30,6 @@ import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants
 import { Readable } from 'stream'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
-import { PolicyServerTask } from '../../@types/policyServer.js'
 
 export const computeRoutes = express.Router()
 

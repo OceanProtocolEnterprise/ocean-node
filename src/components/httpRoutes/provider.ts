@@ -13,7 +13,6 @@ import { FeesHandler } from '../core/handler/feesHandler.js'
 import { BaseFileObject, EncryptMethod } from '../../@types/fileObject.js'
 import { P2PCommandResponse } from '../../@types/OceanNode.js'
 import { getEncryptMethodFromString } from '../../utils/crypt.js'
-import { PolicyServerTask } from '../../@types/policyServer.js'
 
 export const providerRoutes = express.Router()
 
