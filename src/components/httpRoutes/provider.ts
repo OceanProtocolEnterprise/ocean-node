@@ -154,7 +154,7 @@ providerRoutes.get(`${SERVICES_API_BASE_PATH}/initialize`, async (req, res) => {
       serviceId: (req.query.serviceId as string) || null,
       consumerAddress: (req.query.consumerAddress as string) || null,
       validUntil: parseInt(req.query.validUntil as string) || null,
-      policyServer: (req.query.policyServer as PolicyServerTask) || null
+      policyServer: (req.query.policyServer as any) || null
     })
     if (result.stream) {
       const initializeREsponse = await streamToObject(result.stream as Readable)
@@ -222,7 +222,7 @@ providerRoutes.get(
         consumerAddress: consumerAddress as string,
         signature: signature as string,
         command: PROTOCOL_COMMANDS.DOWNLOAD,
-        policyServer: (req.query.policyServer as PolicyServerTask) || null,
+        policyServer: (req.query.policyServer as any) || null,
         authorization: authorization as string
       }
 

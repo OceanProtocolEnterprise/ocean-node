@@ -48,9 +48,8 @@ export function omitDBComputeFieldsFromComputeJob(dbCompute: DBComputeJob): Comp
     'publishlogURL',
     'algologURL',
     'outputsURL',
-    'stopRequested',
-    // 'algorithm',
-    // 'assets',
+    'algorithm',
+    'assets',
     'isRunning',
     'isStarted',
     'containerImage'
@@ -80,9 +79,9 @@ export async function getAlgoChecksums(
           ? (file as UrlFileObject).url
           : file.type === 'arweave'
             ? urlJoin(
-                process.env.ARWEAVE_GATEWAY,
-                (file as ArweaveFileObject).transactionId
-              )
+              process.env.ARWEAVE_GATEWAY,
+              (file as ArweaveFileObject).transactionId
+            )
             : file.type === 'ipfs'
               ? urlJoin(process.env.IPFS_GATEWAY, (file as IpfsFileObject).hash)
               : null

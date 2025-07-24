@@ -337,7 +337,6 @@ export class PaidComputeStartHandler extends CommandHandler {
               (d) => d.documentId === ddoInstance.getDid()
             )
             const safeIndex = index === -1 ? 0 : index
-
             const validAlgoForDataset = await validateAlgoForDataset(
               task.algorithm.documentId,
               algoChecksums,
@@ -350,9 +349,8 @@ export class PaidComputeStartHandler extends CommandHandler {
                 stream: null,
                 status: {
                   httpStatus: 400,
-                  error: `Algorithm ${
-                    task.algorithm.documentId
-                  } not allowed to run on the dataset: ${ddoInstance.getDid()}`
+                  error: `Algorithm ${task.algorithm.documentId
+                    } not allowed to run on the dataset: ${ddoInstance.getDid()}`
                 }
               }
             }
@@ -621,10 +619,6 @@ export class FreeComputeStartHandler extends CommandHandler {
         if (credentials) {
           // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
           // It will just use the existing code and let PolicyServer decide.
-          CORE_LOGGER.logMessage(
-            `Response PS: ${JSON.stringify(task.policyServer)}`,
-            true
-          )
           if (isPolicyServerConfigured()) {
             const response = await policyServer.checkStartCompute(
               ddoInstance.getDid(),
@@ -633,7 +627,6 @@ export class FreeComputeStartHandler extends CommandHandler {
               task.consumerAddress,
               task.policyServer
             )
-            CORE_LOGGER.logMessage(`Response PS: ${JSON.stringify(response)}`, true)
             accessGrantedDDOLevel = response.success
           } else {
             accessGrantedDDOLevel = areKnownCredentialTypes(credentials as Credentials)
