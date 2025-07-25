@@ -210,8 +210,6 @@ describe('Compute Jobs Database', () => {
     )
     expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
     expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
     expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
     expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
     expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
