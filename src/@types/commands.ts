@@ -190,7 +190,7 @@ export interface ComputeInitializeCommand extends Command {
   consumerAddress: string
   signature?: string
   maxJobDuration: number
-  policyServer?: PolicyServerTask // object to pass to policy server
+  policyServer?: any // object to pass to policy server
 }
 
 export interface FreeComputeStartCommand extends Command {
@@ -203,7 +203,7 @@ export interface FreeComputeStartCommand extends Command {
   output?: ComputeOutput
   resources?: ComputeResourceRequest[]
   maxJobDuration?: number
-  policyServer?: PolicyServerTask // object to pass to policy server
+  policyServer?: any // object to pass to policy server
   metadata?: DBComputeJobMetadata
 }
 export interface PaidComputeStartCommand extends FreeComputeStartCommand {

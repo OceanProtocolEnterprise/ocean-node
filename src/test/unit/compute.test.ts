@@ -8,7 +8,7 @@ import {
   ComputeAlgorithm,
   ComputeAsset,
   // ComputeEnvironment,
-  // ComputeJob,
+  ComputeJob,
   DBComputeJob,
   RunningPlatform
 } from '../../@types/C2D/C2D.js'
@@ -24,13 +24,12 @@ import {
   buildEnvOverrideConfig,
   OverrideEnvConfig,
   setupEnvironment,
-  tearDownEnvironment
+  tearDownEnvironment,
+  TEST_ENV_CONFIG_FILE
 } from '../utils/utils.js'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
-// eslint-disable-next-line no-unused-vars
 import { completeDBComputeJob, dockerImageManifest } from '../data/assets.js'
-// eslint-disable-next-line no-unused-vars
 import { omitDBComputeFieldsFromComputeJob } from '../../components/c2d/index.js'
 import { checkManifestPlatform } from '../../components/c2d/compute_engine_docker.js'
 
@@ -56,7 +55,7 @@ describe('Compute Jobs Database', () => {
         '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":1000000000}],"storageExpiry":604800,"maxJobDuration":3600,"fees":{"1":[{"feeToken":"0x123","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1000000000},{"id":"disk","max":1000000000}]}}]'
       ]
     )
-    envOverrides = await setupEnvironment(null, envOverrides)
+    envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
     config = await getConfiguration(true)
     db = await new C2DDatabase(config.dbConfig, typesenseSchemas.c2dSchemas)
   })
@@ -198,30 +197,25 @@ describe('Compute Jobs Database', () => {
     expect(convertStringToArray(str)).to.deep.equal(expectedArray)
   })
 
-  // it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
-  //   const source: any = completeDBComputeJob
-  //   const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
+  it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
+    const source: any = completeDBComputeJob
+    const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
 
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
-  //     false
-  //   )
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
-  //     false
-  //   )
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'stopRequested')).to.be.equal(
-  //     false
-  //   )
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
-  //     false
-  //   )
-  // })
+    expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
+      false
+    )
+    expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
+      false
+    )
+    expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
+      false
+    )
+  })
 
   it('should check manifest platform against local platform env', () => {
     const arch = os.machine() // ex: arm
