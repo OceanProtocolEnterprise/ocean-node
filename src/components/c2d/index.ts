@@ -48,8 +48,8 @@ export function omitDBComputeFieldsFromComputeJob(dbCompute: DBComputeJob): Comp
     'publishlogURL',
     'algologURL',
     'outputsURL',
-    'algorithm',
-    'assets',
+    // 'algorithm',
+    // 'assets',
     'isRunning',
     'isStarted',
     'containerImage'
