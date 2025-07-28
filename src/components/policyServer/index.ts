@@ -100,6 +100,24 @@ export class PolicyServer {
       ddo,
       serviceId,
       consumerAddress,
+      policyServer
+    }
+    return await this.askServer(command)
+  }
+
+  async initializePSVerification(
+    documentId: string,
+    ddo: DDO,
+    serviceId: string,
+    consumerAddress: string,
+    policyServer: any
+  ): Promise<PolicyServerResult> {
+    const command = {
+      action: 'initiate',
+      documentId,
+      serviceId,
+      ddo,
+      consumerAddress,
       policyServer: Array.isArray(policyServer) ? policyServer : [policyServer]
     }
 
