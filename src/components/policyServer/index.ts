@@ -118,7 +118,7 @@ export class PolicyServer {
       serviceId,
       ddo,
       consumerAddress,
-      policyServer: Array.isArray(policyServer) ? policyServer : [policyServer]
+      policyServer
     }
 
     return await this.askServer(command)
