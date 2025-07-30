@@ -120,7 +120,6 @@ export class PolicyServer {
       consumerAddress,
       policyServer
     }
-
     return await this.askServer(command)
   }
 

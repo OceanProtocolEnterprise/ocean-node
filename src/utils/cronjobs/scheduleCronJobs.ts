@@ -36,11 +36,15 @@ function scheduleDeleteLogsJob(dbconn: Database | null) {
     const expression =
       process.env[ENVIRONMENT_VARIABLES.CRON_DELETE_DB_LOGS.name] || '0 0 * * *'
     cron.schedule(expression, async () => {
-      const deletedLogsNum = await dbconn.logs.deleteOldLogs()
-      OCEAN_NODE_LOGGER.logMessage(
-        `${deletedLogsNum} old logs deleted successfully.`,
-        true
-      )
+      try {
+        const deletedLogsNum = await dbconn.logs.deleteOldLogs()
+        OCEAN_NODE_LOGGER.logMessage(
+          `${deletedLogsNum} old logs deleted successfully.`,
+          true
+        )
+      } catch (err) {
+        OCEAN_NODE_LOGGER.error(`Error deleting old logs: ${err.message}`)
+      }
     })
   } else {
     OCEAN_NODE_LOGGER.warn(
@@ -56,8 +60,12 @@ function scheduleCleanExpiredC2DJobs(dbconn: Database | null) {
     const expression =
       process.env[ENVIRONMENT_VARIABLES.CRON_CLEANUP_C2D_STORAGE.name] || '*/5 * * * *'
     cron.schedule(expression, async () => {
-      const deleted = await dbconn.c2d.cleanStorageExpiredJobs()
-      OCEAN_NODE_LOGGER.info(`${deleted} old C2D jobs cleaned successfully.`)
+      try {
+        const deleted = await dbconn.c2d.cleanStorageExpiredJobs()
+        OCEAN_NODE_LOGGER.info(`${deleted} expired C2D jobs cleaned successfully.`)
+      } catch (err) {
+        OCEAN_NODE_LOGGER.error(`Error deleting expired jobs: ${err.message}`)
+      }
     })
   } else {
     OCEAN_NODE_LOGGER.warn(
