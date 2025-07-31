@@ -56,10 +56,10 @@ export class ComputeGetStatusHandler extends CommandHandler {
         CORE_LOGGER.logMessage(
           'ComputeGetStatusCommand: No jobId provided, querying all C2D clusters'
         )
-        CORE_LOGGER.logMessage(`Engines: ${JSON.stringify(engines, null, 2)}`, true)
       }
 
       for (const engine of engines) {
+        CORE_LOGGER.logMessage(`ComputeGetStatusCommand: Querying engine`)
         const jobs = await engine.getComputeJobStatus(
           task.consumerAddress,
           task.agreementId,
