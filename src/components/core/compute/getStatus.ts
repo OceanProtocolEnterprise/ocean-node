@@ -53,9 +53,13 @@ export class ComputeGetStatusHandler extends CommandHandler {
         }
       } else {
         engines = await this.getOceanNode().getC2DEngines().getAllEngines()
+        CORE_LOGGER.logMessage(
+          'ComputeGetStatusCommand: No jobId provided, querying all C2D clusters'
+        )
       }
 
       for (const engine of engines) {
+        CORE_LOGGER.logMessage(`ComputeGetStatusCommand: Querying engine`)
         const jobs = await engine.getComputeJobStatus(
           task.consumerAddress,
           task.agreementId,
