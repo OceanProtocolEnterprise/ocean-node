@@ -243,9 +243,8 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
         return normalizeDocumentId(hit._source, hit._id)
       })
     } catch (error) {
-      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${
-        error.message
-      }`
+      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${error.message
+        }`
       DATABASE_LOGGER.logMessageWithEmoji(
         errorMsg,
         true,
@@ -525,7 +524,7 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
     } else {
       DATABASE_LOGGER.logMessageWithEmoji(
         `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-          JSON.stringify(validation[1]),
+        JSON.stringify(validation[1]),
         true,
         GENERIC_EMOJIS.EMOJI_CROSS_MARK,
         LOG_LEVELS_STR.LEVEL_ERROR
