@@ -30,7 +30,7 @@ export async function decryptFilesObject(
     )
 
     // 3. Convert the decrypted bytes back to a string
-    const decryptedFilesString = Buffer.from(decryptedUrlBytes).toString()
+    const decryptedFilesString = Buffer.from(decryptedUrlBytes as Uint8Array).toString()
     const decryptedFileArray = JSON.parse(decryptedFilesString)
 
     console.log('decryptedFileArray: ', decryptedFileArray)
@@ -79,9 +79,9 @@ export async function getAlgoChecksums(
           ? (file as UrlFileObject).url
           : file.type === 'arweave'
             ? urlJoin(
-              process.env.ARWEAVE_GATEWAY,
-              (file as ArweaveFileObject).transactionId
-            )
+                process.env.ARWEAVE_GATEWAY,
+                (file as ArweaveFileObject).transactionId
+              )
             : file.type === 'ipfs'
               ? urlJoin(process.env.IPFS_GATEWAY, (file as IpfsFileObject).hash)
               : null

@@ -599,7 +599,7 @@ export class OceanP2P extends EventEmitter {
         useNetwork: true
       })
       return data
-    } catch (e) { }
+    } catch (e) {}
     return null
   }
 
