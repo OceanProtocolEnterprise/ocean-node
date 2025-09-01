@@ -15,9 +15,16 @@ const REPUBLISH_INTERVAL_HOURS = 1000 * 60 * 60 * 4 // 4 hours
 
 export async function scheduleCronJobs(node: OceanNode) {
   await sleep(2000) // wait for 2 seconds to ensure the node is fully initialized
-  scheduleDeleteLogsJob(node.getDatabase())
-  scheduleCleanExpiredC2DJobs(node.getDatabase())
-
+  try {
+    scheduleDeleteLogsJob(node.getDatabase())
+  } catch (e) {
+    OCEAN_NODE_LOGGER.error(`Error when deleting old logs: ${e.message}`)
+  }
+  try {
+    scheduleCleanExpiredC2DJobs(node.getDatabase())
+  } catch (e) {
+    OCEAN_NODE_LOGGER.error(`Error when deleting expired c2d jobs: ${e.message}`)
+  }
   // execute p2pAnnounceDDOS immediately on startup
   // and then every REPUBLISH_INTERVAL_HOURS
   p2pAnnounceDDOS(node)

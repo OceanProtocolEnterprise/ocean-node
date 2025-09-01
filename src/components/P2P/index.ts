@@ -124,6 +124,7 @@ export class OceanP2P extends EventEmitter {
     this._protocol = '/ocean/nodes/1.0.0'
 
     this._interval = setInterval(this._flushAdvertiseQueue.bind(this), 60 * 1000) // every 60 seconds
+    this._interval = setInterval(this._flushAdvertiseQueue.bind(this), 60 * 1000) // every 60 seconds
 
     // only enable handling of commands if not bootstrap node
     if (!this._config.isBootstrap) {
@@ -772,7 +773,9 @@ export class OceanP2P extends EventEmitter {
       if (x > 0) {
         const multiAddrs = this._libp2p.components.addressManager.getAddresses()
         // console.log('multiaddrs: ', multiAddrs)
-        this._libp2p.contentRouting.provide(cid, multiAddrs)
+        this._libp2p.contentRouting.provide(cid, multiAddrs).catch((err: any) => {
+          P2P_LOGGER.error(`Error advertising DDO: ${err}`)
+        })
       } else {
         P2P_LOGGER.debug(
           'Could not find any Ocean peers. Nobody is listening at the moment, skipping...'
