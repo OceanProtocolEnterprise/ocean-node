@@ -847,13 +847,6 @@ export class ValidateDDOHandler extends CommandHandler {
     try {
       const ddoInstance = DDOManager.getDDOClass(task.ddo)
       const validation = await ddoInstance.validate()
-      CORE_LOGGER.logMessageWithEmoji(
-        `Validation: ${JSON.stringify(validation)}`,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
-      console.log('validation:', validation)
       if (validation[0] === false) {
         CORE_LOGGER.logMessageWithEmoji(
           `Validation failed with error: ${validation[1]}`,
