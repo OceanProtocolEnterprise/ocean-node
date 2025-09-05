@@ -1,6 +1,7 @@
 import { DDO } from '@oceanprotocol/ddo-js'
 import { PolicyServerResult } from '../../@types/policyServer.js'
 import { isDefined } from '../../utils/util.js'
+import { parseCredentialPolicies } from '../../utils/credentials.js'
 
 export class PolicyServer {
   serverUrl: string
@@ -116,7 +117,7 @@ export class PolicyServer {
       action: 'initiate',
       documentId,
       serviceId,
-      ddo,
+      ddo: parseCredentialPolicies(ddo),
       consumerAddress,
       policyServer
     }

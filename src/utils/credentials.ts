@@ -6,7 +6,12 @@ import { CORE_LOGGER } from './logging/common.js'
 import { getNFTContract } from '../components/Indexer/utils.js'
 import { isDefined } from './util.js'
 import { getOceanArtifactsAdressesByChainId } from './address.js'
-import { Credential, Credentials, CREDENTIALS_TYPES } from '@oceanprotocol/ddo-js'
+import {
+  Credential,
+  Credentials,
+  CREDENTIALS_TYPES,
+  DDOManager
+} from '@oceanprotocol/ddo-js'
 import { KNOWN_CREDENTIALS_TYPES } from '../@types/DDO/Credentials.js'
 
 export function findCredential(
@@ -220,4 +225,51 @@ export async function getAccountsFromAccessList(
     )
   }
   return resultAccounts
+}
+
+export function isCredentialPolicyBased(credential: any): credential is any {
+  return (
+    (credential as any)?.type !== undefined && (credential as any)?.type === 'SSIpolicy'
+  )
+}
+
+function cleanupVpPolicies(value: any): void {
+  if (!value.vp_policies || value.vp_policies.length === 0) {
+    delete value.vp_policies
+  }
+}
+
+export function parseCredentialPolicies(ddo: any) {
+  const ddoInstance = DDOManager.getDDOClass(ddo)
+  const { credentials } = ddoInstance.getDDOFields() as any
+  if (!credentials) {
+    return
+  }
+  credentials.allow = credentials?.allow?.map((credential: { values: any[] }) => {
+    if (isCredentialPolicyBased(credential)) {
+      credential.values = credential.values.map((value) => {
+        value.request_credentials = value.request_credentials?.map(
+          (requestCredentials: { policies: any[] }) => {
+            if (requestCredentials.policies) {
+              requestCredentials.policies = requestCredentials.policies
+                .map((policy) => {
+                  try {
+                    return typeof policy === 'string' ? JSON.parse(policy) : undefined
+                  } catch (error) {
+                    return undefined
+                  }
+                })
+                .filter((policy) => policy !== undefined)
+            }
+            return requestCredentials
+          }
+        )
+
+        cleanupVpPolicies(value)
+        return value
+      })
+    }
+
+    return credential
+  })
 }
