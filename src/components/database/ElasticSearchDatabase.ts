@@ -243,9 +243,8 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
         return normalizeDocumentId(hit._source, hit._id)
       })
     } catch (error) {
-      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${
-        error.message
-      }`
+      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${error.message
+        }`
       DATABASE_LOGGER.logMessageWithEmoji(
         errorMsg,
         true,
@@ -501,37 +500,6 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       LOG_LEVELS_STR.LEVEL_INFO
     )
     return schema
-  }
-
-  async validateDDO(ddo: Record<string, any>): Promise<boolean> {
-    const ddoInstance = DDOManager.getDDOClass(ddo)
-    const ddoData = ddoInstance.getDDOData()
-    if ('indexedMetadata' in ddoData && ddoData?.indexedMetadata?.nft?.state !== 0) {
-      // Skipping validation for short DDOs as it currently doesn't work
-      // TODO: DDO validation needs to be updated to consider the fields required by the schema
-      // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
-      return true
-    }
-
-    const validation = await ddoInstance.validate()
-    if (validation[0] === true) {
-      DATABASE_LOGGER.logMessageWithEmoji(
-        `Validation of DDO with did: ${ddo.id} has passed`,
-        true,
-        GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
-        LOG_LEVELS_STR.LEVEL_INFO
-      )
-      return true
-    } else {
-      DATABASE_LOGGER.logMessageWithEmoji(
-        `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-          JSON.stringify(validation[1]),
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
-      return false
-    }
   }
 
   async search(query: Record<string, any>): Promise<any> {
