@@ -243,8 +243,9 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
         return normalizeDocumentId(hit._source, hit._id)
       })
     } catch (error) {
-      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${error.message
-        }`
+      const errorMsg = `Error when searching by query ${JSON.stringify(query)}: ${
+        error.message
+      }`
       DATABASE_LOGGER.logMessageWithEmoji(
         errorMsg,
         true,
