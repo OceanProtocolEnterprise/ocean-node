@@ -54,6 +54,7 @@ export async function getAlgoChecksums(
         metadata.algorithm.container.entrypoint + metadata.algorithm.container.checksum
       )
       .digest('hex')
+    CORE_LOGGER.info(`Algorithm checksums: ${JSON.stringify(checksums)}`)
     return checksums
   } catch (error) {
     CORE_LOGGER.error(`Fetching algorithm checksums failed: ${error.message}`)
@@ -95,6 +96,11 @@ export async function validateAlgoForDataset(
     if (!hasTrustedPublishers && !hasTrustedAlgorithms) return false
 
     if (algoDID) {
+      CORE_LOGGER.info(`Validating algorithm...`)
+      CORE_LOGGER.info(`Algorithm DID: ${algoDID}`)
+      CORE_LOGGER.info(`Algorithm checksums: ${JSON.stringify(algoChecksums)}`)
+      CORE_LOGGER.info(`Trusted publishers: ${JSON.stringify(publishers)}`)
+      CORE_LOGGER.info(`Trusted algorithms: ${JSON.stringify(algorithms)}`)
       // Check if algorithm is explicitly trusted
       const isAlgoTrusted =
         hasTrustedAlgorithms &&
