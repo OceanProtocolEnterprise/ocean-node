@@ -29,6 +29,8 @@ export function findCredential(
 }
 
 export function hasAddressMatchAllRule(credentials: Credential[]): boolean {
+  CORE_LOGGER.info('Checking for address match all rule in credentials')
+  CORE_LOGGER.info(`Credentials: ${JSON.stringify(credentials)}`)
   const creds = credentials.find((credential: Credential) => {
     if (Array.isArray(credential?.values)) {
       if (credential.values.length > 0 && credential.type) {
