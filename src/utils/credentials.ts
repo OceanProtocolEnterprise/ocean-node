@@ -29,14 +29,12 @@ export function findCredential(
 }
 
 export function hasAddressMatchAllRule(credentials: Credential[]): boolean {
-  CORE_LOGGER.info('Checking for address match all rule in credentials')
-  CORE_LOGGER.info(`Credentials: ${JSON.stringify(credentials)}`)
   const creds = credentials.find((credential: Credential) => {
     if (Array.isArray(credential?.values)) {
       if (credential.values.length > 0 && credential.type) {
-        const filteredValues: string[] = credential.values.filter((value: string) => {
-          return value?.toLowerCase() === '*' || value?.toLowerCase().includes('*') // address
-        })
+        const filteredValues: string[] = credential.values
+          .map((v: any) => (typeof v === 'string' ? v : (v?.address ?? v?.value)))
+          .filter((v: any) => typeof v === 'string' && v.toLowerCase().includes('*'))
         return (
           filteredValues.length > 0 &&
           credential.type.toLowerCase() === KNOWN_CREDENTIALS_TYPES[0]
