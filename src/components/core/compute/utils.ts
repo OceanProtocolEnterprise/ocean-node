@@ -21,7 +21,8 @@ export async function getAlgoChecksums(
 ): Promise<AlgoChecksums> {
   const checksums: AlgoChecksums = {
     files: '',
-    container: ''
+    container: '',
+    serviceId: algoServiceId
   }
   try {
     const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
@@ -67,6 +68,7 @@ export async function validateAlgoForDataset(
   algoChecksums: {
     files: string
     container: string
+    serviceId?: string
   },
   ddoInstance: VersionedDDO,
   datasetServiceId: string,
@@ -96,11 +98,6 @@ export async function validateAlgoForDataset(
     if (!hasTrustedPublishers && !hasTrustedAlgorithms) return false
 
     if (algoDID) {
-      CORE_LOGGER.info(`Validating algorithm...`)
-      CORE_LOGGER.info(`Algorithm DID: ${algoDID}`)
-      CORE_LOGGER.info(`Algorithm checksums: ${JSON.stringify(algoChecksums)}`)
-      CORE_LOGGER.info(`Trusted publishers: ${JSON.stringify(publishers)}`)
-      CORE_LOGGER.info(`Trusted algorithms: ${JSON.stringify(algorithms)}`)
       // Check if algorithm is explicitly trusted
       const isAlgoTrusted =
         hasTrustedAlgorithms &&
@@ -111,6 +108,12 @@ export async function validateAlgoForDataset(
           const containerMatch =
             algo.containerSectionChecksum === '*' ||
             algo.containerSectionChecksum === algoChecksums.container
+          if ('serviceId' in Object.keys(algo)) {
+            const serviceIdMatch =
+              algo.serviceId === '*' || algo.serviceId === algoChecksums.serviceId
+            return didMatch && filesMatch && containerMatch && serviceIdMatch
+          }
+
           return didMatch && filesMatch && containerMatch
         })
 
