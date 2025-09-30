@@ -56,6 +56,7 @@ describe('Compute Jobs Database', () => {
       ]
     )
     envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
+    envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
     config = await getConfiguration(true)
     db = await new C2DDatabase(config.dbConfig, typesenseSchemas.c2dSchemas)
   })
