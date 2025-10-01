@@ -118,9 +118,14 @@ export async function validateAlgoForDataset(
           if ('serviceId' in Object.keys(algo)) {
             const serviceIdMatch =
               algo.serviceId === '*' || algo.serviceId === algoChecksums.serviceId
+            CORE_LOGGER.info(
+              `didMatch: ${didMatch}, filesMatch: ${filesMatch}, containerMatch: ${containerMatch}, serviceIdMatch: ${serviceIdMatch}`
+            )
             return didMatch && filesMatch && containerMatch && serviceIdMatch
           }
-
+          CORE_LOGGER.info(
+            `didMatch: ${didMatch}, filesMatch: ${filesMatch}, containerMatch: ${containerMatch}`
+          )
           return didMatch && filesMatch && containerMatch
         })
 
@@ -138,7 +143,8 @@ export async function validateAlgoForDataset(
             .includes(nftAddress?.toLowerCase())
         }
       }
-
+      CORE_LOGGER.info(`isAlgoTrusted: ${isAlgoTrusted}`)
+      CORE_LOGGER.info(`isPublisherTrusted: ${isPublisherTrusted}`)
       return isAlgoTrusted && isPublisherTrusted
     }
 
