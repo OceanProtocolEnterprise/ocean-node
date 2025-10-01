@@ -8,7 +8,7 @@ import {
 } from '../../@types/fileObject'
 import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants.js'
 import { FileInfoHandler } from '../core/handler/fileInfoHandler.js'
-import { HTTP_LOGGER } from '../../utils/logging/common.js'
+import { CORE_LOGGER, HTTP_LOGGER } from '../../utils/logging/common.js'
 import { FileInfoCommand } from '../../@types/commands.js'
 
 export const fileInfoRoute = express.Router()
@@ -87,6 +87,8 @@ fileInfoRoute.post(
           type: fileObject.type as FileObjectType
         }
       }
+      CORE_LOGGER.logMessage(`FileInfo task: ${JSON.stringify(fileInfoTask)}`, true)
+      CORE_LOGGER.logMessage(`FileObject info: ${JSON.stringify(fileObject)}`, true)
       const response = await new FileInfoHandler(req.oceanNode).handle(fileInfoTask)
       if (response.stream) {
         res.status(response.status.httpStatus)

@@ -34,6 +34,7 @@ async function formatMetadata(file: ArweaveFileObject | IpfsFileObject | UrlFile
     'get',
     false
   )
+  CORE_LOGGER.logMessage(`URL for file: ${url}`)
   CORE_LOGGER.logMessage(`Metadata for file: ${contentLength} ${contentType}`)
 
   return {
@@ -85,14 +86,18 @@ export class FileInfoHandler extends CommandHandler {
           type: task.type,
           fileIndex: task.fileIndex
         })
+        CORE_LOGGER.logMessage(`File Info: ${JSON.stringify(fileInfo)}`, true)
       } else if (task.did && task.serviceId) {
         const fileArray = await getFile(task.did, task.serviceId, oceanNode)
+        CORE_LOGGER.logMessage(`File Array: ${JSON.stringify(fileArray)}`, true)
         if (task.fileIndex) {
           const fileMetadata = await formatMetadata(fileArray[task.fileIndex])
+          CORE_LOGGER.logMessage(`File Metadata: ${JSON.stringify(fileMetadata)}`, true)
           fileInfo.push(fileMetadata)
         } else {
           for (const file of fileArray) {
             const fileMetadata = await formatMetadata(file)
+            CORE_LOGGER.logMessage(`File Metadata: ${JSON.stringify(fileMetadata)}`, true)
             fileInfo.push(fileMetadata)
           }
         }
