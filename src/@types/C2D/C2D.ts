@@ -129,6 +129,7 @@ export interface C2DDockerConfig {
 }
 
 export type ComputeResultType =
+  | 'imageLog'
   | 'algorithmLog'
   | 'output'
   | 'configurationLog'
