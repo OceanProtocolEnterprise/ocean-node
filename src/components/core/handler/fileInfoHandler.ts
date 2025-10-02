@@ -34,7 +34,6 @@ async function formatMetadata(file: ArweaveFileObject | IpfsFileObject | UrlFile
     'get',
     false
   )
-  CORE_LOGGER.logMessage(`Metadata for file: ${contentLength} ${contentType}`)
 
   return {
     valid: true,

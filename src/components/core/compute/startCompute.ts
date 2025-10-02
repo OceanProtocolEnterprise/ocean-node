@@ -351,7 +351,7 @@ export class PaidComputeStartHandler extends CommandHandler {
                   httpStatus: 400,
                   error: `Algorithm ${
                     task.algorithm.documentId
-                  } not allowed to run on the dataset: ${ddoInstance.getDid()}`
+                  } with serviceId ${task.algorithm.serviceId} not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${task.datasets[safeIndex].serviceId}`
                 }
               }
             }
