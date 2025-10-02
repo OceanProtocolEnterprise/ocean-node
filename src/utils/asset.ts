@@ -45,7 +45,6 @@ export async function fetchFileMetadata(
   let contentType: string = ''
   let contentLength: number = 0
   const contentChecksum = createHash('sha256')
-  CORE_LOGGER.logMessage(`contenteCheckusm: ${contentChecksum}`, true)
   const maxLengthInt = parseInt(process.env.MAX_CHECKSUM_LENGTH, 10)
   const maxLength = isNaN(maxLengthInt) ? 10 * 1024 * 1024 : maxLengthInt
 
