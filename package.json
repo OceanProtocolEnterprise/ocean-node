@@ -15,7 +15,7 @@
     "build:controlpanel": "cd controlpanel && npm install --maxsockets 1 && NODE_ENV=production npx next build",
     "quickstart": "bash scripts/ocean-node-quickstart.sh",
     "setupEnv": "bash -c './src/helpers/scripts/setupNodeEnv.sh && source .env'",
-    "build-tests:tsc": "tsc --sourceMap --sourceRoot ./src/test && cp ./src/test/.env.test ./dist/test",
+    "build-tests:tsc": "tsc --sourceMap --sourceRoot ./src/test && cp ./src/test/.env.test ./dist/test && cp ./src/test/.env.test2 ./dist/test && cp ./src/test/config.json $HOME/config.json",
     "client": "mkdir -p ./dist/helpers/scripts/output && node dist/helpers/scripts/clientExample.js",
     "clean": "if [ -d ./dist ]; then find ./dist -mindepth 1 -not -path './dist/controlpanel*' -delete; fi",
     "clean:all": "rm -rf ./dist/ ./doc/ ./.nyc_output",
@@ -77,7 +77,7 @@
     "@oceanprotocol/ddo-js": "^0.1.4",
     "@types/lodash.clonedeep": "^4.5.7",
     "aws-sdk": "^2.1591.0",
-    "axios": "^1.8.4",
+    "axios": "^1.12.0",
     "base58-js": "^2.0.0",
     "cors": "^2.8.5",
     "delay": "^5.0.0",
@@ -88,6 +88,7 @@
     "eth-crypto": "^2.6.0",
     "ethers": "^6.14.1",
     "express": "^4.21.1",
+    "humanhash": "^1.0.4",
     "hyperdiff": "^2.0.16",
     "ip": "^2.0.1",
     "it-pipe": "^3.0.1",
@@ -107,7 +108,8 @@
     "uuid": "^11.1.0",
     "winston": "^3.11.0",
     "winston-daily-rotate-file": "^4.7.1",
-    "winston-transport": "^4.6.0"
+    "winston-transport": "^4.6.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/chai": "^4.3.10",
@@ -122,6 +124,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/rdfjs__formats-common": "^3.1.5",
     "@types/sinon": "^17.0.4",
+    "@types/tar-stream": "^3.1.4",
     "@typescript-eslint/eslint-plugin": "^6.8.0",
     "@typescript-eslint/parser": "^6.8.0",
     "auto-changelog": "^2.4.0",
