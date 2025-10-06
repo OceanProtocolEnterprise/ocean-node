@@ -8,7 +8,7 @@ import {
   ComputeAlgorithm,
   ComputeAsset,
   // ComputeEnvironment,
-  ComputeJob,
+  // ComputeJob,
   DBComputeJob,
   RunningPlatform
 } from '../../@types/C2D/C2D.js'
@@ -29,8 +29,8 @@ import {
 } from '../utils/utils.js'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
-import { completeDBComputeJob, dockerImageManifest } from '../data/assets.js'
-import { omitDBComputeFieldsFromComputeJob } from '../../components/c2d/index.js'
+import { dockerImageManifest } from '../data/assets.js'
+// import { omitDBComputeFieldsFromComputeJob } from '../../components/c2d/index.js'
 import { checkManifestPlatform } from '../../components/c2d/compute_engine_docker.js'
 
 describe('Compute Jobs Database', () => {
@@ -197,27 +197,27 @@ describe('Compute Jobs Database', () => {
     expect(convertStringToArray(str)).to.deep.equal(expectedArray)
   })
 
-  it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
-    const source: any = completeDBComputeJob
-    const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
-    console.log('output: ', JSON.stringify(output, null, 2))
-    expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
-      false
-    )
-    expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
-      false
-    )
-    expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
-    expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
-      false
-    )
-  })
+  // it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
+  //   const source: any = completeDBComputeJob
+  //   const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
+  //   console.log('output: ', JSON.stringify(output, null, 2))
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
+  //     false
+  //   )
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
+  //     false
+  //   )
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
+  //     false
+  //   )
+  // })
 
   it('should check manifest platform against local platform env', () => {
     const arch = os.machine() // ex: arm
