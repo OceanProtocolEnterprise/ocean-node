@@ -200,7 +200,7 @@ describe('Compute Jobs Database', () => {
   it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
     const source: any = completeDBComputeJob
     const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
-
+    console.log('output: ', JSON.stringify(output, null, 2))
     expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
     expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
       false
