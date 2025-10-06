@@ -130,7 +130,7 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
     "resources": [
       {
         "id": "disk",
-        "total": 1000000000
+        "total": 10
       }
     ],
     "storageExpiry": 604800,
@@ -158,11 +158,11 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
         },
         {
           "id": "ram",
-          "max": 1000000000
+          "max": 1
         },
         {
           "id": "disk",
-          "max": 1000000000
+          "max": 1
         }
       ]
     }

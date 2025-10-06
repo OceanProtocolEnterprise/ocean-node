@@ -33,7 +33,7 @@ import { C2DEngineDocker, getAlgorithmImage } from '../../c2d/compute_engine_doc
 import { Credentials, DDOManager } from '@oceanprotocol/ddo-js'
 import { areKnownCredentialTypes, checkCredentials } from '../../../utils/credentials.js'
 import { PolicyServer } from '../../policyServer/index.js'
-import { getAlgoChecksums, validateAlgoForDataset } from './utils.js'
+import { generateUniqueID, getAlgoChecksums, validateAlgoForDataset } from './utils.js'
 
 export class ComputeInitializeHandler extends CommandHandler {
   validate(command: ComputeInitializeCommand): ValidateParams {
@@ -257,7 +257,7 @@ export class ComputeInitializeHandler extends CommandHandler {
                   httpStatus: 400,
                   error: `Algorithm ${
                     task.algorithm.documentId
-                  } with serviceId ${task.algorithm.serviceId} not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${task.datasets[safeIndex].serviceId}`
+                  } not allowed to run on the dataset: ${ddoInstance.getDid()}`
                 }
               }
             }
@@ -366,7 +366,7 @@ export class ComputeInitializeHandler extends CommandHandler {
             }
           }
           if (hasDockerImages) {
-            const algoImage = getAlgorithmImage(task.algorithm)
+            const algoImage = getAlgorithmImage(task.algorithm, generateUniqueID(task))
             if (algoImage) {
               const validation: ValidateParams = await C2DEngineDocker.checkDockerImage(
                 algoImage,
@@ -387,7 +387,7 @@ export class ComputeInitializeHandler extends CommandHandler {
           const signer = blockchain.getSigner()
 
           // check if oasis evm or similar
-          const confidentialEVM = isConfidentialChainDDO(BigInt(ddoChainId), service)
+          const confidentialEVM = isConfidentialChainDDO(BigInt(ddo.chainId), service)
           // let's see if we can access this asset
           let canDecrypt = false
           try {
