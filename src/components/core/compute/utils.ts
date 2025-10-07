@@ -41,6 +41,7 @@ export async function getAlgoChecksums(
       return checksums
     }
     const fileArray = await getFile(algoDDO, algoServiceId, oceanNode)
+    CORE_LOGGER.debug(`File array getAlgoChecksums C2D: ${JSON.stringify(fileArray)}`)
     for (const file of fileArray) {
       const url =
         file.type === 'url'
