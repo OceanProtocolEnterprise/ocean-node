@@ -124,7 +124,6 @@ export class OceanP2P extends EventEmitter {
     this._protocol = '/ocean/nodes/1.0.0'
 
     this._interval = setInterval(this._flushAdvertiseQueue.bind(this), 60 * 1000) // every 60 seconds
-    this._interval = setInterval(this._flushAdvertiseQueue.bind(this), 60 * 1000) // every 60 seconds
 
     // only enable handling of commands if not bootstrap node
     if (!this._config.isBootstrap) {
