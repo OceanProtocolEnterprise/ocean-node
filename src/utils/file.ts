@@ -43,14 +43,10 @@ export async function getFile(
       Uint8Array.from(Buffer.from(sanitizeServiceFiles(service.files), 'hex')),
       EncryptMethod.ECIES
     )
-    CORE_LOGGER.logMessage(`URL decrypted for Service ID: ${serviceId}`)
-    CORE_LOGGER.debug(`Decrypted URL: ${decryptedUrlBytes.toString()}`)
 
     // Convert the decrypted bytes back to a string
     const decryptedFilesString = Buffer.from(decryptedUrlBytes).toString()
-    CORE_LOGGER.debug(`Decrypted files string: ${decryptedFilesString}`)
     const decryptedFileArray = JSON.parse(decryptedFilesString)
-    CORE_LOGGER.debug(`Decrypted files array: ${JSON.stringify(decryptedFileArray)}`)
     return decryptedFileArray.files
   } catch (error) {
     const msg = 'Error occured while requesting the files: ' + error.message

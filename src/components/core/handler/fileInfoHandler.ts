@@ -86,7 +86,6 @@ export class FileInfoHandler extends CommandHandler {
         })
       } else if (task.did && task.serviceId) {
         const fileArray = await getFile(task.did, task.serviceId, oceanNode)
-        CORE_LOGGER.debug(`File array: ${JSON.stringify(fileArray)}`)
         if (task.fileIndex) {
           const fileMetadata = await formatMetadata(fileArray[task.fileIndex])
           fileInfo.push(fileMetadata)
