@@ -54,6 +54,7 @@ export abstract class Storage {
       url: input,
       responseType: 'stream'
     })
+    CORE_LOGGER.info(`Successfully fetched the file from ${input}`)
 
     return {
       httpStatus: response.status,

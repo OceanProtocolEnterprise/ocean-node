@@ -457,6 +457,7 @@ export class DecryptDdoHandler extends CommandHandler {
         status: { httpStatus: 200 }
       }
     } catch (error) {
+      CORE_LOGGER.info(`Decrypt DDO here: error ${JSON.stringify(error)}`)
       CORE_LOGGER.logMessage(`Decrypt DDO: error ${error}`, true)
       return {
         stream: null,
