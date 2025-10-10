@@ -9,7 +9,7 @@ import { deleteIndexedMetadataIfExists } from '../../../utils/asset.js'
 import { getConfiguration } from '../../../utils/config.js'
 import { checkCredentialOnAccessList } from '../../../utils/credentials.js'
 import { getDatabase } from '../../../utils/database.js'
-import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
+import { CORE_LOGGER, INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { asyncCallWithTimeout, streamToString } from '../../../utils/util.js'
 import { PolicyServer } from '../../policyServer/index.js'
@@ -29,6 +29,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
     provider: JsonRpcApiProvider,
     eventName: string
   ): Promise<any> {
+    CORE_LOGGER.logMessage(`Processing event ${eventName}...`, true)
     let did = 'did:op'
     try {
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
@@ -56,6 +57,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       const metadataHash = decodedEventData.args[5]
       const flag = decodedEventData.args[3]
       const owner = decodedEventData.args[0]
+      CORE_LOGGER.logMessage(`Metadata URI: ${metadata}`, true)
       const decryptedDDO = await this.decryptDDO(
         decodedEventData.args[2],
         flag,
@@ -66,21 +68,25 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadataHash,
         metadata
       )
+      CORE_LOGGER.logMessage(`Decrypted DDO: ${JSON.stringify(decryptedDDO)}`, true)
       let ddo = await this.processDDO(decryptedDDO)
+      CORE_LOGGER.logMessage(`Processed DDO: ${JSON.stringify(ddo)}`, true)
       if (
         !isRemoteDDO(decryptedDDO) &&
         parseInt(flag) !== 2 &&
         !this.checkDdoHash(ddo, metadataHash)
       ) {
+        CORE_LOGGER.error(`DDO hash does not match the metadata hash.`)
         return
       }
       if (ddo.encryptedData) {
+        CORE_LOGGER.logMessage(`DDO is encrypted, decrypting proof...`, true)
         const proof = await this.decryptDDOIPFS(
           decodedEventData.args[2],
           owner,
           ddo.encryptedData
         )
-
+        CORE_LOGGER.logMessage(`Decrypted proof: ${JSON.stringify(proof)}`, true)
         const data = this.getDataFromProof(proof)
         const ddoInstance = DDOManager.getDDOClass(data.ddoObj)
         ddo = ddoInstance.updateFields({
@@ -176,10 +182,14 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       }
 
       if (eventName === EVENTS.METADATA_UPDATED) {
+        CORE_LOGGER.logMessage(`Metadata update for ${ddoInstance.getDid()}`, true)
         if (!previousDdoInstance) {
           INDEXER_LOGGER.logMessage(
             `Previous DDO with did ${ddoInstance.getDid()} was not found the database. Maybe it was deleted/hidden to some violation issues`,
             true
+          )
+          CORE_LOGGER.info(
+            `Previous DDO with did ${ddoInstance.getDid()} was not found the database. Maybe it was deleted/hidden to some violation issues`
           )
           await ddoState.update(
             this.networkId,
@@ -218,6 +228,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         [EVENTS.METADATA_CREATED, EVENTS.METADATA_UPDATED].includes(eventName) &&
         this.isValidDtAddressFromServices(ddoInstance.getDDOFields().services)
       ) {
+        CORE_LOGGER.logMessage(`Getting pricing for DDO`, true)
         const ddoWithPricing = await getPricingStatsForDddo(ddoInstance, signer)
         const nft = await this.getNFTInfo(
           ddoWithPricing.getDDOFields().nftAddress,
@@ -306,6 +317,8 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         false,
         error.message
       )
+      CORE_LOGGER.error(`Error processMetadataEvents: ${error.message}`)
+      CORE_LOGGER.info(`ERROR HERE ${JSON.stringify(error)}`)
       INDEXER_LOGGER.log(
         LOG_LEVELS_STR.LEVEL_ERROR,
         `Error processMetadataEvents: ${error}`,
