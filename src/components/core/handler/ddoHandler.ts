@@ -399,7 +399,10 @@ export class DecryptDdoHandler extends CommandHandler {
       if (isRemoteDDO(ddoObject)) {
         CORE_LOGGER.logMessage(`Decrypt DDO: is remote ddo`, true)
         const storage = Storage.getStorageClass(ddoObject.remote, config)
+        CORE_LOGGER.logMessage(`Decrypt DDO: storage ${JSON.stringify(storage)}`, true)
         const result = await storage.getReadableStream()
+        CORE_LOGGER.info(`Decrypt DDO: got remote result ${JSON.stringify(result)}`)
+        CORE_LOGGER.logMessage(`Decrypt DDO: got remote stream`, true)
         stream = result.stream as Readable
       } else {
         // checksum matches
@@ -425,12 +428,16 @@ export class DecryptDdoHandler extends CommandHandler {
         const message = String(
           transactionId + dataNftAddress + decrypterAddress + chainId + nonce
         )
+        CORE_LOGGER.logMessage(`Decrypt DDO: message ${message}`, true)
         const messageHash = ethers.solidityPackedKeccak256(
           ['bytes'],
           [ethers.hexlify(ethers.toUtf8Bytes(message))]
         )
         const addressFromSignature = ethers.verifyMessage(messageHash, task.signature)
-
+        CORE_LOGGER.logMessage(
+          `Decrypt DDO: addressFromSignature ${addressFromSignature}`,
+          true
+        )
         if (addressFromSignature?.toLowerCase() !== decrypterAddress?.toLowerCase()) {
           throw new Error('address does not match')
         }
