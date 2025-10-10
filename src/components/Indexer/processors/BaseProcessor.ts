@@ -20,7 +20,7 @@ import { timestampToDateTime } from '../../../utils/conversions.js'
 import { getConfiguration } from '../../../utils/config.js'
 import { create256Hash } from '../../../utils/crypt.js'
 import { getDatabase } from '../../../utils/database.js'
-import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
+import { CORE_LOGGER, INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { URLUtils } from '../../../utils/url.js'
 import { streamToString } from '../../../utils/util.js'
@@ -274,6 +274,11 @@ export abstract class BaseEventProcessor {
             url: `${decryptorURL}/api/services/decrypt`,
             data: payload
           })
+          CORE_LOGGER.info(
+            `Response from decryptor: ${response.status} ${response.statusText}`
+          )
+          CORE_LOGGER.info(`Response data from decryptor: ${response.data}`)
+          CORE_LOGGER.info(`Response headers from decryptor: ${JSON.stringify(response)}`)
           if (response.status !== 200) {
             const message = `bProvider exception on decrypt DDO. Status: ${response.status}, ${response.statusText}`
             INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, message)
