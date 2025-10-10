@@ -299,6 +299,7 @@ export abstract class BaseEventProcessor {
             throw new Error(msg)
           }
         } catch (err) {
+          CORE_LOGGER.error(`Error on decrypting DDO: ${JSON.stringify(err)}`)
           const message = `Provider exception on decrypt DDO. Status: ${err.message}`
           INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, message)
           throw new Error(message)
