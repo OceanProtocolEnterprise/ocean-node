@@ -91,6 +91,7 @@ export class DecryptDdoHandler extends CommandHandler {
       let decrypterAddress: string
       try {
         decrypterAddress = ethers.getAddress(task.decrypterAddress)
+        CORE_LOGGER.logMessage(`Decrypt DDO: decrypterAddress ${decrypterAddress}`, true)
       } catch (error) {
         CORE_LOGGER.logMessage(`Decrypt DDO: error ${error}`, true)
         return {
@@ -103,6 +104,7 @@ export class DecryptDdoHandler extends CommandHandler {
       }
 
       const nonce = Number(task.nonce)
+      CORE_LOGGER.logMessage(`Decrypt DDO: nonce ${nonce}`, true)
       if (isNaN(nonce)) {
         CORE_LOGGER.logMessage(
           `Decrypt DDO: error ${task.nonce} value is not a number`,
@@ -136,7 +138,11 @@ export class DecryptDdoHandler extends CommandHandler {
       const chainId = String(task.chainId)
       const config = await getConfiguration()
       const supportedNetwork = config.supportedNetworks[chainId]
-
+      CORE_LOGGER.logMessage(`Decrypt DDO: chainId ${chainId}`, true)
+      CORE_LOGGER.logMessage(
+        `Decrypt DDO: supportedNetwork ${JSON.stringify(supportedNetwork)}`,
+        true
+      )
       // check if supported chainId
       if (!supportedNetwork) {
         CORE_LOGGER.logMessage(`Decrypt DDO: Unsupported chain id ${chainId}`, true)
@@ -175,6 +181,7 @@ export class DecryptDdoHandler extends CommandHandler {
         supportedNetwork.fallbackRPCs
       )
       const { ready, error } = await blockchain.isNetworkReady()
+      CORE_LOGGER.logMessage(`Decrypt DDO: network ready ${ready}`, true)
       if (!ready) {
         return {
           stream: null,
@@ -198,7 +205,7 @@ export class DecryptDdoHandler extends CommandHandler {
         signer,
         dataNftAddress
       )
-
+      CORE_LOGGER.logMessage(`Decrypt DDO: wasDeployedByUs ${wasDeployedByUs}`, true)
       if (!wasDeployedByUs) {
         CORE_LOGGER.logMessage(
           'Decrypt DDO: Asset not deployed by the data NFT factory',
@@ -222,6 +229,7 @@ export class DecryptDdoHandler extends CommandHandler {
         decrypterAddress,
         signer
       )
+      CORE_LOGGER.logMessage(`Decrypt DDO: isAllowed ${isAllowed}`, true)
       if (!isAllowed) {
         CORE_LOGGER.logMessage(
           'Decrypt DDO: Decrypter not authorized per access list',
@@ -240,6 +248,7 @@ export class DecryptDdoHandler extends CommandHandler {
       let encryptedDocument: Uint8Array
       let flags: number
       let documentHash: string
+      CORE_LOGGER.logMessage(`Decrypt DDO: transactionId ${transactionId}`, true)
       if (transactionId) {
         try {
           const receipt = await provider.getTransactionReceipt(transactionId)
@@ -330,6 +339,7 @@ export class DecryptDdoHandler extends CommandHandler {
 
       let decryptedDocument: Buffer
       // check if DDO is ECIES encrypted
+      CORE_LOGGER.logMessage(`Decrypt DDO: flags ${flags}`, true)
       if (flags & 2) {
         try {
           decryptedDocument = await decrypt(encryptedDocument, EncryptMethod.ECIES)
@@ -370,6 +380,7 @@ export class DecryptDdoHandler extends CommandHandler {
 
       // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
+      CORE_LOGGER.logMessage(`Decrypt DDO: ddo ${JSON.stringify(ddo)}`, true)
       if (ddo.id && !this.checkId(ddo.id, dataNftAddress, chainId)) {
         CORE_LOGGER.error(`Decrypted DDO ID is not matching the generated hash for DID.`)
         return {
@@ -384,12 +395,15 @@ export class DecryptDdoHandler extends CommandHandler {
       const ddoObject = JSON.parse(decryptedDocumentString)
 
       let stream = Readable.from(decryptedDocumentString)
+      CORE_LOGGER.logMessage(`Decrypt DDO: ddoObject ${JSON.stringify(ddoObject)}`, true)
       if (isRemoteDDO(ddoObject)) {
+        CORE_LOGGER.logMessage(`Decrypt DDO: is remote ddo`, true)
         const storage = Storage.getStorageClass(ddoObject.remote, config)
         const result = await storage.getReadableStream()
         stream = result.stream as Readable
       } else {
         // checksum matches
+        CORE_LOGGER.logMessage(`Decrypt DDO: documentHash ${documentHash}`, true)
         const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
         if (decryptedDocumentHash !== documentHash) {
           CORE_LOGGER.logMessage(
