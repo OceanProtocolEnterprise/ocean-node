@@ -65,10 +65,12 @@ export async function createProviderFee(
   const ddoInstance = DDOManager.getDDOClass(asset)
   const { chainId: assetChainId } = ddoInstance.getDDOFields()
   const providerWallet = await getProviderWallet(String(assetChainId))
+  CORE_LOGGER.info(`Provider wallet: ${providerWallet.address}`)
   const providerFeeAddress: string = providerWallet.address
   let providerFeeAmount: number
   let providerFeeAmountFormatted: BigNumberish
   const providerFeeToken = await getProviderFeeToken(asset.chainId)
+  CORE_LOGGER.info(`Provider fee token: ${providerFeeToken}`)
   if (providerFeeToken?.toLowerCase() === ZeroAddress) {
     providerFeeAmount = 0
   } else {
@@ -468,9 +470,12 @@ export async function getProviderKey(): Promise<string> {
  * @returns the token address
  */
 export async function getProviderFeeToken(chainId: number): Promise<string> {
+  const feeToken = (await getConfiguration()).feeStrategy.feeTokens
+  CORE_LOGGER.info(`feeToken: ${feeToken.toString()}`)
   const result = (await getConfiguration()).feeStrategy.feeTokens.filter(
     (token: FeeTokens) => Number(token.chain) === chainId
   )
+  CORE_LOGGER.info(`feeToken result: ${result.toString()}`)
   if (result.length === 0 && chainId === 8996) {
     const localOceanToken = getOceanArtifactsAdresses().development.Ocean
     return localOceanToken || ethers.ZeroAddress
