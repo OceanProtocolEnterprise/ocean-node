@@ -169,8 +169,14 @@ export class C2DEngineDocker extends C2DEngine {
         architecture: sysinfo.Architecture,
         os: sysinfo.OSType
       },
+      access: {
+        addresses: [],
+        accessLists: []
+      },
       fees
     })
+    if (`access` in envConfig) this.envs[0].access = envConfig.access
+
     if (`storageExpiry` in envConfig) this.envs[0].storageExpiry = envConfig.storageExpiry
     if (`maxJobDuration` in envConfig)
       this.envs[0].maxJobDuration = envConfig.maxJobDuration
@@ -235,7 +241,13 @@ export class C2DEngineDocker extends C2DEngine {
       */
     // limits for free env
     if ('free' in envConfig) {
-      this.envs[0].free = {}
+      this.envs[0].free = {
+        access: {
+          addresses: [],
+          accessLists: []
+        }
+      }
+      if (`access` in envConfig.free) this.envs[0].free.access = envConfig.free.access
       if (`storageExpiry` in envConfig.free)
         this.envs[0].free.storageExpiry = envConfig.free.storageExpiry
       if (`maxJobDuration` in envConfig.free)
@@ -428,7 +440,8 @@ export class C2DEngineDocker extends C2DEngine {
       payment,
       metadata,
       additionalViewers,
-      terminationDetails: { exitCode: null, OOMKilled: null }
+      terminationDetails: { exitCode: null, OOMKilled: null },
+      algoDuration: 0
     }
 
     if (algorithm.meta.container && algorithm.meta.container.dockerfile) {
@@ -859,9 +872,8 @@ export class C2DEngineDocker extends C2DEngine {
       }
       const cpus = this.getResourceRequest(job.resources, 'cpu')
       if (cpus && cpus > 0) {
-        const systemInfo = this.docker ? await this.docker.info() : null
         hostConfig.CpuPeriod = 100000 // 100 miliseconds is usually the default
-        hostConfig.CpuQuota = Math.floor((cpus / systemInfo.NCPU) * hostConfig.CpuPeriod)
+        hostConfig.CpuQuota = Math.floor(cpus * hostConfig.CpuPeriod)
       }
       const containerInfo: ContainerCreateOptions = {
         name: job.jobId + '-algoritm',
@@ -1116,6 +1128,11 @@ export class C2DEngineDocker extends C2DEngine {
     this.jobImageSizes.delete(job.jobId)
 
     // payments
+    const algoDuration =
+      parseFloat(job.algoStopTimestamp) - parseFloat(job.algoStartTimestamp)
+
+    job.algoDuration = algoDuration
+    await this.db.updateJob(job)
     if (!job.isFree && job.payment) {
       let txId = null
       const env = await this.getComputeEnvironment(job.payment.chainId, job.environment)
@@ -1123,13 +1140,16 @@ export class C2DEngineDocker extends C2DEngine {
       if (env && `minJobDuration` in env && env.minJobDuration) {
         minDuration = env.minJobDuration
       }
-      const algoRunnedTime =
-        parseFloat(job.algoStopTimestamp) - parseFloat(job.algoStartTimestamp)
-      if (algoRunnedTime < 0) minDuration += algoRunnedTime * -1
-      else minDuration += algoRunnedTime
+
+      if (algoDuration < 0) minDuration += algoDuration * -1
+      else minDuration += algoDuration
+      let cost = 0
       if (minDuration > 0) {
         // we need to claim
-        const cost = this.getTotalCostOfJob(job.resources, minDuration)
+        const fee = env.fees[job.payment.chainId].find(
+          (fee) => fee.feeToken === job.payment.token
+        )
+        cost = this.getTotalCostOfJob(job.resources, minDuration, fee)
         const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
         try {
           txId = await this.escrow.claimLock(
@@ -1158,6 +1178,7 @@ export class C2DEngineDocker extends C2DEngine {
       }
       if (txId) {
         job.payment.claimTx = txId
+        job.payment.cost = cost
         await this.db.updateJob(job)
       }
     }

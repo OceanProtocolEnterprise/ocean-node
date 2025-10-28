@@ -9,8 +9,7 @@ import {
   toUtf8Bytes,
   hexlify,
   getBytes,
-  toUtf8String,
-  getAddress
+  toUtf8String
 } from 'ethers'
 import { Readable } from 'winston-transport'
 import { DecryptDDOCommand } from '../../../@types/commands.js'
@@ -20,15 +19,15 @@ import { timestampToDateTime } from '../../../utils/conversions.js'
 import { getConfiguration } from '../../../utils/config.js'
 import { create256Hash } from '../../../utils/crypt.js'
 import { getDatabase } from '../../../utils/database.js'
-import { CORE_LOGGER, INDEXER_LOGGER } from '../../../utils/logging/common.js'
+import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { URLUtils } from '../../../utils/url.js'
 import { streamToString } from '../../../utils/util.js'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
-import { createHash } from 'node:crypto'
-import { AbstractDdoDatabase } from '../../database/BaseDatabase.js'
+import { fetchTransactionReceipt } from '../../core/utils/validateOrders.js'
+import { withRetrial } from '../utils.js'
 
 export abstract class BaseEventProcessor {
   protected networkId: number
@@ -91,39 +90,47 @@ export abstract class BaseEventProcessor {
     eventType: string
   ): Promise<ethers.LogDescription> {
     const iface = new Interface(abi)
-    const receipt = await provider.getTransactionReceipt(transactionHash)
-
-    let eventHash: string
-    for (const [key, value] of Object.entries(EVENT_HASHES)) {
-      if (value.type === eventType) {
-        eventHash = key
-        break
-      }
+    let receipt: ethers.TransactionReceipt
+    try {
+      receipt = await fetchTransactionReceipt(transactionHash, provider)
+    } catch (e) {
+      INDEXER_LOGGER.error(`Error retrieving receipt: ${e.message}`)
     }
-    if (eventHash === '') {
-      INDEXER_LOGGER.error(`Event hash couldn't be found!`)
-      return null
-    }
-
-    let eventObj: any
-    for (const log of receipt.logs) {
-      if (log.topics[0] === eventHash) {
-        eventObj = {
-          topics: log.topics,
-          data: log.data
+    if (receipt) {
+      let eventHash: string
+      for (const [key, value] of Object.entries(EVENT_HASHES)) {
+        if (value.type === eventType) {
+          eventHash = key
+          break
         }
-        break
       }
-    }
+      if (eventHash === '') {
+        INDEXER_LOGGER.error(`Event hash couldn't be found!`)
+        return null
+      }
 
-    if (!eventObj) {
-      INDEXER_LOGGER.error(
-        `Event object couldn't be retrieved! Event hash not present in logs topics`
-      )
-      return null
-    }
+      let eventObj: any
+      for (const log of receipt.logs) {
+        if (log.topics[0] === eventHash) {
+          eventObj = {
+            topics: log.topics,
+            data: log.data
+          }
+          break
+        }
+      }
 
-    return iface.parseLog(eventObj)
+      if (!eventObj) {
+        INDEXER_LOGGER.error(
+          `Event object couldn't be retrieved! Event hash not present in logs topics`
+        )
+        return null
+      }
+
+      return iface.parseLog(eventObj)
+    } else {
+      INDEXER_LOGGER.error('Receipt could not be fetched')
+    }
   }
 
   protected async getNFTInfo(
@@ -158,6 +165,7 @@ export abstract class BaseEventProcessor {
 
         return saveDDO
       }
+
       const saveDDO = await ddoDatabase.update({ ...ddo.getDDOData() })
       await ddoState.update(
         this.networkId,
@@ -197,37 +205,6 @@ export abstract class BaseEventProcessor {
     return true
   }
 
-  protected async getDDO(
-    ddoDatabase: AbstractDdoDatabase,
-    nftAddress: string,
-    chainId: number
-  ): Promise<any> {
-    const did =
-      'did:op:' +
-      createHash('sha256')
-        .update(getAddress(nftAddress) + chainId.toString(10))
-        .digest('hex')
-    const didOpe =
-      'did:ope:' +
-      createHash('sha256')
-        .update(getAddress(nftAddress) + chainId.toString(10))
-        .digest('hex')
-
-    let ddo = await ddoDatabase.retrieve(did)
-    if (!ddo) {
-      INDEXER_LOGGER.logMessage(
-        `Detected OrderStarted changed for ${did}, but it does not exists, try with ddo:ope.`
-      )
-      ddo = await ddoDatabase.retrieve(didOpe)
-      if (!ddo) {
-        INDEXER_LOGGER.logMessage(
-          `Detected OrderStarted changed for ${didOpe}, but it does not exists.`
-        )
-      }
-    }
-    return ddo
-  }
-
   protected async decryptDDO(
     decryptorURL: string,
     flag: string,
@@ -239,25 +216,59 @@ export abstract class BaseEventProcessor {
     metadata: any
   ): Promise<any> {
     let ddo
-    if (parseInt(flag) === 2) {
+    // Log the flag value
+    INDEXER_LOGGER.logMessage(`decryptDDO: flag=${flag}`)
+    if ((parseInt(flag) & 2) !== 0) {
       INDEXER_LOGGER.logMessage(
         `Decrypting DDO  from network: ${this.networkId} created by: ${eventCreator} encrypted by: ${decryptorURL}`
       )
-      const nonce = Math.floor(Date.now() / 1000).toString()
       const config = await getConfiguration()
       const { keys } = config
+      let nonce: string
+      try {
+        if (URLUtils.isValidUrl(decryptorURL)) {
+          INDEXER_LOGGER.logMessage(
+            `decryptDDO: Making HTTP request for nonce. DecryptorURL: ${decryptorURL}`
+          )
+          const nonceResponse = await axios.get(
+            `${decryptorURL}/api/services/nonce?userAddress=${keys.ethAddress}`,
+            { timeout: 20000 }
+          )
+          nonce =
+            nonceResponse.status === 200 && nonceResponse.data
+              ? String(parseInt(nonceResponse.data.nonce) + 1)
+              : Date.now().toString()
+        } else {
+          nonce = Date.now().toString()
+        }
+      } catch (err) {
+        INDEXER_LOGGER.log(
+          LOG_LEVELS_STR.LEVEL_ERROR,
+          `decryptDDO: Error getting nonce, using timestamp: ${err.message}`
+        )
+        nonce = Date.now().toString()
+      }
       const nodeId = keys.peerId.toString()
 
       const wallet: ethers.Wallet = new ethers.Wallet(process.env.PRIVATE_KEY as string)
 
+      const useTxIdOrContractAddress = txId || contractAddress
       const message = String(
-        txId + contractAddress + keys.ethAddress + chainId.toString() + nonce
+        useTxIdOrContractAddress + keys.ethAddress + chainId.toString() + nonce
       )
-      const consumerMessage = ethers.solidityPackedKeccak256(
+
+      const messageHash = ethers.solidityPackedKeccak256(
         ['bytes'],
         [ethers.hexlify(ethers.toUtf8Bytes(message))]
       )
-      const signature = await wallet.signMessage(consumerMessage)
+
+      const messageHashBytes = ethers.getBytes(messageHash)
+      const signature = await wallet.signMessage(messageHashBytes)
+
+      const recoveredAddress = ethers.verifyMessage(messageHashBytes, signature)
+      INDEXER_LOGGER.logMessage(
+        `decryptDDO: recovered address: ${recoveredAddress}, expected: ${keys.ethAddress}`
+      )
 
       if (URLUtils.isValidUrl(decryptorURL)) {
         try {
@@ -269,16 +280,38 @@ export abstract class BaseEventProcessor {
             signature,
             nonce
           }
-          const response = await axios({
-            method: 'post',
-            url: `${decryptorURL}/api/services/decrypt`,
-            data: payload
+          const response = await withRetrial(async () => {
+            try {
+              const res = await axios({
+                method: 'post',
+                url: `${decryptorURL}/api/services/decrypt`,
+                data: payload,
+                timeout: 30000
+              })
+
+              if (res.status !== 200 && res.status !== 201) {
+                const message = `bProvider exception on decrypt DDO. Status: ${res.status}, ${res.statusText}`
+                INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, message)
+                throw new Error(message) // do NOT retry
+              }
+              return res
+            } catch (err: any) {
+              // Retry ONLY on ECONNREFUSED
+              if (
+                err.code === 'ECONNREFUSED' ||
+                (err.message && err.message.includes('ECONNREFUSED'))
+              ) {
+                INDEXER_LOGGER.log(
+                  LOG_LEVELS_STR.LEVEL_ERROR,
+                  `Decrypt request failed with ECONNREFUSED, retrying...`,
+                  true
+                )
+                throw err
+              }
+
+              throw err
+            }
           })
-          if (response.status !== 200) {
-            const message = `bProvider exception on decrypt DDO. Status: ${response.status}, ${response.statusText}`
-            INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, message)
-            throw new Error(message)
-          }
 
           let responseHash
           if (response.data instanceof Object) {
@@ -294,7 +327,6 @@ export abstract class BaseEventProcessor {
             throw new Error(msg)
           }
         } catch (err) {
-          CORE_LOGGER.error(`Error on decrypting DDO: ${JSON.stringify(err)}`)
           const message = `Provider exception on decrypt DDO. Status: ${err.message}`
           INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, message)
           throw new Error(message)
@@ -397,36 +429,6 @@ export abstract class BaseEventProcessor {
     }
 
     return ddo
-  }
-
-  protected decryptDDOIPFS(
-    decryptorURL: string,
-    eventCreator: string,
-    metadata: any
-  ): Promise<any> {
-    INDEXER_LOGGER.logMessage(
-      `Decompressing DDO  from network: ${this.networkId} created by: ${eventCreator} ecnrypted by: ${decryptorURL}`
-    )
-    const byteArray = getBytes(metadata)
-    const utf8String = toUtf8String(byteArray)
-    const proof = JSON.parse(utf8String)
-    return proof
-  }
-
-  protected getDataFromProof(
-    proof: any
-  ): { header: any; ddoObj: Record<string, any>; signature: string } | null {
-    INDEXER_LOGGER.logMessage(`Decompressing JWT`)
-    const data = proof.split('.')
-    if (data.length > 2) {
-      const header = JSON.parse(Buffer.from(data[0], 'base64').toString('utf-8'))
-      let ddoObj = JSON.parse(Buffer.from(data[1], 'base64').toString('utf-8'))
-      if (ddoObj.vc) ddoObj = ddoObj.vc
-      const signature = data[2]
-
-      return { header, ddoObj, signature }
-    }
-    return null
   }
 
   public abstract processEvent(
