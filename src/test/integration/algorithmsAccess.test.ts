@@ -100,10 +100,10 @@ describe('Trusted algorithms Flow', () => {
           JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
           '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"fees":{"' +
-          DEVELOPMENT_CHAIN_ID +
-          '":[{"feeToken":"' +
-          paymentToken +
-          '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+            DEVELOPMENT_CHAIN_ID +
+            '":[{"feeToken":"' +
+            paymentToken +
+            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
         ]
       )
     )
@@ -237,7 +237,7 @@ describe('Trusted algorithms Flow', () => {
     assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
     assert(
       resp.status.error ===
-      `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
+        `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
       'Inconsistent error message'
     )
     assert(resp.stream === null, 'Failed to get stream')
@@ -406,7 +406,7 @@ describe('Trusted algorithms Flow', () => {
           await escrowContract
             .connect(consumerAccount)
             .cancelExpiredLocks(lock.jobId, lock.token, lock.payer, lock.payee)
-        } catch (e) { }
+        } catch (e) {}
       }
     }
     const nonce = Date.now().toString()
