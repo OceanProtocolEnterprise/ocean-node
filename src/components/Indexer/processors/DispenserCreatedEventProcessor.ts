@@ -10,7 +10,8 @@ import {
   doesDispenserAlreadyExist,
   findServiceIdByDatatoken,
   getPricesByDt,
-  isValidDispenserContract
+  isValidDispenserContract,
+  getDidOpe
 } from '../utils.js'
 import { BaseEventProcessor } from './BaseProcessor.js'
 import Dispenser from '@oceanprotocol/contracts/artifacts/contracts/pools/dispenser/Dispenser.sol/Dispenser.json' assert { type: 'json' }
@@ -46,15 +47,22 @@ export class DispenserCreatedEventProcessor extends BaseEventProcessor {
     const datatokenContract = getDtContract(signer, datatokenAddress)
 
     const nftAddress = await datatokenContract.getERC721Address()
-    const did = getDid(nftAddress, chainId)
+    let did = getDidOpe(nftAddress, chainId)
     try {
       const { ddo: ddoDatabase } = await getDatabase()
-      const ddo = await ddoDatabase.retrieve(did)
+      let ddo = await ddoDatabase.retrieve(did)
       if (!ddo) {
         INDEXER_LOGGER.logMessage(
           `Detected DispenserCreated changed for ${did}, but it does not exists.`
         )
-        return
+        did = getDid(nftAddress, chainId)
+        ddo = await ddoDatabase.retrieve(did)
+        if (!ddo) {
+          INDEXER_LOGGER.logMessage(
+            `Detected DispenserCreated changed for ${did}, but it does not exists`
+          )
+          return
+        }
       }
       if (!(await isValidDispenserContract(event.address, chainId, signer))) {
         INDEXER_LOGGER.warn(

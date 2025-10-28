@@ -10,7 +10,8 @@ import {
   doesFreAlreadyExist,
   findServiceIdByDatatoken,
   getPricesByDt,
-  isValidFreContract
+  isValidFreContract,
+  getDidOpe
 } from '../utils.js'
 import { BaseEventProcessor } from './BaseProcessor.js'
 import FixedRateExchange from '@oceanprotocol/contracts/artifacts/contracts/pools/fixedRate/FixedRateExchange.sol/FixedRateExchange.json' assert { type: 'json' }
@@ -52,15 +53,22 @@ export class ExchangeRateChangedEventProcessor extends BaseEventProcessor {
       }
       const datatokenContract = getDtContract(signer, datatokenAddress)
       const nftAddress = await datatokenContract.getERC721Address()
-      const did = getDid(nftAddress, chainId)
+      let did = getDidOpe(nftAddress, chainId)
 
       const { ddo: ddoDatabase } = await getDatabase()
-      const ddo = await ddoDatabase.retrieve(did)
+      let ddo = await ddoDatabase.retrieve(did)
       if (!ddo) {
         INDEXER_LOGGER.logMessage(
           `Detected ExchangeRateChanged changed for ${did}, but it does not exists.`
         )
-        return
+        did = getDid(nftAddress, chainId)
+        ddo = await ddoDatabase.retrieve(did)
+        if (!ddo) {
+          INDEXER_LOGGER.logMessage(
+            `Detected ExchangeRateChanged changed for ${did}, but it does not exists`
+          )
+          return
+        }
       }
 
       const ddoInstance = DDOManager.getDDOClass(ddo)

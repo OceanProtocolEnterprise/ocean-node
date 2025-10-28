@@ -8,7 +8,8 @@ import {
   getDtContract,
   getDid,
   findServiceIdByDatatoken,
-  getPricesByDt
+  getPricesByDt,
+  getDidOpe
 } from '../utils.js'
 import { BaseEventProcessor } from './BaseProcessor.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
@@ -34,15 +35,22 @@ export class OrderReusedEventProcessor extends BaseEventProcessor {
     const datatokenContract = getDtContract(signer, event.address)
 
     const nftAddress = await datatokenContract.getERC721Address()
-    const did = getDid(nftAddress, chainId)
+    let did = getDidOpe(nftAddress, chainId)
     try {
       const { ddo: ddoDatabase, order: orderDatabase } = await getDatabase()
-      const ddo = await ddoDatabase.retrieve(did)
+      let ddo = await ddoDatabase.retrieve(did)
       if (!ddo) {
         INDEXER_LOGGER.logMessage(
           `Detected OrderReused changed for ${did}, but it does not exists.`
         )
-        return
+        did = getDid(nftAddress, chainId)
+        ddo = await ddoDatabase.retrieve(did)
+        if (!ddo) {
+          INDEXER_LOGGER.logMessage(
+            `Detected OrderReused changed for ${did}, but it does not exists`
+          )
+          return
+        }
       }
       const ddoInstance = DDOManager.getDDOClass(ddo)
       if (!ddoInstance.getAssetFields().indexedMetadata) {
