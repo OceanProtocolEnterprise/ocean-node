@@ -429,7 +429,14 @@ export function getDid(nftAddress: string, chainId: number): string {
       .digest('hex')
   )
 }
-
+export function getDidOpe(nftAddress: string, chainId: number): string {
+  return (
+    'did:ope:' +
+    createHash('sha256')
+      .update(getAddress(nftAddress) + chainId.toString(10))
+      .digest('hex')
+  )
+}
 export async function withRetrial<T>(
   fn: () => Promise<T>,
   maxRetries: number = 5,
