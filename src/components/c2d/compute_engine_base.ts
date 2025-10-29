@@ -14,7 +14,8 @@ import type {
   DBComputeJobPayment,
   DBComputeJob,
   dockerDeviceRequest,
-  DBComputeJobMetadata
+  DBComputeJobMetadata,
+  ComputeEnvFees
 } from '../../@types/C2D/C2D.js'
 import { C2DClusterType } from '../../@types/C2D/C2D.js'
 import { C2DDatabase } from '../database/C2DDatabase.js'
@@ -310,16 +311,33 @@ export abstract class C2DEngine {
   public getDockerDeviceRequest(
     requests: ComputeResourceRequest[],
     resources: ComputeResource[]
-  ) {
+  ): dockerDeviceRequest[] | null {
     if (!resources) return null
-    const ret: dockerDeviceRequest[] = []
+
+    const grouped: Record<string, dockerDeviceRequest> = {}
+
     for (const resource of requests) {
       const res = this.getResource(resources, resource.id)
-      if (res.init && res.init.deviceRequests) {
-        ret.push(res.init.deviceRequests)
+      const init = res?.init?.deviceRequests
+      if (!init) continue
+
+      const key = `${init.Driver}-${JSON.stringify(init.Capabilities)}`
+      if (!grouped[key]) {
+        grouped[key] = {
+          Driver: init.Driver,
+          Capabilities: init.Capabilities,
+          DeviceIDs: [],
+          Options: init.Options ?? null,
+          Count: undefined
+        }
+      }
+
+      if (init.DeviceIDs?.length) {
+        grouped[key].DeviceIDs!.push(...init.DeviceIDs)
       }
     }
-    return ret
+
+    return Object.values(grouped)
   }
 
   public getDockerAdvancedConfig(
@@ -427,11 +445,15 @@ export abstract class C2DEngine {
 
   public getTotalCostOfJob(
     resources: ComputeResourceRequestWithPrice[],
-    duration: number
+    duration: number,
+    fee: ComputeEnvFees
   ) {
     let cost: number = 0
     for (const request of resources) {
-      if (request.price) cost += request.price * request.amount * Math.ceil(duration / 60)
+      const price = fee.prices.find((p) => p.id === request.id)?.price
+      if (price) {
+        cost += price * request.amount * Math.ceil(duration / 60)
+      }
     }
     return cost
   }

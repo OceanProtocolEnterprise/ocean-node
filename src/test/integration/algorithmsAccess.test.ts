@@ -235,15 +235,22 @@ describe('Trusted algorithms Flow', () => {
     console.log(resp)
     assert(resp, 'Failed to get response')
     assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
+    assert(
+      resp.status.error ===
+        `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
+      'Inconsistent error message'
+    )
     assert(resp.stream === null, 'Failed to get stream')
   })
 
   it('should add the algorithm to the dataset trusted algorithm list', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 5)
+    const config = await getConfiguration()
     const algoChecksums = await getAlgoChecksums(
       publishedAlgoDataset.ddo.id,
       publishedAlgoDataset.ddo.services[0].id,
-      oceanNode
+      oceanNode,
+      config
     )
     publishedComputeDataset.ddo.services[0].compute = {
       allowRawAlgorithm: false,

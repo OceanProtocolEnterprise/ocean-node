@@ -37,7 +37,7 @@ export class OrderReusedEventProcessor extends BaseEventProcessor {
     const did = getDid(nftAddress, chainId)
     try {
       const { ddo: ddoDatabase, order: orderDatabase } = await getDatabase()
-      const ddo = await ddoDatabase.retrieve(did)
+      const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
       if (!ddo) {
         INDEXER_LOGGER.logMessage(
           `Detected OrderReused changed for ${did}, but it does not exists.`

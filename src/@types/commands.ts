@@ -160,6 +160,12 @@ export interface AdminReindexChainCommand extends AdminCommand {
   block?: number
 }
 
+export interface AdminFetchConfigCommand extends AdminCommand {}
+
+export interface AdminPushConfigCommand extends AdminCommand {
+  config: Record<string, any>
+}
+
 export interface ICommandHandler {
   handle(command: Command): Promise<P2PCommandResponse>
   verifyParamsAndRateLimits(task: Command): Promise<P2PCommandResponse>
@@ -287,4 +293,10 @@ export interface InvalidateAuthTokenCommand extends Command {
   address: string
   signature: string
   token: string
+}
+
+export interface GetJobsCommand extends Command {
+  environments?: string[]
+  fromTimestamp?: string
+  consumerAddrs?: string[]
 }
