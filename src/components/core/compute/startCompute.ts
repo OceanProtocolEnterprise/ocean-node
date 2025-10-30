@@ -479,7 +479,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           task.payment.token,
           task.consumerAddress,
           cost,
-          task.maxJobDuration
+          engine.escrow.getMinLockTime(task.maxJobDuration)
         )
       } catch (e) {
         if (e.message.includes('insufficient funds for intrinsic transaction cost')) {
