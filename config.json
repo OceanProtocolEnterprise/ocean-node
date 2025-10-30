@@ -10,7 +10,6 @@
     "hasHttp": true,
     "hasP2P": true,
     "p2pConfig": {
-        "bootstrapNodes": [],
         "bootstrapTimeout": 20000,
         "bootstrapTagName": "bootstrap",
         "bootstrapTagValue": 50,
@@ -18,11 +17,11 @@
         "enableIPV4": true,
         "enableIPV6": true,
         "ipV4BindAddress": "0.0.0.0",
-        "ipV4BindTcpPort": 8000,
-        "ipV4BindWsPort": 0,
-        "ipV6BindAddress": "::1",
-        "ipV6BindTcpPort": 0,
-        "ipV6BindWsPort": 0,
+        "ipV4BindTcpPort": 9000,
+        "ipV4BindWsPort": 9001,
+        "ipV6BindAddress": "::",
+        "ipV6BindTcpPort": 9002,
+        "ipV6BindWsPort": 9003,
         "announceAddresses": [],
         "pubsubPeerDiscoveryInterval": 10000,
         "dhtMaxInboundStreams": 500,
@@ -62,10 +61,10 @@
     "hasControlPanel": true,
     "httpPort": 8001,
     "dbConfig": {
-        "url": "http://localhost:9200",
+        "url": "http://localhost:8108/?apiKey=xyz",
         "username": "",
         "password": "",
-        "dbType": "elasticsearch"
+        "dbType": "typesense"
     },
     "supportedNetworks": {
         "8996": {
@@ -75,14 +74,12 @@
             "chunkSize": 100
         }
     },
-    "indexingNetworks": [
-        8996
-    ],
     "feeStrategy": {},
     "c2dClusters": [],
-    "c2dNodeUri": "",
-    "accountPurgatoryUrl": "",
-    "assetPurgatoryUrl": "",
+    "ipfsGateway": "https://ipfs.io/",
+    "arweaveGateway": "https://arweave.net/",
+    "accountPurgatoryUrl": null,
+    "assetPurgatoryUrl": null,
     "allowedAdmins": [],
     "allowedAdminsList": [],
     "rateLimit": 30,
@@ -102,44 +99,18 @@
             "resources": [
                 {
                     "id": "disk",
-                    "total": 1000000000
+                    "total": 1
                 }
             ],
             "storageExpiry": 604800,
             "maxJobDuration": 3600,
+            "access": {
+                "addresses": [],
+                "accessLists": []
+            },
             "fees": {
-                "11155111": [
+                "8996": [
                     {
-                        "feeToken": "0x1B083D8584dd3e6Ff37d04a6e7e82b5F622f3985",
-                        "prices": [
-                            {
-                                "id": "cpu",
-                                "price": 1
-                            }
-                        ]
-                    },
-                    {
-                        "feeToken": "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
-                        "prices": [
-                            {
-                                "id": "cpu",
-                                "price": 1
-                            }
-                        ]
-                    }
-                ],
-                "11155420": [
-                    {
-                        "feeToken": "0xf26c6C93f9f1d725e149d95f8E7B2334a406aD10",
-                        "prices": [
-                            {
-                                "id": "cpu",
-                                "price": 1
-                            }
-                        ]
-                    },
-                    {
-                        "feeToken": "0x4200000000000000000000000000000000000006",
                         "prices": [
                             {
                                 "id": "cpu",
@@ -152,6 +123,10 @@
             "free": {
                 "maxJobDuration": 3600,
                 "maxJobs": 3,
+                "access": {
+                    "addresses": [],
+                    "accessLists": []
+                },
                 "resources": [
                     {
                         "id": "cpu",
@@ -159,11 +134,11 @@
                     },
                     {
                         "id": "ram",
-                        "max": 1000000000
+                        "max": 1
                     },
                     {
                         "id": "disk",
-                        "max": 1000000000
+                        "max": 1
                     }
                 ]
             }

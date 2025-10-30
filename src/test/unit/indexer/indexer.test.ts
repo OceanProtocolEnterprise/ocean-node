@@ -95,4 +95,8 @@ describe('OceanIndexer', () => {
     await tearDownEnvironment(envOverrides)
     sandbox.restore()
   })
+  after(async () => {
+    await tearDownEnvironment(envOverrides)
+    sandbox.restore()
+  })
 })
