@@ -42,7 +42,8 @@ function getInternalStructure(job: DBComputeJob): any {
     additionalViewers: job.additionalViewers,
     terminationDetails: job.terminationDetails,
     payment: job.payment,
-    algoDuration: job.algoDuration
+    algoDuration: job.algoDuration,
+    queueMaxWaitTime: job.queueMaxWaitTime
   }
   return internalBlob
 }
@@ -271,7 +272,7 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
 
   getRunningJobs(engine?: string, environment?: string): Promise<DBComputeJob[]> {
     const selectSQL = `
-      SELECT * FROM ${this.schema.name} WHERE dateFinished IS NULL
+      SELECT * FROM ${this.schema.name} WHERE dateFinished IS NULL ORDER by dateCreated
     `
     return new Promise<DBComputeJob[]>((resolve, reject) => {
       this.db.all(selectSQL, (err, rows: any[] | undefined) => {
@@ -305,36 +306,6 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
               return include
             })
             resolve(filtered)
-          } else {
-            DATABASE_LOGGER.info('Could not find any running C2D jobs!')
-            resolve([])
-          }
-        }
-      })
-    })
-  }
-
-  getAllFinishedJobs(): Promise<DBComputeJob[]> {
-    const selectSQL = `
-      SELECT * FROM ${this.schema.name} WHERE dateFinished IS NOT NULL OR results IS NOT NULL
-    `
-
-    return new Promise<DBComputeJob[]>((resolve, reject) => {
-      this.db.all(selectSQL, (err, rows: any[] | undefined) => {
-        if (err) {
-          DATABASE_LOGGER.error(err.message)
-          reject(err)
-        } else {
-          if (rows && rows.length > 0) {
-            const all: DBComputeJob[] = rows.map((row) => {
-              const body = generateJSONFromBlob(row.body)
-              delete row.body
-              const maxJobDuration = row.expireTimestamp
-              delete row.expireTimestamp
-              const job: DBComputeJob = { ...row, ...body, maxJobDuration }
-              return job
-            })
-            resolve(all)
           } else {
             DATABASE_LOGGER.info('Could not find any running C2D jobs!')
             resolve([])
