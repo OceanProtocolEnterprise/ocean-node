@@ -126,7 +126,7 @@ export async function validateAlgoForDataset(
         })
 
       // Check if algorithm publisher is trusted
-      let isPublisherTrusted = true
+      let isPublisherTrusted = false
       if (hasTrustedPublishers) {
         if (!publishers.includes('*')) {
           const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
@@ -137,9 +137,12 @@ export async function validateAlgoForDataset(
           isPublisherTrusted = publishers
             .map((addr: string) => addr?.toLowerCase())
             .includes(nftAddress?.toLowerCase())
+        } else {
+          isPublisherTrusted = true
         }
       }
-      return isAlgoTrusted && isPublisherTrusted
+      CORE_LOGGER.info(`Algorithm validation: ${isAlgoTrusted || isPublisherTrusted}`)
+      return isAlgoTrusted || isPublisherTrusted
     }
 
     return compute.allowRawAlgorithm
