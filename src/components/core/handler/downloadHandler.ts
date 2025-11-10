@@ -177,7 +177,7 @@ export function validateFilesStructure(
   if (
     decriptedFileObject.nftAddress?.toLowerCase() !== nftAddress?.toLowerCase() ||
     decriptedFileObject.datatokenAddress?.toLowerCase() !==
-    service.datatokenAddress?.toLowerCase()
+      service.datatokenAddress?.toLowerCase()
   ) {
     return false
   }
