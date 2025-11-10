@@ -192,7 +192,6 @@ providerRoutes.get(
   `${SERVICES_API_BASE_PATH}/download`,
   express.urlencoded({ extended: true, type: '*/*' }),
   async (req, res): Promise<void> => {
-    HTTP_LOGGER.logMessage(`Download request received req: ${JSON.stringify(req)}`, true)
     if (!req.query) {
       res.sendStatus(400)
       return
