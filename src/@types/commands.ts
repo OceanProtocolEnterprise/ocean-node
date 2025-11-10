@@ -60,6 +60,7 @@ export interface DownloadCommand extends Command {
   signature: string
   aes_encrypted_key?: string // if not present it means download without encryption
   policyServer?: PolicyServerTask // object to pass to policy server
+  userData?: Record<string, any>
 }
 
 export interface FileInfoCommand extends Command {
