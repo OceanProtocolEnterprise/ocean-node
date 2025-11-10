@@ -511,6 +511,8 @@ export class DownloadHandler extends CommandHandler {
         decriptedFileObject = decryptedFileData.files[task.fileIndex]
       }
 
+      CORE_LOGGER.info('Decrypted file object: ' + JSON.stringify(decriptedFileObject))
+
       if (!validateFilesStructure(ddo, service, decryptedFileData)) {
         CORE_LOGGER.error(
           'Unauthorized download operation. Decrypted "nftAddress" and "datatokenAddress" do not match the original DDO'
