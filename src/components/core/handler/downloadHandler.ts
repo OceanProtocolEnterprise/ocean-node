@@ -511,6 +511,18 @@ export class DownloadHandler extends CommandHandler {
         decriptedFileObject = decryptedFileData.files[task.fileIndex]
       }
 
+      CORE_LOGGER.info('Decrypted file object: ' + JSON.stringify(decriptedFileObject))
+      if (decriptedFileObject?.url && task.userData) {
+        const url = new URL(decriptedFileObject.url)
+        const userDataObj =
+          typeof task.userData === 'string' ? JSON.parse(task.userData) : task.userData
+        for (const [key, value] of Object.entries(userDataObj)) {
+          url.searchParams.append(key, String(value))
+        }
+        decriptedFileObject.url = url.toString()
+        CORE_LOGGER.info('Appended userData to file url: ' + decriptedFileObject.url)
+      }
+
       if (!validateFilesStructure(ddo, service, decryptedFileData)) {
         CORE_LOGGER.error(
           'Unauthorized download operation. Decrypted "nftAddress" and "datatokenAddress" do not match the original DDO'
