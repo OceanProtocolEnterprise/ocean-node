@@ -177,7 +177,7 @@ export function validateFilesStructure(
   if (
     decriptedFileObject.nftAddress?.toLowerCase() !== nftAddress?.toLowerCase() ||
     decriptedFileObject.datatokenAddress?.toLowerCase() !==
-      service.datatokenAddress?.toLowerCase()
+    service.datatokenAddress?.toLowerCase()
   ) {
     return false
   }
@@ -512,6 +512,16 @@ export class DownloadHandler extends CommandHandler {
       }
 
       CORE_LOGGER.info('Decrypted file object: ' + JSON.stringify(decriptedFileObject))
+      if (decriptedFileObject?.url && task.userData) {
+        const url = new URL(decriptedFileObject.url)
+        const userDataObj =
+          typeof task.userData === 'string' ? JSON.parse(task.userData) : task.userData
+        for (const [key, value] of Object.entries(userDataObj)) {
+          url.searchParams.append(key, String(value))
+        }
+        decriptedFileObject.url = url.toString()
+        CORE_LOGGER.info('Appended userData to file url: ' + decriptedFileObject.url)
+      }
 
       if (!validateFilesStructure(ddo, service, decryptedFileData)) {
         CORE_LOGGER.error(
