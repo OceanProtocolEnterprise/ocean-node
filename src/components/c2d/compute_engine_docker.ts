@@ -1578,8 +1578,6 @@ export class C2DEngineDocker extends C2DEngine {
   ): any {
     if (filesObject?.url && userData) {
       const url = new URL(filesObject.url)
-      CORE_LOGGER.info('Appending userData to file url: ' + filesObject.url)
-      CORE_LOGGER.info('userData: ' + JSON.stringify(userData))
       const userDataObj = typeof userData === 'string' ? JSON.parse(userData) : userData
       for (const [key, value] of Object.entries(userDataObj)) {
         url.searchParams.append(key, String(value))
