@@ -5,6 +5,7 @@ import { EscrowAuthorization, EscrowLock } from '../../../@types/Escrow.js'
 import { getOceanArtifactsAdressesByChainId } from '../../../utils/address.js'
 import { RPCS } from '../../../@types/blockchain.js'
 import { create256Hash } from '../../../utils/crypt.js'
+import { CORE_LOGGER } from '../../../utils/logging/common.js'
 export class Escrow {
   private networks: RPCS
   private claimDurationTimeout: number
@@ -50,6 +51,8 @@ export class Escrow {
     signer: ethers.Signer
   ): Promise<ethers.Contract | null> {
     const address = await this.getEscrowContractAddressForChain(chainId)
+    CORE_LOGGER.info(`escrow address ${address}`)
+
     if (!address) return null
     return new ethers.Contract(address, EscrowJson.abi, signer)
   }
@@ -120,7 +123,12 @@ export class Escrow {
     const contract = await this.getContract(chainId, signer)
     if (!contract) throw new Error(`Failed to initialize escrow contract`)
     const wei = await this.getPaymentAmountInWei(amount, chain, token)
+
     const userBalance = await this.getUserAvailableFunds(chain, payer, token)
+    CORE_LOGGER.info(
+      `Comparing userBalance with amount to pay: ${userBalance} and ${wei}`
+    )
+
     if (BigInt(userBalance.toString()) < BigInt(wei)) {
       // not enough funds
       throw new Error(`User ${payer} does not have enough funds`)
