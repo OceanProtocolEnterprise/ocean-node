@@ -28,8 +28,12 @@ export class Escrow {
     const { rpc, network, chainId, fallbackRPCs } = this.networks[chain]
     const blockchain = new Blockchain(rpc, network, chainId, fallbackRPCs)
     const provider = blockchain.getProvider()
-    const decimals = await getDatatokenDecimals(token, provider)
-    return parseUnits(cost.toString(10), decimals).toString()
+    const decimalgBigNumber = await getDatatokenDecimals(token, provider)
+    const decimals = parseInt(decimalgBigNumber.toString())
+
+    const roundedCost = Number(cost.toFixed(decimals)).toString()
+
+    return parseUnits(roundedCost, decimals).toString()
   }
 
   async getNumberFromWei(wei: string, chain: number, token: string) {
@@ -116,7 +120,9 @@ export class Escrow {
     const contract = await this.getContract(chainId, signer)
     if (!contract) throw new Error(`Failed to initialize escrow contract`)
     const wei = await this.getPaymentAmountInWei(amount, chain, token)
+
     const userBalance = await this.getUserAvailableFunds(chain, payer, token)
+
     if (BigInt(userBalance.toString()) < BigInt(wei)) {
       // not enough funds
       throw new Error(`User ${payer} does not have enough funds`)
