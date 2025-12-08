@@ -144,6 +144,7 @@ export abstract class BaseEventProcessor {
   ): Promise<any> {
     const nftContract = new ethers.Contract(nftAddress, ERC721Template.abi, signer)
     const state = parseInt((await nftContract.getMetaData())[2])
+    CORE_LOGGER.info(`NFT state: ${state}`)
     const id = parseInt(await nftContract.getId())
     const tokenURI = await nftContract.tokenURI(id)
     return {
