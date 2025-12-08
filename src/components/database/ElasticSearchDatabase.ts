@@ -235,12 +235,11 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
 
   async search(query: Record<string, any>) {
     try {
-      DATABASE_LOGGER.info('Searching DDO State with query: ' + JSON.stringify(query))
       const result = await this.client.search({
         index: this.index,
         query
       })
-      DATABASE_LOGGER.info('Query result: ' + JSON.stringify(result))
+      console.log('Query result: ', result)
       return result.hits.hits.map((hit: any) => {
         return normalizeDocumentId(hit._source, hit._id)
       })
@@ -513,7 +512,6 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
     if (query.index) {
       const { index, ...queryWithoutIndex } = query
       try {
-        DATABASE_LOGGER.info('Searching DDO State with query: ' + JSON.stringify(query))
         const response = await this.client.search({
           index,
           body: {
@@ -522,7 +520,6 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
             size: maxPerPage
           }
         })
-        DATABASE_LOGGER.info('Search response: ' + JSON.stringify(response))
         if (response.hits?.hits.length > 0) {
           const totalHits =
             typeof response.hits.total === 'number'
