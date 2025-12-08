@@ -489,10 +489,13 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
     let schemaName: string | undefined
     const ddoInstance = DDOManager.getDDOClass(ddo)
     const ddoData = ddoInstance.getDDOData()
-    if ('indexedMetadata' in ddoData && ddoData?.indexedMetadata?.nft?.state !== 0) {
-      schemaName = 'op_ddo_short'
-    } else if (ddo.version) {
+    if (ddoData.version) {
       schemaName = `op_ddo_v${ddo.version}`
+    } else if (
+      'indexedMetadata' in ddoData &&
+      ddoData?.indexedMetadata?.nft?.state !== 0
+    ) {
+      schemaName = 'op_ddo_short'
     }
     const schema = this.getSchemas().find((s) => s.index === schemaName)
     DATABASE_LOGGER.logMessageWithEmoji(
