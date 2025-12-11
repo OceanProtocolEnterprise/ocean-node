@@ -33,7 +33,7 @@ export function hasAddressMatchAllRule(credentials: Credential[]): boolean {
     if (Array.isArray(credential?.values)) {
       if (credential.values.length > 0 && credential.type) {
         const filteredValues: string[] = credential.values
-          .map((v: any) => (typeof v === 'string' ? v : (v?.address ?? v?.value)))
+          .map((v: any) => (typeof v === 'string' ? v : v?.address ?? v?.value))
           .filter((v: any) => typeof v === 'string' && v.toLowerCase().includes('*'))
         return (
           filteredValues.length > 0 &&
