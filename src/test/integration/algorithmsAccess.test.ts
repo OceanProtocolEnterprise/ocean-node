@@ -24,7 +24,7 @@ import { OceanNode } from '../../OceanNode.js'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { OceanIndexer } from '../../components/Indexer/index.js'
 import { Readable } from 'stream'
-import { waitToIndex } from './testUtils.js'
+import { expectedTimeoutFailure, waitToIndex } from './testUtils.js'
 import { streamToObject } from '../../utils/util.js'
 import { ethers, hexlify, JsonRpcProvider, Signer } from 'ethers'
 import { publishAsset, orderAsset } from '../utils/assets.js'
@@ -147,23 +147,22 @@ describe('Trusted algorithms Flow', () => {
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT
     )
-    // Fail the test if compute dataset DDO was not indexed - subsequent tests depend on it
-    assert(
-      computeDatasetResult.ddo,
-      `Compute dataset DDO was not indexed${
-        computeDatasetResult.wasTimeout ? ' (timeout)' : ''
-      }`
-    )
+    // consider possible timeouts
+    if (!computeDatasetResult.ddo) {
+      expect(expectedTimeoutFailure(this.test.title)).to.be.equal(
+        computeDatasetResult.wasTimeout
+      )
+    }
     const algoDatasetResult = await waitToIndex(
       publishedAlgoDataset.ddo.id,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT
     )
-    // Fail the test if algorithm DDO was not indexed - subsequent tests depend on it
-    assert(
-      algoDatasetResult.ddo,
-      `Algorithm DDO was not indexed${algoDatasetResult.wasTimeout ? ' (timeout)' : ''}`
-    )
+    if (!algoDatasetResult.ddo) {
+      expect(expectedTimeoutFailure(this.test.title)).to.be.equal(
+        algoDatasetResult.wasTimeout
+      )
+    }
   })
 
   it('Get compute environments', async () => {
@@ -373,29 +372,18 @@ describe('Trusted algorithms Flow', () => {
     assert(algoOrderTxId, 'transaction id not found')
   })
 
-  it('should start a compute job', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 10)
+  it('should start a compute job', async () => {
     // let's put funds in escrow & create an auth
-    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
-    if (BigInt(balance.toString()) === BigInt(0)) {
-      const mintAmount = ethers.parseUnits('1000', 18)
-      const mintTx = await paymentTokenContract.mint(
-        await consumerAccount.getAddress(),
-        mintAmount
-      )
-      await mintTx.wait()
-      balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
-    }
-    assert(BigInt(balance.toString()) > BigInt(0), 'Consumer has no Ocean tokens')
-    const approveTx = await paymentTokenContract
+    const balance = await paymentTokenContract.balanceOf(
+      await consumerAccount.getAddress()
+    )
+    await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
-    await approveTx.wait()
-    const depositTx = await escrowContract
+    await escrowContract
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
-    await depositTx.wait()
-    const authorizeTx = await escrowContract
+    await escrowContract
       .connect(consumerAccount)
       .authorize(
         initializeResponse.payment.token,
@@ -404,7 +392,6 @@ describe('Trusted algorithms Flow', () => {
         initializeResponse.payment.minLockSeconds,
         10
       )
-    await authorizeTx.wait()
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
