@@ -385,9 +385,11 @@ export class PaidComputeStartHandler extends CommandHandler {
                 stream: null,
                 status: {
                   httpStatus: 400,
-                  error: `Algorithm ${
-                    task.algorithm.documentId
-                  } with serviceId ${task.algorithm.serviceId} not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${task.datasets[safeIndex].serviceId}`
+                  error: `Algorithm ${task.algorithm.documentId} with serviceId ${
+                    task.algorithm.serviceId
+                  } not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${
+                    task.datasets[safeIndex].serviceId
+                  }`
                 }
               }
             }
@@ -801,7 +803,7 @@ export class FreeComputeStartHandler extends CommandHandler {
             stream: null,
             status: {
               httpStatus: 400,
-              error: e
+              error: e?.message || String(e)
             }
           }
         }

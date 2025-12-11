@@ -102,8 +102,9 @@ export async function handleDownloadUrlCommand(
     headers['Content-Length'.toLowerCase()] = fileMetadata.contentLength
 
     if (!('Content-Disposition'?.toLowerCase() in objTemp))
-      headers['Content-Disposition'.toLowerCase()] =
-        `attachment;filename=${fileMetadata.name}`
+      headers[
+        'Content-Disposition'.toLowerCase()
+      ] = `attachment;filename=${fileMetadata.name}`
     if (encryptFile) {
       // we parse the string into the object again
       const encryptedObject = ethCrypto.cipher.parse(task.aes_encrypted_key)
@@ -511,7 +512,6 @@ export class DownloadHandler extends CommandHandler {
         decriptedFileObject = decryptedFileData.files[task.fileIndex]
       }
 
-      CORE_LOGGER.info('Decrypted file object: ' + JSON.stringify(decriptedFileObject))
       if (decriptedFileObject?.url && task.userData) {
         const url = new URL(decriptedFileObject.url)
         const userDataObj =

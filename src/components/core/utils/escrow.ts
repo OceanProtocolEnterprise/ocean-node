@@ -17,6 +17,7 @@ export class Escrow {
   async getEscrowContractAddressForChain(chainId: number): Promise<string | null> {
     const addresses = getOceanArtifactsAdressesByChainId(chainId)
     if (addresses && addresses.EnterpriseEscrow) return addresses.EnterpriseEscrow
+    if (addresses && addresses.Escrow) return addresses.Escrow
     return null
   }
 
@@ -28,6 +29,7 @@ export class Escrow {
     const { rpc, network, chainId, fallbackRPCs } = this.networks[chain]
     const blockchain = new Blockchain(rpc, network, chainId, fallbackRPCs)
     const provider = blockchain.getProvider()
+
     const decimalgBigNumber = await getDatatokenDecimals(token, provider)
     const decimals = parseInt(decimalgBigNumber.toString())
 
