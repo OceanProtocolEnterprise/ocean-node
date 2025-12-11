@@ -235,12 +235,12 @@ describe('Trusted algorithms Flow', () => {
     )
     console.log(resp)
     assert(resp, 'Failed to get response')
-    // assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
-    // assert(
-    //   resp.status.error ===
-    //     `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
-    //   'Inconsistent error message'
-    // )
+    assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
+    assert(
+      resp.status.error ===
+        `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
+      'Inconsistent error message'
+    )
     assert(resp.stream === null, 'Failed to get stream')
   })
 

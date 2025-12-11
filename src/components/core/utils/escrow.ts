@@ -17,6 +17,7 @@ export class Escrow {
   async getEscrowContractAddressForChain(chainId: number): Promise<string | null> {
     const addresses = getOceanArtifactsAdressesByChainId(chainId)
     if (addresses && addresses.EnterpriseEscrow) return addresses.EnterpriseEscrow
+    if (addresses && addresses.Escrow) return addresses.Escrow
     return null
   }
 
