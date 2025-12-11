@@ -218,7 +218,6 @@ providerRoutes.get(
         try {
           parsedUserData = JSON.parse(userdata as string)
         } catch (e) {
-          // Log error but don't block request if userdata is malformed
           HTTP_LOGGER.logMessage(`Invalid userdata JSON: ${userdata}`, true)
           parsedUserData = null
         }

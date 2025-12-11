@@ -29,8 +29,8 @@ import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
 import { fetchTransactionReceipt } from '../../core/utils/validateOrders.js'
 import { withRetrial } from '../utils.js'
-import { createHash } from 'node:crypto'
 import { AbstractDdoDatabase } from '../../database/BaseDatabase.js'
+import { createHash } from 'crypto'
 
 export abstract class BaseEventProcessor {
   protected networkId: number

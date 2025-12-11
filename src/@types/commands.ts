@@ -59,7 +59,7 @@ export interface DownloadCommand extends Command {
   consumerAddress: string
   signature: string
   aes_encrypted_key?: string // if not present it means download without encryption
-  policyServer?: PolicyServerTask // object to pass to policy server
+  policyServer?: any // object to pass to policy server
   userData?: Record<string, any>
 }
 

@@ -141,7 +141,7 @@ export async function validateAlgoForDataset(
           isPublisherTrusted = true
         }
       }
-      CORE_LOGGER.info(`Algorithm validation: ${isAlgoTrusted || isPublisherTrusted}`)
+
       return isAlgoTrusted || isPublisherTrusted
     }
 

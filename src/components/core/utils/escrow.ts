@@ -28,6 +28,7 @@ export class Escrow {
     const { rpc, network, chainId, fallbackRPCs } = this.networks[chain]
     const blockchain = new Blockchain(rpc, network, chainId, fallbackRPCs)
     const provider = blockchain.getProvider()
+
     const decimalgBigNumber = await getDatatokenDecimals(token, provider)
     const decimals = parseInt(decimalgBigNumber.toString())
 

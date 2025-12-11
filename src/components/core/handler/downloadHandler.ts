@@ -511,7 +511,6 @@ export class DownloadHandler extends CommandHandler {
         decriptedFileObject = decryptedFileData.files[task.fileIndex]
       }
 
-      CORE_LOGGER.info('Decrypted file object: ' + JSON.stringify(decriptedFileObject))
       if (decriptedFileObject?.url && task.userData) {
         const url = new URL(decriptedFileObject.url)
         const userDataObj =
