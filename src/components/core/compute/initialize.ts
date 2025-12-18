@@ -275,9 +275,14 @@ export class ComputeInitializeHandler extends CommandHandler {
             // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
             // It will just use the existing code and let PolicyServer decide.
             CORE_LOGGER.info(
-              `ComputeInitializeHandler: Checking DDO level credentials for ${
-                ddo.id
-              } with credentials ${JSON.stringify(credentials)}`
+              `ComputeInitializeHandler: Checking DDO level credentials for ${ddoInstance.getDid()} with credentials ${JSON.stringify(
+                credentials
+              )}`
+            )
+            CORE_LOGGER.info(
+              `element.serviceId: ${elem.serviceId}, task.consumerAddress: ${
+                task.consumerAddress
+              }, task.policyServer: ${JSON.stringify(task.policyServer)}`
             )
             if (isPolicyServerConfigured()) {
               const response = await policyServer.checkStartCompute(
