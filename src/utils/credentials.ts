@@ -18,6 +18,13 @@ export function findCredential(
       if (credential.values.length > 0) {
         const credentialType = String(credential?.type)?.toLowerCase()
         const credentialValues = credential.values.map((v) => String(v)?.toLowerCase())
+        CORE_LOGGER.info(
+          `Checking credential type ${credentialType} with values ${JSON.stringify(
+            credentialValues
+          )} against consumer credential type ${
+            consumerCredentials.type
+          } with values ${JSON.stringify(consumerCredentials.values)}`
+        )
         return (
           credentialType === consumerCredentials.type &&
           credentialValues.includes(consumerCredentials.values[0])
@@ -56,7 +63,11 @@ export function checkCredentials(credentials: Credentials, consumerAddress: stri
     type: CREDENTIALS_TYPES.ADDRESS,
     values: [String(consumerAddress)?.toLowerCase()]
   }
-
+  CORE_LOGGER.info(
+    `Checking credentials for consumer address ${consumerAddress} with credentials ${JSON.stringify(
+      credentials
+    )}`
+  )
   const accessGranted = true
   // check deny access
   if (Array.isArray(credentials?.deny) && credentials.deny.length > 0) {
@@ -70,6 +81,16 @@ export function checkCredentials(credentials: Credentials, consumerAddress: stri
   // check allow access
   if (Array.isArray(credentials?.allow) && credentials.allow.length > 0) {
     const accessAllow = findCredential(credentials.allow, consumerCredentials)
+    CORE_LOGGER.info(
+      `Access allow found: ${
+        accessAllow ? 'yes' : 'no'
+      } for consumer address ${consumerAddress}`
+    )
+    CORE_LOGGER.info(
+      `Has address match all rule: ${
+        hasAddressMatchAllRule(credentials.allow) ? 'yes' : 'no'
+      }`
+    )
     if (accessAllow || hasAddressMatchAllRule(credentials.allow)) {
       return true
     }
