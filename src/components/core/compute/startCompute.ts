@@ -225,6 +225,11 @@ export class PaidComputeStartHandler extends CommandHandler {
           if (credentials) {
             // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
             // It will just use the existing code and let PolicyServer decide.
+            CORE_LOGGER.info(
+              `PaidComputeStartHandler: Checking DDO level credentials for ${
+                ddo.id
+              } with credentials ${JSON.stringify(credentials)}`
+            )
             if (isPolicyServerConfigured()) {
               const response = await policyServer.checkStartCompute(
                 ddo.id,
@@ -239,6 +244,9 @@ export class PaidComputeStartHandler extends CommandHandler {
                 ? checkCredentials(credentials as Credentials, task.consumerAddress)
                 : true
             }
+            CORE_LOGGER.info(
+              `PaidComputeStartHandler: DDO level access for ${ddo.id} is ${accessGrantedDDOLevel}`
+            )
             if (!accessGrantedDDOLevel) {
               CORE_LOGGER.logMessage(
                 `Error: Access to asset ${ddoInstance.getDid()} was denied`,
@@ -248,7 +256,7 @@ export class PaidComputeStartHandler extends CommandHandler {
                 stream: null,
                 status: {
                   httpStatus: 403,
-                  error: `Error: Access to asset ${ddoInstance.getDid()} was denied`
+                  error: `Error: Access to asset ${ddoInstance.getDid()} was denied at DDO level`
                 }
               }
             }
@@ -673,6 +681,11 @@ export class FreeComputeStartHandler extends CommandHandler {
         // check credentials (DDO level)
         let accessGrantedDDOLevel: boolean
         if (credentials) {
+          CORE_LOGGER.info(
+            `FreeComputeStartHandler: Checking DDO level credentials for ${
+              ddo.id
+            } with credentials ${JSON.stringify(credentials)}`
+          )
           // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
           // It will just use the existing code and let PolicyServer decide.
           if (isPolicyServerConfigured()) {
@@ -689,9 +702,12 @@ export class FreeComputeStartHandler extends CommandHandler {
               ? checkCredentials(credentials as Credentials, task.consumerAddress)
               : true
           }
+          CORE_LOGGER.info(
+            `FreeComputeStartHandler: DDO level access for ${ddo.id} is ${accessGrantedDDOLevel}`
+          )
           if (!accessGrantedDDOLevel) {
             CORE_LOGGER.logMessage(
-              `Error: Access to asset ${ddoInstance.getDid()} was denied`,
+              `Error: Access to asset ${ddoInstance.getDid()} was denied at DDO level`,
               true
             )
             return {
