@@ -127,7 +127,9 @@ export class Escrow {
 
     if (BigInt(userBalance.toString()) < BigInt(wei)) {
       // not enough funds
-      throw new Error(`User ${payer} does not have enough funds`)
+      throw new Error(
+        `User ${payer} does not have enough funds in escrow with address ${contract.address}`
+      )
     }
     const auths = await this.getAuthorizations(
       chain,
