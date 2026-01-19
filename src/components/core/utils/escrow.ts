@@ -5,6 +5,7 @@ import { EscrowAuthorization, EscrowLock } from '../../../@types/Escrow.js'
 import { getOceanArtifactsAdressesByChainId } from '../../../utils/address.js'
 import { RPCS } from '../../../@types/blockchain.js'
 import { create256Hash } from '../../../utils/crypt.js'
+import { CORE_LOGGER } from '../../../utils/logging/common.js'
 export class Escrow {
   private networks: RPCS
   private claimDurationTimeout: number
@@ -122,13 +123,18 @@ export class Escrow {
     const contract = await this.getContract(chainId, signer)
     if (!contract) throw new Error(`Failed to initialize escrow contract`)
     const wei = await this.getPaymentAmountInWei(amount, chain, token)
+    const escrowAddress = await this.getEscrowContractAddressForChain(chainId)
 
     const userBalance = await this.getUserAvailableFunds(chain, payer, token)
 
     if (BigInt(userBalance.toString()) < BigInt(wei)) {
+      CORE_LOGGER.logMessage(
+        `Escrow ${escrowAddress} insufficient funds for payer ${payer} (available ${userBalance.toString()}, required ${wei})`,
+        true
+      )
       // not enough funds
       throw new Error(
-        `User ${payer} does not have enough funds in escrow with address ${contract.address}`
+        `User ${payer} does not have enough funds in escrow with address ${escrowAddress}`
       )
     }
     const auths = await this.getAuthorizations(
