@@ -125,6 +125,10 @@ export class Escrow {
     const wei = await this.getPaymentAmountInWei(amount, chain, token)
     const escrowAddress = await this.getEscrowContractAddressForChain(chainId)
 
+    CORE_LOGGER.logMessage(
+      `Escrow ${escrowAddress} checking balance for chain ${chain}, payer ${payer}, token ${token}`,
+      true
+    )
     const userBalance = await this.getUserAvailableFunds(chain, payer, token)
 
     if (BigInt(userBalance.toString()) < BigInt(wei)) {
