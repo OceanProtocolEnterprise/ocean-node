@@ -1,4 +1,4 @@
-import AccessListJson from '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessList.sol/AccessList.json' with { type: 'json' }
+import AccessListJson from '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessList.sol/AccessList.json' assert { type: 'json' }
 import { ethers, Signer } from 'ethers'
 import { CORE_LOGGER } from './logging/common.js'
 

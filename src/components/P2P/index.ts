@@ -55,6 +55,11 @@ import { http } from '@libp2p/http'
 import { tls } from '@libp2p/tls'
 const store = new LevelDatastore('./databases/p2p-store')
 
+type P2PStream = Stream &
+  AsyncIterable<Uint8Array> & {
+    send: (data: Uint8Array) => boolean
+  }
+
 const DEFAULT_OPTIONS = {
   pollInterval: 1000
 }
@@ -493,7 +498,7 @@ export class OceanP2P extends EventEmitter {
     return null
   }
 
-  async getAllPeerStore() {
+  async getAllPeerStore(): Promise<any> {
     const s = await this._libp2p.peerStore.all()
     return s
     // for await (const peer of this._libp2p.peerRouting.getClosestPeers(s[0].id.toString())) {
@@ -572,7 +577,7 @@ export class OceanP2P extends EventEmitter {
     return Boolean(s.find((p: any) => p.toString() === peer.toString()))
   }
 
-  async getPeerDetails(peerName: string) {
+  async getPeerDetails(peerName: string): Promise<any | null> {
     try {
       const peerId = peerIdFromString(peerName)
       // Example: for ID 16Uiu2HAkuYfgjXoGcSSLSpRPD6XtUgV71t5RqmTmcqdbmrWY9MJo
@@ -687,7 +692,7 @@ export class OceanP2P extends EventEmitter {
     return this.normalizeMultiaddrs(peerName, multiaddrs)
   }
 
-  async findPeerInDht(peerName: string, timeout?: number) {
+  async findPeerInDht(peerName: string, timeout?: number): Promise<any | null> {
     try {
       const peer = peerIdFromString(peerName)
       const data = await this._libp2p.peerRouting.findPeer(peer, {
@@ -738,7 +743,7 @@ export class OceanP2P extends EventEmitter {
       return { status: { httpStatus: 404, error } }
     }
 
-    let stream: Stream
+    let stream: P2PStream
     try {
       const options = {
         signal: AbortSignal.timeout(10000),
@@ -751,7 +756,10 @@ export class OceanP2P extends EventEmitter {
         P2P_LOGGER.error(error)
         return { status: { httpStatus: 404, error } }
       }
-      stream = await connection.newStream(this._protocol, options)
+      stream = (await connection.newStream(
+        this._protocol,
+        options
+      )) as unknown as P2PStream
     } catch (e) {
       const error = `Cannot connect to peer ${peerId}: ${e.message}`
       P2P_LOGGER.error(error)

@@ -14,6 +14,15 @@ import {
 } from '../../utils/validators.js'
 import type { Connection, Stream } from '@libp2p/interface'
 
+type P2PStream = Stream &
+  AsyncIterable<Uint8Array> & {
+    send: (data: Uint8Array) => boolean
+    pause: () => void
+    resume: () => void
+    onDrain: (options?: { signal?: AbortSignal }) => Promise<void>
+    status?: string
+  }
+
 export class ReadableString extends Readable {
   private sent = false
 
@@ -33,9 +42,10 @@ export class ReadableString extends Readable {
 
 export async function handleProtocolCommands(stream: Stream, connection: Connection) {
   const { remotePeer, remoteAddr } = connection
+  const p2pStream = stream as unknown as P2PStream
 
   // Pause the stream. We do async operations here before writing.
-  stream.pause()
+  p2pStream.pause()
 
   P2P_LOGGER.logMessage('Incoming connection from peer ' + remotePeer, true)
   P2P_LOGGER.logMessage('Using ' + remoteAddr, true)
@@ -43,20 +53,20 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
   const sendErrorAndClose = async (httpStatus: number, error: string) => {
     try {
       // Check if stream is already closed
-      if (stream.status === 'closed' || stream.status === 'closing') {
+      if (p2pStream.status === 'closed' || p2pStream.status === 'closing') {
         P2P_LOGGER.warn('Stream already closed, cannot send error response')
         return
       }
 
       // Resume stream in case it's paused - we need to write
-      stream.resume()
+      p2pStream.resume()
       const status = { httpStatus, error }
-      stream.send(uint8ArrayFromString(JSON.stringify(status)))
-      await stream.close()
+      p2pStream.send(uint8ArrayFromString(JSON.stringify(status)))
+      await p2pStream.close()
     } catch (e) {
       P2P_LOGGER.error(`Error sending error response: ${e.message}`)
       try {
-        stream.abort(e as Error)
+        p2pStream.abort(e as Error)
       } catch {}
     }
   }
@@ -91,12 +101,12 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
   }
 
   // Resume the stream. We can now write.
-  stream.resume()
+  p2pStream.resume()
 
   // v3 streams are AsyncIterable
   let task: Command
   try {
-    for await (const chunk of stream) {
+    for await (const chunk of p2pStream) {
       try {
         const str = uint8ArrayToString(chunk.subarray())
         task = JSON.parse(str) as Command
@@ -134,7 +144,7 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
     const response: P2PCommandResponse = await handler.handle(task)
 
     // Send status first
-    stream.send(uint8ArrayFromString(JSON.stringify(response.status)))
+    p2pStream.send(uint8ArrayFromString(JSON.stringify(response.status)))
 
     // Stream data chunks without buffering, with backpressure support
     if (response.stream) {
@@ -142,15 +152,15 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
 
         // Handle backpressure - if send returns false, wait for drain
-        if (!stream.send(bytes)) {
-          await stream.onDrain({
+        if (!p2pStream.send(bytes)) {
+          await p2pStream.onDrain({
             signal: AbortSignal.timeout(30000) // 30 second timeout for drain
           })
         }
       }
     }
 
-    await stream.close()
+    await p2pStream.close()
   } catch (err) {
     P2P_LOGGER.logMessageWithEmoji(
       'handleProtocolCommands Error: ' + err.message,

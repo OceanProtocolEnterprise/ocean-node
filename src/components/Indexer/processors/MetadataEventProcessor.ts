@@ -15,7 +15,7 @@ import { asyncCallWithTimeout, streamToString } from '../../../utils/util.js'
 import { PolicyServer } from '../../policyServer/index.js'
 import { wasNFTDeployedByOurFactory, getPricingStatsForDddo, getDid } from '../utils.js'
 import { BaseEventProcessor } from './BaseProcessor.js'
-import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
 import { Purgatory } from '../purgatory.js'
 import { isRemoteDDO } from '../../core/utils/validateDdoHandler.js'
 import { Storage } from '../../storage/index.js'

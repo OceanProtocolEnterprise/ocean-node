@@ -136,7 +136,7 @@
     "release-it": "^19.0.6",
     "sinon": "^19.0.2",
     "tsx": "^4.19.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.2.2"
   },
   "overrides": {
     "elliptic": "^6.6.1",
