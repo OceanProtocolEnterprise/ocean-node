@@ -133,7 +133,7 @@ export class C2DEngineDocker extends C2DEngine {
             envConfig.fees[feeChain][i].prices.length > 0
           ) {
             if (!envConfig.fees[feeChain][i].feeToken) {
-              const tokenAddress = await getOceanTokenAddressForChain(parseInt(feeChain))
+              const tokenAddress = getOceanTokenAddressForChain(parseInt(feeChain))
               if (tokenAddress) {
                 envConfig.fees[feeChain][i].feeToken = tokenAddress
                 tmpFees.push(envConfig.fees[feeChain][i])
@@ -172,17 +172,21 @@ export class C2DEngineDocker extends C2DEngine {
       },
       access: {
         addresses: [],
-        accessLists: []
+        accessLists: null
       },
       fees,
       queuedJobs: 0,
       queuedFreeJobs: 0,
       queMaxWaitTime: 0,
-      queMaxWaitTimeFree: 0
+      queMaxWaitTimeFree: 0,
+      runMaxWaitTime: 0,
+      runMaxWaitTimeFree: 0
     })
     if (`access` in envConfig) this.envs[0].access = envConfig.access
 
     if (`storageExpiry` in envConfig) this.envs[0].storageExpiry = envConfig.storageExpiry
+    if (`minJobDuration` in envConfig)
+      this.envs[0].minJobDuration = envConfig.minJobDuration
     if (`maxJobDuration` in envConfig)
       this.envs[0].maxJobDuration = envConfig.maxJobDuration
     if (`maxJobs` in envConfig) this.envs[0].maxJobs = envConfig.maxJobs
@@ -249,12 +253,14 @@ export class C2DEngineDocker extends C2DEngine {
       this.envs[0].free = {
         access: {
           addresses: [],
-          accessLists: []
+          accessLists: null
         }
       }
       if (`access` in envConfig.free) this.envs[0].free.access = envConfig.free.access
       if (`storageExpiry` in envConfig.free)
         this.envs[0].free.storageExpiry = envConfig.free.storageExpiry
+      if (`minJobDuration` in envConfig.free)
+        this.envs[0].free.minJobDuration = envConfig.free.minJobDuration
       if (`maxJobDuration` in envConfig.free)
         this.envs[0].free.maxJobDuration = envConfig.free.maxJobDuration
       if (`maxJobs` in envConfig.free) this.envs[0].free.maxJobs = envConfig.free.maxJobs
@@ -302,7 +308,9 @@ export class C2DEngineDocker extends C2DEngine {
           queuedJobs,
           queuedFreeJobs,
           maxWaitTime,
-          maxWaitTimeFree
+          maxWaitTimeFree,
+          maxRunningTime,
+          maxRunningTimeFree
         } = await this.getUsedResources(computeEnv)
         computeEnv.runningJobs = totalJobs
         computeEnv.runningfreeJobs = totalFreeJobs
@@ -310,6 +318,8 @@ export class C2DEngineDocker extends C2DEngine {
         computeEnv.queuedFreeJobs = queuedFreeJobs
         computeEnv.queMaxWaitTime = maxWaitTime
         computeEnv.queMaxWaitTimeFree = maxWaitTimeFree
+        computeEnv.runMaxWaitTime = maxRunningTime
+        computeEnv.runMaxWaitTimeFree = maxRunningTimeFree
         for (let i = 0; i < computeEnv.resources.length; i++) {
           if (computeEnv.resources[i].id in usedResources)
             computeEnv.resources[i].inUse = usedResources[computeEnv.resources[i].id]
@@ -613,7 +623,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) {}
+    } catch (e) { }
     try {
       const logStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/configuration.log'
@@ -627,7 +637,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) {}
+    } catch (e) { }
     try {
       const logStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/algorithm.log'
@@ -641,7 +651,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) {}
+    } catch (e) { }
     try {
       const outputStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/outputs/outputs.tar'
@@ -655,7 +665,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) {}
+    } catch (e) { }
     try {
       const logStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/publish.log'
@@ -669,7 +679,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) {}
+    } catch (e) { }
     return res
   }
 
@@ -730,9 +740,9 @@ export class C2DEngineDocker extends C2DEngine {
           return {
             stream: createReadStream(
               this.getC2DConfig().tempFolder +
-                '/' +
-                jobId +
-                '/data/logs/configuration.log'
+              '/' +
+              jobId +
+              '/data/logs/configuration.log'
             ),
             headers: {
               'Content-Type': 'text/plain'
@@ -794,36 +804,46 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
-  private async setNewTimer() {
+  private setNewTimer() {
+    if (this.cronTimer) {
+      return
+    }
     // don't set the cron if we don't have compute environments
-    if ((await this.getComputeEnvironments()).length > 0)
-      this.cronTimer = setInterval(this.InternalLoop.bind(this), this.cronTime)
+    if (this.envs.length > 0)
+      this.cronTimer = setTimeout(this.InternalLoop.bind(this), this.cronTime)
   }
 
   private async InternalLoop() {
     // this is the internal loop of docker engine
     // gets list of all running jobs and process them one by one
-    clearInterval(this.cronTimer)
-    this.cronTimer = null
-    // get all running jobs
-    const jobs = await this.db.getRunningJobs(this.getC2DConfig().hash)
+    if (this.cronTimer) {
+      clearTimeout(this.cronTimer)
+      this.cronTimer = null
+    }
+    try {
+      // get all running jobs
+      const jobs = await this.db.getRunningJobs(this.getC2DConfig().hash)
 
-    if (jobs.length === 0) {
-      // CORE_LOGGER.info('No C2D jobs found for engine ' + this.getC2DConfig().hash)
+      if (jobs.length === 0) {
+        CORE_LOGGER.info('No C2D jobs found for engine ' + this.getC2DConfig().hash)
+        this.setNewTimer()
+        return
+      } else {
+        CORE_LOGGER.info(`Got ${jobs.length} jobs for engine ${this.getC2DConfig().hash}`)
+        CORE_LOGGER.debug(JSON.stringify(jobs))
+      }
+      const promises: any = []
+      for (const job of jobs) {
+        promises.push(this.processJob(job))
+      }
+      // wait for all promises, there is no return
+      await Promise.all(promises)
+    } catch (e) {
+      CORE_LOGGER.error(`Error in C2D InternalLoop: ${e.message}`)
+    } finally {
+      // set the cron again
       this.setNewTimer()
-      return
-    } else {
-      CORE_LOGGER.info(`Got ${jobs.length} jobs for engine ${this.getC2DConfig().hash}`)
-      CORE_LOGGER.debug(JSON.stringify(jobs))
     }
-    const promises: any = []
-    for (const job of jobs) {
-      promises.push(this.processJob(job))
-    }
-    // wait for all promises, there is no return
-    await Promise.all(promises)
-    // set the cron again
-    this.setNewTimer()
   }
 
   private async createDockerContainer(
@@ -928,14 +948,14 @@ export class C2DEngineDocker extends C2DEngine {
           job.environment,
           null
         )
-        await this.checkIfResourcesAreAvailable(job.resources, env, true)
+        await this.checkIfResourcesAreAvailable(job.resources, env, job.isFree)
       } catch (err) {
         // resources are still not available
         return
       }
       // resources are now available, let's start the job
       const { algorithm } = job
-      if (algorithm.meta.container && algorithm.meta.container.dockerfile) {
+      if (algorithm?.meta.container && algorithm?.meta.container.dockerfile) {
         job.status = C2DStatusNumber.BuildImage
         job.statusText = C2DStatusText.BuildImage
         this.buildImage(job, null)
@@ -1038,7 +1058,7 @@ export class C2DEngineDocker extends C2DEngine {
         containerInfo.HostConfig.IpcMode = advancedConfig.IpcMode
       if (advancedConfig.ShmSize)
         containerInfo.HostConfig.ShmSize = advancedConfig.ShmSize
-      if (job.algorithm.meta.container.entrypoint) {
+      if (job.algorithm?.meta.container.entrypoint) {
         const newEntrypoint = job.algorithm.meta.container.entrypoint.replace(
           '$ALGO',
           'data/transformations/algorithm'
@@ -1098,8 +1118,8 @@ export class C2DEngineDocker extends C2DEngine {
       } catch (e) {
         console.error(
           'Could not retrieve container: ' +
-            e.message +
-            '\nBack to configuring volumes to create the container...'
+          e.message +
+          '\nBack to configuring volumes to create the container...'
         )
         job.isStarted = false
         job.status = C2DStatusNumber.ConfiguringVolumes
@@ -1336,7 +1356,7 @@ export class C2DEngineDocker extends C2DEngine {
       // console.error('Container not found! ' + e.message)
     }
     try {
-      const volume = await this.docker.getVolume(job.jobId + '-volume')
+      const volume = this.docker.getVolume(job.jobId + '-volume')
       if (volume) {
         try {
           await volume.remove()
@@ -1347,7 +1367,7 @@ export class C2DEngineDocker extends C2DEngine {
     } catch (e) {
       // console.error('Container volume not found! ' + e.message)
     }
-    if (job.algorithm.meta.container && job.algorithm.meta.container.dockerfile) {
+    if (job.algorithm?.meta.container && job.algorithm?.meta.container.dockerfile) {
       const image = getAlgorithmImage(job.algorithm, job.jobId)
       if (image) {
         try {
@@ -1365,8 +1385,7 @@ export class C2DEngineDocker extends C2DEngine {
       })
     } catch (e) {
       console.error(
-        `Could not delete inputs from path ${this.getC2DConfig().tempFolder} for job ID ${
-          job.jobId
+        `Could not delete inputs from path ${this.getC2DConfig().tempFolder} for job ID ${job.jobId
         }! ` + e.message
       )
     }
@@ -1377,8 +1396,7 @@ export class C2DEngineDocker extends C2DEngine {
       })
     } catch (e) {
       console.error(
-        `Could not delete algorithms from path ${
-          this.getC2DConfig().tempFolder
+        `Could not delete algorithms from path ${this.getC2DConfig().tempFolder
         } for job ID ${job.jobId}! ` + e.message
       )
     }
@@ -1996,7 +2014,7 @@ export class C2DEngineDocker extends C2DEngine {
         mkdirSync(baseFolder + '/data/outputs')
       if (!existsSync(baseFolder + '/data/logs')) mkdirSync(baseFolder + '/data/logs')
       if (!existsSync(baseFolder + '/tarData')) mkdirSync(baseFolder + '/tarData') // used to upload and download data
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // clean up temporary files

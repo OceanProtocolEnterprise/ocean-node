@@ -78,13 +78,13 @@ export async function getAlgoChecksums(
         file.type === 'url'
           ? (file as UrlFileObject).url
           : file.type === 'arweave'
-          ? urlJoin(
+            ? urlJoin(
               process.env.ARWEAVE_GATEWAY,
               (file as ArweaveFileObject).transactionId
             )
-          : file.type === 'ipfs'
-          ? urlJoin(process.env.IPFS_GATEWAY, (file as IpfsFileObject).hash)
-          : null
+            : file.type === 'ipfs'
+              ? urlJoin(process.env.IPFS_GATEWAY, (file as IpfsFileObject).hash)
+              : null
 
       const { contentChecksum } = await fetchFileMetadata(url, 'get', false)
       checksums.files = checksums.files.concat(contentChecksum)

@@ -38,6 +38,7 @@ export interface GetP2PNetworkStatsCommand extends Command {}
 export interface AdminCommand extends Command {
   expiryTimestamp: number
   signature: string
+  address?: string
 }
 
 export interface AdminCollectFeesHandlerResponse {
@@ -292,10 +293,10 @@ export interface CreateAuthTokenCommand extends Command {
   validUntil?: number | null
 }
 
-export interface InvalidateAuthTokenCommand extends Command {
-  address: string
-  signature: string
-  token: string
+export interface GetJobsCommand extends Command {
+  environments?: string[]
+  fromTimestamp?: string
+  consumerAddrs?: string[]
 }
 
 export interface GetJobsCommand extends Command {

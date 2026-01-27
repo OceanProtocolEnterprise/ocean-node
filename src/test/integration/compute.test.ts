@@ -62,10 +62,10 @@ import { ProviderFees, ProviderComputeInitializeResults } from '../../@types/Fee
 import { homedir } from 'os'
 import { publishAlgoDDO, publishDatasetDDO } from '../data/ddo.js'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
-import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' assert { type: 'json' }
-import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
-import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' assert { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' assert { type: 'json' }
+import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' with { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
+import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
+import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
 import { createHash } from 'crypto'
 import { encrypt } from '../../utils/crypt.js'
 import { EncryptMethod } from '../../@types/fileObject.js'
@@ -148,11 +148,11 @@ describe('Compute', () => {
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
           JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-          '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"fees":{"' +
-            DEVELOPMENT_CHAIN_ID +
-            '":[{"feeToken":"' +
-            paymentToken +
-            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+          '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"fees":{"' +
+          DEVELOPMENT_CHAIN_ID +
+          '":[{"feeToken":"' +
+          paymentToken +
+          '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
         ]
       )
     )
@@ -683,7 +683,7 @@ describe('Compute', () => {
           await escrowContract
             .connect(consumerAccount)
             .cancelExpiredLocks(lock.jobId, lock.token, lock.payer, lock.payee)
-        } catch (e) {}
+        } catch (e) { }
       }
       locks = await oceanNode.escrow.getLocks(
         DEVELOPMENT_CHAIN_ID,
@@ -1287,14 +1287,14 @@ describe('Compute', () => {
         publisherTrustedAlgorithms: setTrustedAlgosEmpty
           ? []
           : [
-              {
-                did: algoDDO.id,
-                filesChecksum:
-                  'f6a7b95e4a2e3028957f69fdd2dac27bd5103986b2171bc8bfee68b52f874dcd',
-                containerSectionChecksum:
-                  'ba8885fcc7d366f058d6c3bb0b7bfe191c5f85cb6a4ee3858895342436c23504'
-              }
-            ]
+            {
+              did: algoDDO.id,
+              filesChecksum:
+                'f6a7b95e4a2e3028957f69fdd2dac27bd5103986b2171bc8bfee68b52f874dcd',
+              containerSectionChecksum:
+                'ba8885fcc7d366f058d6c3bb0b7bfe191c5f85cb6a4ee3858895342436c23504'
+            }
+          ]
       }
 
       const metadata = hexlify(Buffer.from(JSON.stringify(datasetDDO)))
@@ -1511,15 +1511,15 @@ describe('Compute Access Restrictions', () => {
             '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
             JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
             `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-            '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"access":{"addresses":["' +
-              allowedAddress +
-              '"],"accessLists":[]},"fees":{"' +
-              DEVELOPMENT_CHAIN_ID +
-              '":[{"feeToken":"' +
-              paymentToken +
-              '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"access":{"addresses":["' +
-              allowedAddress +
-              '"],"accessLists":[]},"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+            '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"access":{"addresses":["' +
+            allowedAddress +
+            '"],"accessLists":[]},"fees":{"' +
+            DEVELOPMENT_CHAIN_ID +
+            '":[{"feeToken":"' +
+            paymentToken +
+            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"access":{"addresses":["' +
+            allowedAddress +
+            '"],"accessLists":[]},"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
           ]
         )
       )
@@ -1597,7 +1597,7 @@ describe('Compute Access Restrictions', () => {
 
       const AccessListFactory = await import(
         '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessListFactory.sol/AccessListFactory.json',
-        { assert: { type: 'json' } }
+        { with: { type: 'json' } }
       )
 
       const factoryContract = new ethers.Contract(
@@ -1622,7 +1622,7 @@ describe('Compute Access Restrictions', () => {
 
       const AccessListAbi = await import(
         '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessList.sol/AccessList.json',
-        { assert: { type: 'json' } }
+        { with: { type: 'json' } }
       )
       const accessListContract = new ethers.Contract(
         accessListAddress,
@@ -1662,15 +1662,45 @@ describe('Compute Access Restrictions', () => {
             '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
             JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
             `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-            '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"access":{"addresses":[],"accessLists":["' +
-              accessListAddress +
-              '"]},"fees":{"' +
-              DEVELOPMENT_CHAIN_ID +
-              '":[{"feeToken":"' +
-              paymentToken +
-              '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"access":{"addresses":[],"accessLists":["' +
-              accessListAddress +
-              '"]},"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+            JSON.stringify([
+              {
+                socketPath: '/var/run/docker.sock',
+                resources: [{ id: 'disk', total: 10 }],
+                storageExpiry: 604800,
+                maxJobDuration: 3600,
+                minJobDuration: 60,
+                access: {
+                  addresses: [],
+                  accessLists: {
+                    [DEVELOPMENT_CHAIN_ID]: [accessListAddress]
+                  }
+                },
+                fees: {
+                  [DEVELOPMENT_CHAIN_ID]: [
+                    {
+                      feeToken: paymentToken,
+                      prices: [{ id: 'cpu', price: 1 }]
+                    }
+                  ]
+                },
+                free: {
+                  maxJobDuration: 60,
+                  minJobDuration: 10,
+                  maxJobs: 3,
+                  access: {
+                    addresses: [],
+                    accessLists: {
+                      DEVELOPMENT_CHAIN_ID: [accessListAddress]
+                    }
+                  },
+                  resources: [
+                    { id: 'cpu', max: 1 },
+                    { id: 'ram', max: 1 },
+                    { id: 'disk', max: 1 }
+                  ]
+                }
+              }
+            ])
           ]
         )
       )
@@ -1705,7 +1735,7 @@ describe('Compute Access Restrictions', () => {
       firstEnv = computeEnvironments[0]
       assert(firstEnv.access, 'Access control should exist')
       assert(
-        firstEnv.access.accessLists.includes(accessListAddress),
+        firstEnv.access.accessLists[DEVELOPMENT_CHAIN_ID].includes(accessListAddress),
         'Should have access list address'
       )
     })
@@ -1717,6 +1747,7 @@ describe('Compute Access Restrictions', () => {
         firstEnv.id
       )
       const response = await new PaidComputeStartHandler(oceanNode).handle(command)
+      console.log(response)
       expect(response.status.httpStatus).to.not.equal(403)
     })
 
@@ -1727,6 +1758,7 @@ describe('Compute Access Restrictions', () => {
         firstEnv.id
       )
       const response = await new PaidComputeStartHandler(oceanNode).handle(command)
+      console.log(response)
       assert(
         response.status.httpStatus === 403,
         `Expected 403 but got ${response.status.httpStatus}: ${response.status.error}`
@@ -1740,6 +1772,7 @@ describe('Compute Access Restrictions', () => {
         firstEnv.id
       )
       const response = await new FreeComputeStartHandler(oceanNode).handle(command)
+      console.log(response)
       expect(response.status.httpStatus).to.not.equal(403)
     })
 

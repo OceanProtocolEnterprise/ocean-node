@@ -82,13 +82,14 @@ export interface RunningPlatform {
 
 export interface ComputeAccessList {
   addresses: string[]
-  accessLists: string[]
+  accessLists: { [chainId: string]: string[] }
 }
 
 export interface ComputeEnvironmentFreeOptions {
   // only if a compute env exposes free jobs
   storageExpiry?: number
   maxJobDuration?: number
+  minJobDuration?: number
   maxJobs?: number // maximum number of simultaneous free jobs
   resources?: ComputeResource[]
   access: ComputeAccessList
@@ -121,6 +122,8 @@ export interface ComputeEnvironment extends ComputeEnvironmentBaseConfig {
   queuedFreeJobs: number
   queMaxWaitTime: number
   queMaxWaitTimeFree: number
+  runMaxWaitTime: number
+  runMaxWaitTimeFree: number
 }
 
 export interface C2DDockerConfig {
@@ -133,6 +136,7 @@ export interface C2DDockerConfig {
   keyPath: string
   storageExpiry?: number
   maxJobDuration?: number
+  minJobDuration?: number
   maxJobs?: number
   fees: ComputeEnvFeesStructure
   resources?: ComputeResource[] // optional, owner can overwrite

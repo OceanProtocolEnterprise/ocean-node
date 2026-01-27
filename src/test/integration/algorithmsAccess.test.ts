@@ -43,9 +43,9 @@ import {
 import { ProviderComputeInitializeResults } from '../../@types/Fees.js'
 import { homedir } from 'os'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
-import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
-import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' assert { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' assert { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
+import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
+import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
 import { createHash } from 'crypto'
 import { getAlgoChecksums } from '../../components/core/compute/utils.js'
 
@@ -99,11 +99,11 @@ describe('Trusted algorithms Flow', () => {
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
           JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-          '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"fees":{"' +
-            DEVELOPMENT_CHAIN_ID +
-            '":[{"feeToken":"' +
-            paymentToken +
-            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+          '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"fees":{"' +
+          DEVELOPMENT_CHAIN_ID +
+          '":[{"feeToken":"' +
+          paymentToken +
+          '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60, "minJobDuration":10, "maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
         ]
       )
     )
@@ -150,8 +150,7 @@ describe('Trusted algorithms Flow', () => {
     // Fail the test if compute dataset DDO was not indexed - subsequent tests depend on it
     assert(
       computeDatasetResult.ddo,
-      `Compute dataset DDO was not indexed${
-        computeDatasetResult.wasTimeout ? ' (timeout)' : ''
+      `Compute dataset DDO was not indexed${computeDatasetResult.wasTimeout ? ' (timeout)' : ''
       }`
     )
     const algoDatasetResult = await waitToIndex(
@@ -238,7 +237,7 @@ describe('Trusted algorithms Flow', () => {
     assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
     assert(
       resp.status.error ===
-        `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
+      `Algorithm ${publishedAlgoDataset.ddo.id} not allowed to run on the dataset: ${publishedComputeDataset.ddo.id}`,
       'Inconsistent error message'
     )
     assert(resp.stream === null, 'Failed to get stream')
@@ -419,7 +418,7 @@ describe('Trusted algorithms Flow', () => {
           await escrowContract
             .connect(consumerAccount)
             .cancelExpiredLocks(lock.jobId, lock.token, lock.payer, lock.payee)
-        } catch (e) {}
+        } catch (e) { }
       }
     }
     const nonce = Date.now().toString()
