@@ -623,7 +623,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) { }
+    } catch (e) {}
     try {
       const logStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/configuration.log'
@@ -637,7 +637,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) { }
+    } catch (e) {}
     try {
       const logStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/algorithm.log'
@@ -651,7 +651,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) { }
+    } catch (e) {}
     try {
       const outputStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/outputs/outputs.tar'
@@ -665,7 +665,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) { }
+    } catch (e) {}
     try {
       const logStat = statSync(
         this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/publish.log'
@@ -679,7 +679,7 @@ export class C2DEngineDocker extends C2DEngine {
         })
         index = index + 1
       }
-    } catch (e) { }
+    } catch (e) {}
     return res
   }
 
@@ -740,9 +740,9 @@ export class C2DEngineDocker extends C2DEngine {
           return {
             stream: createReadStream(
               this.getC2DConfig().tempFolder +
-              '/' +
-              jobId +
-              '/data/logs/configuration.log'
+                '/' +
+                jobId +
+                '/data/logs/configuration.log'
             ),
             headers: {
               'Content-Type': 'text/plain'
@@ -1118,8 +1118,8 @@ export class C2DEngineDocker extends C2DEngine {
       } catch (e) {
         console.error(
           'Could not retrieve container: ' +
-          e.message +
-          '\nBack to configuring volumes to create the container...'
+            e.message +
+            '\nBack to configuring volumes to create the container...'
         )
         job.isStarted = false
         job.status = C2DStatusNumber.ConfiguringVolumes
@@ -1385,7 +1385,8 @@ export class C2DEngineDocker extends C2DEngine {
       })
     } catch (e) {
       console.error(
-        `Could not delete inputs from path ${this.getC2DConfig().tempFolder} for job ID ${job.jobId
+        `Could not delete inputs from path ${this.getC2DConfig().tempFolder} for job ID ${
+          job.jobId
         }! ` + e.message
       )
     }
@@ -1396,7 +1397,8 @@ export class C2DEngineDocker extends C2DEngine {
       })
     } catch (e) {
       console.error(
-        `Could not delete algorithms from path ${this.getC2DConfig().tempFolder
+        `Could not delete algorithms from path ${
+          this.getC2DConfig().tempFolder
         } for job ID ${job.jobId}! ` + e.message
       )
     }
@@ -2014,7 +2016,7 @@ export class C2DEngineDocker extends C2DEngine {
         mkdirSync(baseFolder + '/data/outputs')
       if (!existsSync(baseFolder + '/data/logs')) mkdirSync(baseFolder + '/data/logs')
       if (!existsSync(baseFolder + '/tarData')) mkdirSync(baseFolder + '/tarData') // used to upload and download data
-    } catch (e) { }
+    } catch (e) {}
   }
 
   // clean up temporary files

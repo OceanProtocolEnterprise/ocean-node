@@ -825,8 +825,8 @@ export class ValidateDDOHandler extends CommandHandler {
       return {
         stream: shouldSign
           ? Readable.from(
-            JSON.stringify(await getValidationSignature(JSON.stringify(task.ddo)))
-          )
+              JSON.stringify(await getValidationSignature(JSON.stringify(task.ddo)))
+            )
           : null,
         status: { httpStatus: 200 }
       }

@@ -699,7 +699,7 @@ export class OceanP2P extends EventEmitter {
         useNetwork: true
       })
       return data
-    } catch (e) { }
+    } catch (e) {}
     return null
   }
 
@@ -783,7 +783,7 @@ export class OceanP2P extends EventEmitter {
       P2P_LOGGER.error(`P2P communication error: ${err.message}`)
       try {
         stream.abort(err as Error)
-      } catch { }
+      } catch {}
       return { status: { httpStatus: 500, error: `P2P error: ${err.message}` } }
     }
   }

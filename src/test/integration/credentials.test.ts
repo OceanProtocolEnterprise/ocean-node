@@ -129,10 +129,10 @@ describe('[Credentials Flow] - Should run a complete node flow.', () => {
           ]),
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
           '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"fees":{"' +
-          DEVELOPMENT_CHAIN_ID +
-          '":[{"feeToken":"' +
-          paymentToken +
-          '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+            DEVELOPMENT_CHAIN_ID +
+            '":[{"feeToken":"' +
+            paymentToken +
+            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
         ]
       )
     )
@@ -605,7 +605,7 @@ describe('[Credentials Flow] - Should run a complete node flow.', () => {
     printCurrentConfig()
     expect(
       config.authorizedPublishers.length === 1 &&
-      config.authorizedPublishers[0] === authorizedAccount,
+        config.authorizedPublishers[0] === authorizedAccount,
       'Unable to set AUTHORIZED_PUBLISHERS'
     )
 

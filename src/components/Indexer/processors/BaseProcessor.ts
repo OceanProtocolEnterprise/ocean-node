@@ -20,7 +20,7 @@ import { timestampToDateTime } from '../../../utils/conversions.js'
 import { getConfiguration } from '../../../utils/config.js'
 import { create256Hash } from '../../../utils/crypt.js'
 import { getDatabase } from '../../../utils/database.js'
-import { CORE_LOGGER, INDEXER_LOGGER } from '../../../utils/logging/common.js'
+import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { URLUtils } from '../../../utils/url.js'
 import { streamToString, streamToUint8Array } from '../../../utils/util.js'
@@ -30,8 +30,8 @@ import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/template
 import { fetchTransactionReceipt } from '../../core/utils/validateOrders.js'
 import { withRetrial } from '../utils.js'
 import { OceanNodeKeys } from '../../../@types/OceanNode.js'
-import { AbstractDdoDatabase } from '../../database/BaseDatabase.js'
 import { createHash } from 'crypto'
+import { AbstractDdoDatabase } from '../../database/BaseDatabase.js'
 
 export abstract class BaseEventProcessor {
   protected networkId: number
@@ -145,7 +145,6 @@ export abstract class BaseEventProcessor {
   ): Promise<any> {
     const nftContract = new ethers.Contract(nftAddress, ERC721Template.abi, signer)
     const state = parseInt((await nftContract.getMetaData())[2])
-    CORE_LOGGER.info(`NFT state: ${state}`)
     const id = parseInt(await nftContract.getId())
     const tokenURI = await nftContract.tokenURI(id)
     return {
@@ -170,6 +169,7 @@ export abstract class BaseEventProcessor {
 
         return saveDDO
       }
+
       const saveDDO = await ddoDatabase.update({ ...ddo.getDDOData() })
       await ddoState.update(
         this.networkId,
@@ -284,30 +284,6 @@ export abstract class BaseEventProcessor {
       )
       const config = await getConfiguration()
       const { keys } = config
-      let nonce: string
-      try {
-        if (URLUtils.isValidUrl(decryptorURL)) {
-          INDEXER_LOGGER.logMessage(
-            `decryptDDO: Making HTTP request for nonce. DecryptorURL: ${decryptorURL}`
-          )
-          const nonceResponse = await axios.get(
-            `${decryptorURL}/api/services/nonce?userAddress=${keys.ethAddress}`,
-            { timeout: 20000 }
-          )
-          nonce =
-            nonceResponse.status === 200 && nonceResponse.data
-              ? String(parseInt(nonceResponse.data.nonce) + 1)
-              : Date.now().toString()
-        } else {
-          nonce = Date.now().toString()
-        }
-      } catch (err) {
-        INDEXER_LOGGER.log(
-          LOG_LEVELS_STR.LEVEL_ERROR,
-          `decryptDDO: Error getting nonce, using timestamp: ${err.message}`
-        )
-        nonce = Date.now().toString()
-      }
       const nodeId = keys.peerId.toString()
       const wallet: ethers.Wallet = new ethers.Wallet(process.env.PRIVATE_KEY as string)
       const useTxIdOrContractAddress = txId || contractAddress
@@ -418,7 +394,6 @@ export abstract class BaseEventProcessor {
             throw new Error(msg)
           }
         } catch (err) {
-          CORE_LOGGER.error(`Error on decrypting DDO: ${JSON.stringify(err)}`)
           const message = `Provider exception on decrypt DDO. Status: ${err.message}`
           INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, message)
           throw new Error(message)

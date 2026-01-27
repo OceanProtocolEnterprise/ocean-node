@@ -174,7 +174,8 @@ export class OceanIndexer {
         return true
       } else {
         INDEXER_LOGGER.warn(
-          `Blockchain connection is not established, retrying again in ${retryInterval / 1000
+          `Blockchain connection is not established, retrying again in ${
+            retryInterval / 1000
           } secs....`
         )
         numCrawlAttempts++
@@ -486,13 +487,15 @@ export class OceanIndexer {
     }
     const dbVersion = await dbActive.sqliteConfig?.retrieveValue()
     INDEXER_LOGGER.info(
-      `Node version check: Current=${currentVersion}, DB=${dbVersion || 'not set'
+      `Node version check: Current=${currentVersion}, DB=${
+        dbVersion || 'not set'
       }, Min Required=${this.MIN_REQUIRED_VERSION}`
     )
 
     if (isReindexingNeeded(currentVersion, dbVersion.value, this.MIN_REQUIRED_VERSION)) {
       INDEXER_LOGGER.info(
-        `Reindexing needed: DB version ${dbVersion.value || 'not set'
+        `Reindexing needed: DB version ${
+          dbVersion.value || 'not set'
         } is older than minimum required ${this.MIN_REQUIRED_VERSION}`
       )
 

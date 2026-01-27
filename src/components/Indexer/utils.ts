@@ -89,7 +89,8 @@ export const retrieveChunkEvents = async (
     return blockLogs
   } catch (error) {
     INDEXER_LOGGER.error(
-      `Error retrieving events from block ${lastIndexedBlock + 1} to ${lastIndexedBlock + count
+      `Error retrieving events from block ${lastIndexedBlock + 1} to ${
+        lastIndexedBlock + count
       }:`
     )
     INDEXER_LOGGER.error(error)

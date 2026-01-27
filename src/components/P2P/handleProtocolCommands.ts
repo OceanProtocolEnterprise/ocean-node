@@ -57,7 +57,7 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
       P2P_LOGGER.error(`Error sending error response: ${e.message}`)
       try {
         stream.abort(e as Error)
-      } catch { }
+      } catch {}
     }
   }
 

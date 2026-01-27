@@ -230,7 +230,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
     assert(resolvedDDO.indexedMetadata.nft, 'NFT field is not present')
     assert(
       resolvedDDO.indexedMetadata.nft.address?.toLowerCase() ===
-      nftAddress?.toLowerCase(),
+        nftAddress?.toLowerCase(),
       'NFT address mismatch'
     )
     assert(resolvedDDO.indexedMetadata.nft.state === 0, 'NFT state mismatch') // ACTIVE
@@ -244,12 +244,12 @@ describe('Indexer stores a new metadata events and orders.', () => {
     )
     assert(
       resolvedDDO.indexedMetadata.nft.tokenURI ===
-      (await nftContract.tokenURI(await nftContract.getId())),
+        (await nftContract.tokenURI(await nftContract.getId())),
       'NFT tokeURI mismatch'
     )
     assert(
       resolvedDDO.indexedMetadata.nft.owner?.toLowerCase() ===
-      setMetaDataTxReceipt.from?.toLowerCase(),
+        setMetaDataTxReceipt.from?.toLowerCase(),
       'NFT owner mismatch'
     )
     assert(
@@ -618,8 +618,8 @@ describe('Indexer stores a new metadata events and orders.', () => {
       expect(Object.keys(resolvedDDO).length).to.equal(5)
       expect(
         'id' in resolvedDDO &&
-        'nftAddress' in resolvedDDO &&
-        'nft' in resolvedDDO.indexedMetadata
+          'nftAddress' in resolvedDDO &&
+          'nft' in resolvedDDO.indexedMetadata
       ).to.equal(true)
     } else {
       expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
