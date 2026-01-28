@@ -1,10 +1,5 @@
-export const KNOWN_CREDENTIALS_TYPES = ['address', 'accessList']
-
-export interface Credential {
-  type?: string
-  values?: any
-}
-export interface Credentials {
-  allow?: Credential[]
-  deny?: Credential[]
+// Supported credential types enum-like object for easier use in code
+export const CREDENTIALS_TYPES = {
+  ADDRESS: 'address' as const,
+  ACCESS_LIST: 'accessList' as const
 }

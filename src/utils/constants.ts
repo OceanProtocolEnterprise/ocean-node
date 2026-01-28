@@ -475,6 +475,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.P2P_ipV4BindWsPort,
     required: false
   },
+  P2P_ipV4BindWssPort: {
+    name: 'P2P_ipV4BindWssPort',
+    value: process.env.P2P_ipV4BindWssPort,
+    required: false
+  },
   P2P_ipV6BindAddress: {
     name: 'P2P_ipV6BindAddress',
     value: process.env.P2P_ipV6BindAddress,
@@ -498,6 +503,16 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   P2P_MAX_CONNECTIONS: {
     name: 'P2P_MAX_CONNECTIONS',
     value: process.env.P2P_MAX_CONNECTIONS,
+    required: false
+  },
+  HTTP_CERT_PATH: {
+    name: 'HTTP_CERT_PATH',
+    value: process.env.HTTP_CERT_PATH,
+    required: false
+  },
+  HTTP_KEY_PATH: {
+    name: 'HTTP_KEY_PATH',
+    value: process.env.HTTP_KEY_PATH,
     required: false
   }
 }
