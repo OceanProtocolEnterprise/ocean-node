@@ -1,10 +1,10 @@
 {
   "authorizedDecrypters": [],
-  "authorizedDecryptersList": [],
+  "authorizedDecryptersList": null,
   "allowedValidators": [],
-  "allowedValidatorsList": [],
+  "allowedValidatorsList": null,
   "authorizedPublishers": [],
-  "authorizedPublishersList": [],
+  "authorizedPublishersList": null,
   "keys": {},
   "hasIndexer": true,
   "hasHttp": true,
@@ -19,6 +19,7 @@
     "ipV4BindAddress": "0.0.0.0",
     "ipV4BindTcpPort": 9000,
     "ipV4BindWsPort": 9001,
+    "ipV4BindWssPort": 9005,
     "ipV6BindAddress": "::",
     "ipV6BindTcpPort": 9002,
     "ipV6BindWsPort": 9003,
@@ -81,7 +82,7 @@
   "accountPurgatoryUrl": null,
   "assetPurgatoryUrl": null,
   "allowedAdmins": [],
-  "allowedAdminsList": [],
+  "allowedAdminsList": null,
   "rateLimit": 30,
   "maxConnections": 30,
   "denyList": {
@@ -104,6 +105,7 @@
       ],
       "storageExpiry": 604800,
       "maxJobDuration": 3600,
+      "minJobDuration": 60,
       "access": {
         "addresses": [],
         "accessLists": []
@@ -122,6 +124,7 @@
       },
       "free": {
         "maxJobDuration": 3600,
+        "minJobDuration": 60,
         "maxJobs": 3,
         "access": {
           "addresses": [],
