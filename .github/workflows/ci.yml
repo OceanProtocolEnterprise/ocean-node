@@ -234,7 +234,7 @@ jobs:
       - name: Checkout Ocean Node
         uses: actions/checkout@v4
         with:
-          repository: 'oceanprotocol/ocean-node'
+          repository: 'OceanProtocolEnterprise/ocean-node'
           path: 'ocean-node'
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'main' }}
 
