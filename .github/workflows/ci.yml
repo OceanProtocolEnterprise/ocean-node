@@ -194,7 +194,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'v20.19.0'
+          node-version: '20.19'
 
       - name: Cache node_modules
         uses: actions/cache@v3
@@ -255,10 +255,11 @@ jobs:
       - name: Start Ocean Node
         working-directory: ${{ github.workspace }}/ocean-node
         run: |
+          node -v
           npm ci
-          echo "\nBuilding node..."
+          echo "Building node..."
           npm run build
-          echo "\nStarting node..."
+          echo "Starting node..."
           npm run start
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
