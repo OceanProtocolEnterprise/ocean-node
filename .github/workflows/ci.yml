@@ -255,13 +255,10 @@ jobs:
       - name: Start Ocean Node
         working-directory: ${{ github.workspace }}/ocean-node
         run: |
-          node -v
           npm ci
-          echo "Building node..."
           npm run build
-          echo "Starting node..."
-          npm run start
-        env:
+          npm run start > ocean-node.log 2>&1 &
+        env:          
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           IPFS_GATEWAY: http://172.15.0.16:8080/
           ARWEAVE_GATEWAY: https://arweave.net/
