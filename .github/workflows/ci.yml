@@ -256,8 +256,10 @@ jobs:
         working-directory: ${{ github.workspace }}/ocean-node
         run: |
           npm ci
+          echo "\nBuilding node..."
           npm run build
-          npm run start > ocean-node.log 2>&1
+          echo "\nStarting node..."
+          npm run start
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           IPFS_GATEWAY: http://172.15.0.16:8080/
