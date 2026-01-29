@@ -184,10 +184,10 @@ if (config.hasHttp) {
   scheduleCronJobs(oceanNode)
 }
 
-process.on('unhandledRejection', (reason) => {
-  console.log(reason)
-})
-
-process.on('uncaughtException', (error) => {
-  console.log(error)
-})
+// process.on('unhandledRejection', (reason) => {
+//   console.log(reason)
+// })
+//
+// process.on('uncaughtException', (error) => {
+//   console.log(error)
+// })
