@@ -75,8 +75,15 @@ async function getIndexerBlockInfo(
 ): Promise<string> {
   let blockNr = '0'
   try {
-    const { indexer: indexerDatabase } = oceanNode.getDatabase()
-    const { lastIndexedBlock } = await indexerDatabase.retrieve(supportedNetwork.chainId)
+    const database = oceanNode.getDatabase()
+    if (!database || !database.indexer) {
+      CORE_LOGGER.log(
+        LOG_LEVELS_STR.LEVEL_WARN,
+        `Indexer database is not available for network ${supportedNetwork.network}`
+      )
+      return blockNr
+    }
+    const { lastIndexedBlock } = await database.indexer.retrieve(supportedNetwork.chainId)
     blockNr = lastIndexedBlock.toString()
   } catch (error) {
     CORE_LOGGER.log(
@@ -139,14 +146,18 @@ export async function status(
   // depends on request
   if (detailed) {
     nodeStatus.c2dClusters = []
-    const engines = await oceanNode.getC2DEngines().getAllEngines()
-    for (const engine of engines) {
-      const type = await engine.getC2DType()
-      nodeStatus.c2dClusters.push({
-        type,
-        hash: await engine.getC2DConfig().hash,
-        environments: await engine.getComputeEnvironments()
-      })
+    try {
+      const engines = await oceanNode.getC2DEngines().getAllEngines()
+      for (const engine of engines) {
+        const type = await engine.getC2DType()
+        nodeStatus.c2dClusters.push({
+          type,
+          hash: await engine.getC2DConfig().hash,
+          environments: await engine.getComputeEnvironments()
+        })
+      }
+    } catch (error) {
+      CORE_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error getting c2d clusters: ${error}`)
     }
     nodeStatus.supportedSchemas = typesenseSchemas.ddoSchemas
   }

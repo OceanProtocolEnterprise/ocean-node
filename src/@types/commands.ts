@@ -16,7 +16,6 @@ import {
   UrlFileObject,
   BaseFileObject
 } from './fileObject'
-import { PolicyServerTask } from './policyServer.js'
 
 export interface Command {
   command: string // command name
@@ -38,6 +37,7 @@ export interface GetP2PNetworkStatsCommand extends Command {}
 export interface AdminCommand extends Command {
   expiryTimestamp: number
   signature: string
+  address?: string
 }
 
 export interface AdminCollectFeesHandlerResponse {
@@ -140,7 +140,7 @@ export interface GetFeesCommand extends Command {
   serviceId: string
   consumerAddress?: string
   validUntil?: number // this allows a user to request a fee that is valid only for a limited period of time, less than service.timeout
-  policyServer?: PolicyServerTask // object to pass to policyServer
+  policyServer?: any // object to pass to policyServer
 }
 // admin commands
 export interface AdminStopNodeCommand extends AdminCommand {}
@@ -290,12 +290,6 @@ export interface CreateAuthTokenCommand extends Command {
   address: string
   signature: string
   validUntil?: number | null
-}
-
-export interface InvalidateAuthTokenCommand extends Command {
-  address: string
-  signature: string
-  token: string
 }
 
 export interface GetJobsCommand extends Command {

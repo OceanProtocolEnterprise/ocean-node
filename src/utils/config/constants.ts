@@ -40,6 +40,7 @@ export const ENV_TO_CONFIG_MAPPING = {
   P2P_ipV4BindAddress: 'p2pConfig.ipV4BindAddress',
   P2P_ipV4BindTcpPort: 'p2pConfig.ipV4BindTcpPort',
   P2P_ipV4BindWsPort: 'p2pConfig.ipV4BindWsPort',
+  P2P_ipV4BindWssPort: 'p2pConfig.ipV4BindWssPort',
   P2P_ipV6BindAddress: 'p2pConfig.ipV6BindAddress',
   P2P_ipV6BindTcpPort: 'p2pConfig.ipV6BindTcpPort',
   P2P_ipV6BindWsPort: 'p2pConfig.ipV6BindWsPort',
@@ -64,7 +65,9 @@ export const ENV_TO_CONFIG_MAPPING = {
   P2P_AUTODIALCONCURRENCY: 'p2pConfig.autoDialConcurrency',
   P2P_MAXPEERADDRSTODIAL: 'p2pConfig.maxPeerAddrsToDial',
   P2P_AUTODIALINTERVAL: 'p2pConfig.autoDialInterval',
-  P2P_ENABLE_NETWORK_STATS: 'p2pConfig.enableNetworkStats'
+  P2P_ENABLE_NETWORK_STATS: 'p2pConfig.enableNetworkStats',
+  HTTP_CERT_PATH: 'httpCertPath',
+  HTTP_KEY_PATH: 'httpKeyPath'
 } as const
 
 // Configuration defaults

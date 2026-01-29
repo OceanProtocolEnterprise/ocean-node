@@ -40,6 +40,7 @@ export interface OceanNodeP2PConfig {
   ipV4BindAddress: string | null
   ipV4BindTcpPort: number | null
   ipV4BindWsPort: number | null
+  ipV4BindWssPort: number | null
   ipV6BindAddress: string | null
   ipV6BindTcpPort: number | null
   ipV6BindWsPort: number | null
@@ -116,6 +117,8 @@ export interface OceanNodeConfig {
   isBootstrap?: boolean
   validateUnsignedDDO?: boolean
   jwtSecret?: string
+  httpCertPath?: string
+  httpKeyPath?: string
 }
 
 export interface P2PStatusResponse {
@@ -159,7 +162,7 @@ export interface OceanNodeStatus {
   platform: any
   uptime?: number // seconds since start
   codeHash?: string
-  allowedAdmins?: string[]
+  allowedAdmins?: { addresses: string[]; accessLists: AccessListContract }
   // detailed information
   c2dClusters?: any[]
   supportedSchemas?: Schema[]
