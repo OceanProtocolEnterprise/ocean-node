@@ -160,9 +160,21 @@ jobs:
           FEE_AMOUNT: '{ "amount": 1, "unit": "MB" }'
           ASSET_PURGATORY_URL: 'https://raw.githubusercontent.com/oceanprotocol/list-purgatory/main/list-assets.json'
           ACCOUNT_PURGATORY_URL: 'https://raw.githubusercontent.com/oceanprotocol/list-purgatory/main/list-accounts.json'
-      - name: docker logs
-        run: docker logs ocean-ocean-contracts-1 && docker logs ocean-typesense-1
-        if: ${{ failure() }}
+      - name: Show Ocean Node logs on failure
+        if: failure()
+        working-directory: ${{ github.workspace }}/ocean-node
+        run: |
+          echo "=== Ocean Node Logs ==="
+          if [ -f ocean-node.log ]; then
+          cat ocean-node.log
+          else
+          echo "No ocean-node.log file found"
+          fi
+          echo "=== Docker Logs ==="
+          docker logs ocean-ocean-contracts-1 || echo "No ocean-contracts-1 container"
+          docker logs ocean-typesense-1 || echo "No ocean-typesense-1 container"
+          echo "=== System Processes ==="
+          ps aux | grep -E "(node|ocean)" || echo "No node/ocean processes found"
       - uses: actions/upload-artifact@v4
         with:
           name: coverage
@@ -264,7 +276,7 @@ jobs:
       - name: Check Ocean Node is running
         run: |
           for i in $(seq 1 90); do
-            if curl --output /dev/null --silent --head --fail "http://localhost:8001"; then
+            if curl --output /dev/null --silent --head --fail --max-time 1 "http://localhost:8001"; then
               echo "Ocean Node is up"
               exit 0
             fi
