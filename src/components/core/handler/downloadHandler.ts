@@ -499,13 +499,16 @@ export class DownloadHandler extends CommandHandler {
             task.signature,
             consumerMessage
           )
-
           decryptedFileData = JSON.parse(filesObject)
           decriptedFileObject = decryptedFileData.files[task.fileIndex]
+          CORE_LOGGER.info('decrypted file obj for headers')
+          CORE_LOGGER.info(JSON.stringify(decriptedFileObject))
         }
       } else {
         // non confidential EVM
         filesObject = service.files
+        CORE_LOGGER.info('filesObject file obj for headers in else')
+        CORE_LOGGER.info(JSON.stringify(filesObject))
         const uint8ArrayHex = Uint8Array.from(
           Buffer.from(sanitizeServiceFiles(filesObject), 'hex')
         )
