@@ -589,6 +589,20 @@ export class PaidComputeStartHandler extends CommandHandler {
           true
         )
 
+        if (!response || response.length === 0 || !response[0]?.jobId) {
+          CORE_LOGGER.logMessage(
+            `startComputeJob returned invalid response: ${JSON.stringify(response)}`,
+            true
+          )
+          return {
+            stream: null,
+            status: {
+              httpStatus: 500,
+              error: 'Compute job creation failed - no job ID returned'
+            }
+          }
+        }
+
         return {
           stream: Readable.from(JSON.stringify(response)),
           status: {
