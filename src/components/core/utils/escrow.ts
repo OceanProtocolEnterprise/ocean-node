@@ -157,8 +157,7 @@ export class Escrow {
       auths = await this.getAuthorizations(chain, token, payer, signerAddress, blockchain)
       if (!auths || auths.length !== 1) {
         console.log(
-          `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${
-            auths?.length || 0
+          `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${auths?.length || 0
           } authorizations. ${retries > 0 ? 'Retrying..' : ''}`
         )
       } else if (auths && auths.length === 1) {
@@ -171,8 +170,7 @@ export class Escrow {
     }
     if (!auths || auths.length !== 1) {
       throw new Error(
-        `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${
-          auths?.length || 0
+        `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${auths?.length || 0
         } authorizations.`
       )
     }
@@ -181,6 +179,12 @@ export class Escrow {
       BigInt(auths[0].currentLockedAmount.toString()) + BigInt(wei) >
       BigInt(auths[0].maxLockedAmount.toString())
     ) {
+      console.log(`DEBUG: Escrow limit exceeded:
+        Current Locked: ${auths[0].currentLockedAmount.toString()}
+        Wei Needed: ${wei.toString()}
+        Total Needed: ${(BigInt(auths[0].currentLockedAmount.toString()) + BigInt(wei)).toString()}
+        Max Locked Limit: ${auths[0].maxLockedAmount.toString()}
+      `);
       throw new Error(`No valid escrow auths found(will go over limit)`)
     }
     if (BigInt(auths[0].maxLockSeconds.toString()) < BigInt(expiry)) {
