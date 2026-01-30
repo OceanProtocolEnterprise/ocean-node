@@ -46,6 +46,7 @@ export class ComputeInitializeHandler extends CommandHandler {
       // we might also need a "signature" (did + nonce) for confidential evm template 4
     ])
     if (validation.valid) {
+      CORE_LOGGER.logMessage(JSON.stringify(validation), true)
       if (command.consumerAddress && !isAddress(command.consumerAddress)) {
         return buildInvalidRequestMessage(
           'Parameter : "consumerAddress" is not a valid web3 address'
