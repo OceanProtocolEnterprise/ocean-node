@@ -64,6 +64,7 @@ export class PaidComputeStartHandler extends CommandHandler {
   async handle(task: PaidComputeStartCommand): Promise<P2PCommandResponse> {
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
+      CORE_LOGGER.error(JSON.stringify(validationResponse))
       return validationResponse
     }
     if (!task.queueMaxWaitTime) {
@@ -78,6 +79,7 @@ export class PaidComputeStartHandler extends CommandHandler {
     )
 
     if (authValidationResponse.status.httpStatus !== 200) {
+      CORE_LOGGER.error(JSON.stringify(authValidationResponse))
       return authValidationResponse
     }
 
@@ -106,6 +108,7 @@ export class PaidComputeStartHandler extends CommandHandler {
       try {
         env = await engine.getComputeEnvironment(null, task.environment)
         if (!env) {
+          CORE_LOGGER.error('Invalid C2D Environment')
           return {
             stream: null,
             status: {
@@ -157,6 +160,7 @@ export class PaidComputeStartHandler extends CommandHandler {
 
       const accessGranted = await validateAccess(task.consumerAddress, env.access)
       if (!accessGranted) {
+        CORE_LOGGER.error('Access denied')
         return {
           stream: null,
           status: {
@@ -198,6 +202,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           const ddo = await new FindDdoHandler(node).findAndFormatDdo(elem.documentId)
           if (!ddo) {
             const error = `DDO ${elem.documentId} not found`
+            CORE_LOGGER.error(error)
             return {
               stream: null,
               status: {
@@ -229,6 +234,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           const blockchain = new Blockchain(rpc, chainId, config, fallbackRPCs)
           const { ready, error } = await blockchain.isNetworkReady()
           if (!ready) {
+            CORE_LOGGER.error(`Start compute: ${error}`)
             return {
               stream: null,
               status: {
@@ -277,6 +283,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           const service = AssetUtils.getServiceById(ddo, elem.serviceId)
           if (!service) {
             const error = `Cannot find service ${elem.serviceId} in DDO ${elem.documentId}`
+            CORE_LOGGER.error(error)
             return {
               stream: null,
               status: {
@@ -367,6 +374,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           }
           if (service.type === 'compute' && !canDecrypt) {
             const error = `Service ${elem.serviceId} from DDO ${elem.documentId} cannot be used in compute on this provider`
+            CORE_LOGGER.error(error)
             return {
               stream: null,
               status: {
@@ -388,6 +396,13 @@ export class PaidComputeStartHandler extends CommandHandler {
               node
             )
             if (!validAlgoForDataset) {
+              CORE_LOGGER.error(
+                `Algorithm ${task.algorithm.documentId} with serviceId ${
+                  task.algorithm.serviceId
+                } not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${
+                  task.datasets[safeIndex].serviceId
+                }`
+              )
               return {
                 stream: null,
                 status: {
@@ -408,6 +423,7 @@ export class PaidComputeStartHandler extends CommandHandler {
 
           if (!('transferTxId' in elem) || !elem.transferTxId) {
             const error = `Missing transferTxId for DDO ${elem.documentId}`
+            CORE_LOGGER.error(error)
             return {
               stream: null,
               status: {
@@ -430,6 +446,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           )
           if (paymentValidation.isValid === false) {
             const error = `TxId Service ${elem.transferTxId} is not valid for DDO ${elem.documentId} and service ${service.id}`
+            CORE_LOGGER.error(error)
             return {
               stream: null,
               status: {
@@ -458,6 +475,9 @@ export class PaidComputeStartHandler extends CommandHandler {
         task.payment.token
       )
       if (!prices) {
+        CORE_LOGGER.error(
+          `This compute env does not accept payments on chain: ${task.payment.chainId} using token ${task.payment.token}`
+        )
         return {
           stream: null,
           status: {
