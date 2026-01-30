@@ -62,6 +62,10 @@ export class PaidComputeStartHandler extends CommandHandler {
   }
 
   async handle(task: PaidComputeStartCommand): Promise<P2PCommandResponse> {
+    CORE_LOGGER.logMessage(
+      JSON.stringify({ task, msg: 'Paid Compute Start handler' }),
+      true
+    )
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
       CORE_LOGGER.logMessage(JSON.stringify(validationResponse), true)
