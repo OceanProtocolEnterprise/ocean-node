@@ -272,8 +272,10 @@ jobs:
           P2P_ENABLE_UPNP: 'false'
           P2P_ENABLE_AUTONAT: 'false'
           ALLOWED_ADMINS: '["0xe2DD09d719Da89e5a3D0F2549c7E24566e947260"]'
-          DB_TYPE: 'typesense'
-          DB_URL: 'http://localhost:8108/?apiKey=xyz'
+          DB_TYPE: 'elasticsearch'
+          DB_URL: 'http://localhost:9200'
+          #DB_TYPE: 'typesense'
+          #DB_URL: 'http://localhost:8108/?apiKey=xyz'
           DB_USERNAME: 'elastic'
           DB_PASSWORD: 'changeme'
           MAX_REQ_PER_MINUTE: 320
@@ -315,12 +317,12 @@ jobs:
           else
             echo "No ocean-node.log file found"
           fi
-          echo "=== Docker Logs ==="
-          docker logs ocean-ocean-contracts-1 || echo "No ocean-contracts-1 container"
-          docker logs ocean-typesense-1 || echo "No ocean-typesense-1 container"
-          echo "=== System Processes ==="
-          ps aux | grep -E "(node|ocean)" || echo "No node/ocean processes found"
-
+#          echo "=== Docker Logs ==="
+#          docker logs ocean-ocean-contracts-1 || echo "No ocean-contracts-1 container"
+#          docker logs ocean-typesense-1 || echo "No ocean-typesense-1 container"
+#          echo "=== System Processes ==="
+#          ps aux | grep -E "(node|ocean)" || echo "No node/ocean processes found"
+#
   control_panel_build:
     runs-on: ubuntu-latest
     steps:
