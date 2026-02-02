@@ -285,7 +285,6 @@ jobs:
         with:
           repository: 'oceanprotocol/ocean-cli'
           path: 'ocean-cli'
-          ref: 'fix/test-system'
       - name: Setup Ocean CLI
         working-directory: ${{ github.workspace }}/ocean-cli
         run: |
@@ -306,12 +305,12 @@ jobs:
           else
             echo "No ocean-node.log file found"
           fi
-#          echo "=== Docker Logs ==="
-#          docker logs ocean-ocean-contracts-1 || echo "No ocean-contracts-1 container"
-#          docker logs ocean-typesense-1 || echo "No ocean-typesense-1 container"
-#          echo "=== System Processes ==="
-#          ps aux | grep -E "(node|ocean)" || echo "No node/ocean processes found"
-#
+          echo "=== Docker Logs ==="
+          docker logs ocean-ocean-contracts-1 || echo "No ocean-contracts-1 container"
+          docker logs ocean-typesense-1 || echo "No ocean-typesense-1 container"
+          echo "=== System Processes ==="
+          ps aux | grep -E "(node|ocean)" || echo "No node/ocean processes found"
+
   control_panel_build:
     runs-on: ubuntu-latest
     steps:

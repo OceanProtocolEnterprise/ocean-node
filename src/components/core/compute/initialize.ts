@@ -236,6 +236,7 @@ export class ComputeInitializeHandler extends CommandHandler {
           } = ddoInstance.getDDOFields()
           const isOrdable = isOrderingAllowedForAsset(ddo)
           if (!isOrdable.isOrdable) {
+            CORE_LOGGER.error(isOrdable.reason)
             return {
               stream: null,
               status: {
@@ -319,7 +320,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           const service = AssetUtils.getServiceById(ddo, elem.serviceId)
           if (!service) {
             const error = `Cannot find service ${elem.serviceId} in DDO ${elem.documentId}`
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -438,7 +438,7 @@ export class ComputeInitializeHandler extends CommandHandler {
                     canDecrypt = true
                   }
                 } else {
-                  CORE_LOGGER.logMessage(
+                  CORE_LOGGER.error(
                     'Could not decrypt ddo files on template 4, template is not active!'
                   )
                 }
@@ -446,7 +446,7 @@ export class ComputeInitializeHandler extends CommandHandler {
             }
           } catch (e) {
             // do nothing
-            CORE_LOGGER.logMessage(`Could not decrypt ddo files:  ${e.message} `)
+            CORE_LOGGER.error(`Could not decrypt ddo files:  ${e.message} `)
           }
           if (service.type === 'compute' && !canDecrypt) {
             const error = `Service ${elem.serviceId} from DDO ${elem.documentId} cannot be used in compute on this provider`
