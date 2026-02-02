@@ -145,7 +145,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           false
         )
       } catch (e) {
-        CORE_LOGGER.logMessage(e, true)
         return {
           stream: null,
           status: {
@@ -161,10 +160,6 @@ export class ComputeInitializeHandler extends CommandHandler {
         task.payment.token
       )
       if (!prices) {
-        CORE_LOGGER.logMessage(
-          `This compute env does not accept payments on chain: ${task.payment.chainId} using token ${task.payment.token}`,
-          true
-        )
         return {
           stream: null,
           status: {
@@ -178,10 +173,6 @@ export class ComputeInitializeHandler extends CommandHandler {
         task.payment.chainId
       )
       if (!escrowAddress) {
-        CORE_LOGGER.logMessage(
-          `Cannot handle payments on chainId: ${task.payment.chainId}`,
-          true
-        )
         return {
           stream: null,
           status: {
@@ -228,7 +219,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           const ddo = await new FindDdoHandler(node).findAndFormatDdo(elem.documentId)
           if (!ddo) {
             const error = `DDO ${elem.documentId} not found`
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -246,7 +236,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           } = ddoInstance.getDDOFields()
           const isOrdable = isOrderingAllowedForAsset(ddo)
           if (!isOrdable.isOrdable) {
-            CORE_LOGGER.logMessage(isOrdable.reason, true)
             return {
               stream: null,
               status: {
@@ -268,12 +257,6 @@ export class ComputeInitializeHandler extends CommandHandler {
               node
             )
             if (!validAlgoForDataset) {
-              CORE_LOGGER.logMessage(
-                `Algorithm ${
-                  task.algorithm.documentId
-                } not allowed to run on the dataset: ${ddoInstance.getDid()}`,
-                true
-              )
               return {
                 stream: null,
                 status: {
@@ -290,7 +273,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           const blockchain = new Blockchain(rpc, chainId, config, fallbackRPCs)
           const { ready, error } = await blockchain.isNetworkReady()
           if (!ready) {
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -401,10 +383,6 @@ export class ComputeInitializeHandler extends CommandHandler {
                 env.platform
               )
               if (!validation.valid) {
-                CORE_LOGGER.logMessage(
-                  `Initialize Compute failed for image ${algoImage} :${validation.reason}`,
-                  true
-                )
                 return {
                   stream: null,
                   status: {
@@ -472,7 +450,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           }
           if (service.type === 'compute' && !canDecrypt) {
             const error = `Service ${elem.serviceId} from DDO ${elem.documentId} cannot be used in compute on this provider`
-            CORE_LOGGER.logMessage(error)
             return {
               stream: null,
               status: {

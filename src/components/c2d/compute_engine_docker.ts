@@ -563,16 +563,9 @@ export class C2DEngineDocker extends C2DEngine {
 
     await this.makeJobFolders(job)
     // make sure we actually were able to insert on DB
-    try {
-      const addedId = await this.db.newJob(job)
-      if (!addedId) {
-        CORE_LOGGER.logMessage(`Failed to insert job ${job.jobId} to database`)
-        throw new Error(`Failed to insert compute job to database`)
-        // return []
-      }
-    } catch (error) {
-      CORE_LOGGER.logMessage(error, true)
-      throw new Error(error)
+    const addedId = await this.db.newJob(job)
+    if (!addedId) {
+      return []
     }
     if (queueMaxWaitTime === 0) {
       if (algorithm.meta.container && algorithm.meta.container.dockerfile) {

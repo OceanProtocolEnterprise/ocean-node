@@ -179,12 +179,6 @@ export class Escrow {
       BigInt(auths[0].currentLockedAmount.toString()) + BigInt(wei) >
       BigInt(auths[0].maxLockedAmount.toString())
     ) {
-      console.log(`DEBUG: Escrow limit exceeded:
-        Current Locked: ${auths[0].currentLockedAmount.toString()}
-        Wei Needed: ${wei.toString()}
-        Total Needed: ${(BigInt(auths[0].currentLockedAmount.toString()) + BigInt(wei)).toString()}
-        Max Locked Limit: ${auths[0].maxLockedAmount.toString()}
-      `);
       throw new Error(`No valid escrow auths found(will go over limit)`)
     }
     if (BigInt(auths[0].maxLockSeconds.toString()) < BigInt(expiry)) {
