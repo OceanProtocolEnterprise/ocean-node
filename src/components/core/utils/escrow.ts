@@ -157,7 +157,8 @@ export class Escrow {
       auths = await this.getAuthorizations(chain, token, payer, signerAddress, blockchain)
       if (!auths || auths.length !== 1) {
         console.log(
-          `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${auths?.length || 0
+          `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${
+            auths?.length || 0
           } authorizations. ${retries > 0 ? 'Retrying..' : ''}`
         )
       } else if (auths && auths.length === 1) {
@@ -170,7 +171,8 @@ export class Escrow {
     }
     if (!auths || auths.length !== 1) {
       throw new Error(
-        `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${auths?.length || 0
+        `No escrow auths found for: chain=${chain}, token=${token}, payer=${payer}, nodeAddress=${signerAddress}. Found ${
+          auths?.length || 0
         } authorizations.`
       )
     }
