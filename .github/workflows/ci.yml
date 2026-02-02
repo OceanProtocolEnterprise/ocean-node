@@ -259,7 +259,7 @@ jobs:
           npm run build
           npm run start > ocean-node.log 2>&1 &
         env:          
-          PRIVATE_KEY: ${{ secrets.NODE1_PRIVATE_KEY }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           IPFS_GATEWAY: http://172.15.0.16:8080/
           ARWEAVE_GATEWAY: https://arweave.net/
           P2P_ipV4BindTcpPort: 8000
