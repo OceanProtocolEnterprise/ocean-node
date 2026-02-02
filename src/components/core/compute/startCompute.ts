@@ -62,13 +62,8 @@ export class PaidComputeStartHandler extends CommandHandler {
   }
 
   async handle(task: PaidComputeStartCommand): Promise<P2PCommandResponse> {
-    CORE_LOGGER.logMessage(
-      JSON.stringify({ task, msg: 'Paid Compute Start handler' }),
-      true
-    )
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
-      CORE_LOGGER.logMessage(JSON.stringify(validationResponse), true)
       return validationResponse
     }
     if (!task.queueMaxWaitTime) {
@@ -83,7 +78,6 @@ export class PaidComputeStartHandler extends CommandHandler {
     )
 
     if (authValidationResponse.status.httpStatus !== 200) {
-      CORE_LOGGER.logMessage(JSON.stringify(authValidationResponse), true)
       return authValidationResponse
     }
 
@@ -99,7 +93,7 @@ export class PaidComputeStartHandler extends CommandHandler {
         engine = await node.getC2DEngines().getC2DByHash(hash)
       } catch (e) {
         const errMsg = e?.message || String(e)
-        CORE_LOGGER.logMessage(`Invalid C2D Environment: ${errMsg}`, true)
+        CORE_LOGGER.error(`Invalid C2D Environment: ${errMsg}`)
         return {
           stream: null,
           status: {
@@ -112,7 +106,6 @@ export class PaidComputeStartHandler extends CommandHandler {
       try {
         env = await engine.getComputeEnvironment(null, task.environment)
         if (!env) {
-          CORE_LOGGER.logMessage('Invalid C2D Environment', true)
           return {
             stream: null,
             status: {
@@ -131,7 +124,7 @@ export class PaidComputeStartHandler extends CommandHandler {
         )
       } catch (e) {
         const errMsg = e?.message || String(e)
-        CORE_LOGGER.logMessage(`Error checking and filling missing resources: ${errMsg}`)
+        CORE_LOGGER.error(`Error checking and filling missing resources: ${errMsg}`)
         return {
           stream: null,
           status: {
@@ -149,10 +142,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           )
         } else {
           const errMsg = e?.message || String(e)
-          CORE_LOGGER.logMessage(
-            `Error checking if resources are available: ${errMsg}`,
-            true
-          )
+          CORE_LOGGER.error(`Error checking if resources are available: ${errMsg}`)
           return {
             stream: null,
             status: {
@@ -167,7 +157,6 @@ export class PaidComputeStartHandler extends CommandHandler {
 
       const accessGranted = await validateAccess(task.consumerAddress, env.access)
       if (!accessGranted) {
-        CORE_LOGGER.logMessage('Access denied', true)
         return {
           stream: null,
           status: {
@@ -190,7 +179,7 @@ export class PaidComputeStartHandler extends CommandHandler {
       if (!isRawCodeAlgorithm && !hasValidChecksums) {
         const errorMessage =
           'Failed to retrieve algorithm checksums. Both container and files checksums are required.'
-        CORE_LOGGER.logMessage(errorMessage, true)
+        CORE_LOGGER.error(errorMessage)
         return {
           stream: null,
           status: {
@@ -209,7 +198,6 @@ export class PaidComputeStartHandler extends CommandHandler {
           const ddo = await new FindDdoHandler(node).findAndFormatDdo(elem.documentId)
           if (!ddo) {
             const error = `DDO ${elem.documentId} not found`
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -227,7 +215,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           } = ddoInstance.getDDOFields()
           const isOrdable = isOrderingAllowedForAsset(ddo)
           if (!isOrdable.isOrdable) {
-            CORE_LOGGER.logMessage(isOrdable.reason, true)
+            CORE_LOGGER.error(isOrdable.reason)
             return {
               stream: null,
               status: {
@@ -241,7 +229,6 @@ export class PaidComputeStartHandler extends CommandHandler {
           const blockchain = new Blockchain(rpc, chainId, config, fallbackRPCs)
           const { ready, error } = await blockchain.isNetworkReady()
           if (!ready) {
-            CORE_LOGGER.logMessage(`Start compute: ${error}`, true)
             return {
               stream: null,
               status: {
@@ -290,7 +277,6 @@ export class PaidComputeStartHandler extends CommandHandler {
           const service = AssetUtils.getServiceById(ddo, elem.serviceId)
           if (!service) {
             const error = `Cannot find service ${elem.serviceId} in DDO ${elem.documentId}`
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -377,14 +363,10 @@ export class PaidComputeStartHandler extends CommandHandler {
             }
           } catch (e) {
             // do nothing
-            CORE_LOGGER.logMessage(
-              'Could not decrypt DDO files Object: ' + e.message,
-              true
-            )
+            CORE_LOGGER.error('Could not decrypt DDO files Object: ' + e.message)
           }
           if (service.type === 'compute' && !canDecrypt) {
             const error = `Service ${elem.serviceId} from DDO ${elem.documentId} cannot be used in compute on this provider`
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -406,14 +388,6 @@ export class PaidComputeStartHandler extends CommandHandler {
               node
             )
             if (!validAlgoForDataset) {
-              CORE_LOGGER.logMessage(
-                `Algorithm ${task.algorithm.documentId} with serviceId ${
-                  task.algorithm.serviceId
-                } not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${
-                  task.datasets[safeIndex].serviceId
-                }`,
-                true
-              )
               return {
                 stream: null,
                 status: {
@@ -434,7 +408,6 @@ export class PaidComputeStartHandler extends CommandHandler {
 
           if (!('transferTxId' in elem) || !elem.transferTxId) {
             const error = `Missing transferTxId for DDO ${elem.documentId}`
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -457,7 +430,6 @@ export class PaidComputeStartHandler extends CommandHandler {
           )
           if (paymentValidation.isValid === false) {
             const error = `TxId Service ${elem.transferTxId} is not valid for DDO ${elem.documentId} and service ${service.id}`
-            CORE_LOGGER.logMessage(error, true)
             return {
               stream: null,
               status: {
@@ -486,10 +458,6 @@ export class PaidComputeStartHandler extends CommandHandler {
         task.payment.token
       )
       if (!prices) {
-        CORE_LOGGER.logMessage(
-          `This compute env does not accept payments on chain: ${task.payment.chainId} using token ${task.payment.token}`,
-          true
-        )
         return {
           stream: null,
           status: {
@@ -544,7 +512,7 @@ export class PaidComputeStartHandler extends CommandHandler {
         )
       } catch (e) {
         const errMsg = e?.message || String(e)
-        CORE_LOGGER.logMessage(`Error creating lock: ${errMsg}`, true)
+        CORE_LOGGER.error(`Error creating lock: ${errMsg}`)
         if (e.message.includes('insufficient funds for intrinsic transaction cost')) {
           return {
             stream: null,
@@ -589,20 +557,6 @@ export class PaidComputeStartHandler extends CommandHandler {
           true
         )
 
-        if (!response || response.length === 0 || !response[0]?.jobId) {
-          CORE_LOGGER.logMessage(
-            `startComputeJob returned invalid response: ${JSON.stringify(response)}`,
-            true
-          )
-          return {
-            stream: null,
-            status: {
-              httpStatus: 500,
-              error: 'Compute job creation failed - no job ID returned'
-            }
-          }
-        }
-
         return {
           stream: Readable.from(JSON.stringify(response)),
           status: {
@@ -611,7 +565,7 @@ export class PaidComputeStartHandler extends CommandHandler {
         }
       } catch (e) {
         const errMsg = e?.message || String(e)
-        CORE_LOGGER.logMessage(`Error starting compute job: ${errMsg}`)
+        CORE_LOGGER.error(`Error starting compute job: ${errMsg}`)
         try {
           await engine.escrow.cancelExpiredLocks(
             task.payment.chainId,
@@ -621,7 +575,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           )
         } catch (cancelError) {
           const cancelErrMsg = cancelError?.message || String(cancelError)
-          CORE_LOGGER.logMessage(`Error canceling expired locks: ${cancelErrMsg}`, true)
+          CORE_LOGGER.error(`Error canceling expired locks: ${cancelErrMsg}`)
           // is fine if it fails
         }
         return {
@@ -634,7 +588,7 @@ export class PaidComputeStartHandler extends CommandHandler {
       }
     } catch (error) {
       const errMsg = error?.message || String(error)
-      CORE_LOGGER.logMessage(`Error starting compute job: ${errMsg}`, true)
+      CORE_LOGGER.error(`Error starting compute job: ${errMsg}`)
       return {
         stream: null,
         status: {
