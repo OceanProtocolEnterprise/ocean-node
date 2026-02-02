@@ -53,7 +53,7 @@ describe('Config Admin Endpoints Integration Tests', () => {
 
     config = await getConfiguration(true)
     database = await Database.init(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(config, database)
+    oceanNode = OceanNode.getInstance(config, database)
   })
 
   after(async () => {
@@ -366,6 +366,10 @@ describe('Config Admin Endpoints Integration Tests', () => {
         signature: await getAdminSignature(Date.now() + 60000),
         config: { rateLimit: configBefore.rateLimit }
       })
+    })
+
+    after(async () => {
+      await tearDownEnvironment(previousConfiguration)
     })
   })
 })

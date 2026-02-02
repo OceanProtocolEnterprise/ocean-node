@@ -9,12 +9,13 @@ import {
   setupEnvironment,
   tearDownEnvironment
 } from '../utils/utils.js'
+import { OceanNodeConfig } from '../../@types/OceanNode.js'
 
 describe('OceanP2P Test', () => {
   let node1: OceanP2P
   let node2: OceanP2P
-  let config1: any
-  let config2: any
+  let config1: OceanNodeConfig
+  let config2: OceanNodeConfig
   const mDNSInterval: number = 1
 
   const envOverrides = buildEnvOverrideConfig(
@@ -37,6 +38,7 @@ describe('OceanP2P Test', () => {
     process.env.PRIVATE_KEY = process.env.NODE1_PRIVATE_KEY
     config1 = await getConfiguration(true)
     config1.p2pConfig.ipV4BindTcpPort = 0
+    config1.p2pConfig.ipV4BindWssPort = 0
     // we don't need bootstrap nodes, we rely on Multicast DNS
     config1.p2pConfig.mDNSInterval = mDNSInterval * 1e3
     config1.p2pConfig.bootstrapNodes = []
@@ -52,6 +54,7 @@ describe('OceanP2P Test', () => {
     config2 = await getConfiguration(true)
     config2.p2pConfig.ipV4BindTcpPort = 0
     config2.p2pConfig.ipV4BindWsPort = 0
+    config2.p2pConfig.ipV4BindWssPort = 0
     config2.p2pConfig.ipV6BindTcpPort = 0
     config2.p2pConfig.ipV6BindWsPort = 0
     // we don't need bootstrap nodes, we rely on Multicast DNS

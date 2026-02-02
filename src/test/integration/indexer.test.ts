@@ -11,9 +11,9 @@ import {
   parseUnits
 } from 'ethers'
 import { Readable } from 'stream'
-import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' assert { type: 'json' }
-import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
+import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' with { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
+import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 import { Database } from '../../components/database/index.js'
 import { DatabaseFactory } from '../../components/database/DatabaseFactory.js'
 import {
@@ -112,7 +112,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
 
     const config = await getConfiguration(true)
     database = await Database.init(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(config, database)
+    oceanNode = OceanNode.getInstance(config, database)
     indexer = new OceanIndexer(database, mockSupportedNetworks)
     oceanNode.addIndexer(indexer)
     let artifactsAddresses = getOceanArtifactsAdressesByChainId(DEVELOPMENT_CHAIN_ID)
@@ -682,10 +682,12 @@ describe('OceanIndexer - crawler threads', () => {
   let startingBlock = 0
 
   before(async () => {
+    config = await getConfiguration(true)
     blockchain = new Blockchain(
       supportedNetworks[chainID].rpc,
-      supportedNetworks[chainID].network,
-      supportedNetworks[chainID].chainId
+      supportedNetworks[chainID].chainId,
+      config,
+      []
     )
 
     deployBlock = getDeployedContractBlock(supportedNetworks[chainID].chainId)
@@ -701,7 +703,6 @@ describe('OceanIndexer - crawler threads', () => {
       ]
     )
     envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
-    config = await getConfiguration(true)
     db = await Database.init(config.dbConfig)
   })
 

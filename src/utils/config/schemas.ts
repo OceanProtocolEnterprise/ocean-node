@@ -32,13 +32,25 @@ export const SupportedNetworkSchema = z.object({
 
 export const RPCSSchema = z.record(z.string(), SupportedNetworkSchema)
 
-export const AccessListContractSchema = z
-  .union([
-    z.record(z.string(), z.array(z.string())),
-    z.array(z.any()).transform((): null => null),
-    z.null()
-  ])
-  .nullable()
+export const AccessListContractSchema = z.preprocess(
+  (val) => {
+    // If it's not a plain object, normalize to null
+    if (val === null) return null
+    // If it's a JSON string, try to parse it
+    if (typeof val === 'string') {
+      try {
+        val = JSON.parse(val)
+      } catch {
+        return null
+      }
+    }
+
+    if (typeof val !== 'object' || Array.isArray(val)) return null
+
+    return val
+  },
+  z.record(z.string(), z.array(z.string())).nullable()
+)
 
 export const OceanNodeKeysSchema = z.object({
   peerId: z.any().optional(),
@@ -121,6 +133,7 @@ export const C2DDockerConfigSchema = z.array(
       resources: z.array(ComputeResourceSchema).optional(),
       storageExpiry: z.number().int().optional().default(604800),
       maxJobDuration: z.number().int().optional().default(3600),
+      minJobDuration: z.number().int().optional().default(60),
       access: z
         .object({
           addresses: z.array(z.string()),
@@ -175,6 +188,7 @@ export const OceanNodeP2PConfigSchema = z.object({
   ipV4BindAddress: z.string().nullable().optional().default('0.0.0.0'),
   ipV4BindTcpPort: z.coerce.number().nullable().optional().default(9000),
   ipV4BindWsPort: z.coerce.number().nullable().optional().default(9001),
+  ipV4BindWssPort: z.coerce.number().nullable().optional().default(9005),
   ipV6BindAddress: z.string().nullable().optional().default('::'),
   ipV6BindTcpPort: z.coerce.number().nullable().optional().default(9002),
   ipV6BindWsPort: z.coerce.number().nullable().optional().default(9003),
@@ -308,7 +322,9 @@ export const OceanNodeConfigSchema = z
       .default([...DEFAULT_UNSAFE_URLS]),
     isBootstrap: booleanFromString.optional().default(false),
     validateUnsignedDDO: booleanFromString.optional().default(true),
-    jwtSecret: z.string()
+    jwtSecret: z.string(),
+    httpCertPath: z.string().optional(),
+    httpKeyPath: z.string().optional()
   })
   .passthrough()
   .superRefine((data, ctx) => {

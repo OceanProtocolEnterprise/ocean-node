@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 'v20.19.0'
+          node-version: 'v22.15.0'
       - name: Cache node_modules
         uses: actions/cache@v3
         env:
@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        node: ['18.20.4', 'v20.19.0', 'v22.5.1']
+        node: ['18.20.4', 'v20.19.0', 'v22.15.0']
 
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 'v20.19.0'
+          node-version: 'v22.15.0'
       - name: Cache node_modules
         uses: actions/cache@v3
         env:
@@ -85,8 +85,10 @@ jobs:
           IPFS_GATEWAY: http://172.15.0.16:8080/
           ARWEAVE_GATEWAY: https://arweave.net/
           RPCS: '{ "1": {"rpc": "https://rpc.eth.gateway.fm", "chainId": 1, "network": "mainet", "chunkSize": 100}, "137": {"rpc": "https://polygon.meowrpc.com", "chainId": 137, "network": "polygon", "chunkSize": 100 }, "80001": {"rpc": "https://rpc-mumbai.maticvigil.com","chainId": 80001, "network": "polygon-mumbai", "chunkSize": 100 } }'
-          DB_URL: 'http://localhost:8108/?apiKey=xyz'
           DB_TYPE: 'typesense'
+          DB_URL: 'http://localhost:8108/?apiKey=xyz'
+          DB_USERNAME: 'elastic'
+          DB_PASSWORD: 'changeme'
           FEE_TOKENS: '{ "1": "0x967da4048cD07aB37855c090aAF366e4ce1b9F48", "137": "0x282d8efCe846A88B159800bd4130ad77443Fa1A1", "80001": "0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8", "56": "0xDCe07662CA8EbC241316a15B611c89711414Dd1a" }'
           FEE_AMOUNT: '{ "amount": 1, "unit": "MB" }'
       - uses: actions/upload-artifact@v4
@@ -100,7 +102,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 'v20.19.0'
+          node-version: 'v22.15.0'
       - name: Cache node_modules
         uses: actions/cache@v3
         env:
@@ -154,8 +156,10 @@ jobs:
           IPFS_GATEWAY: http://172.15.0.16:8080/
           ARWEAVE_GATEWAY: https://arweave.net/
           RPCS: '{ "8996": {"rpc": "http://127.0.0.1:8545", "chainId": 8996, "network": "development", "chunkSize": 100}}'
-          DB_URL: 'http://localhost:9200'
-          DB_TYPE: 'elasticsearch'
+          DB_TYPE: 'typesense'
+          DB_URL: 'http://localhost:8108/?apiKey=xyz'
+          DB_USERNAME: 'elastic'
+          DB_PASSWORD: 'changeme'
           FEE_TOKENS: '{ "1": "0x967da4048cD07aB37855c090aAF366e4ce1b9F48", "137": "0x282d8efCe846A88B159800bd4130ad77443Fa1A1", "80001": "0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8", "56": "0xDCe07662CA8EbC241316a15B611c89711414Dd1a" }'
           FEE_AMOUNT: '{ "amount": 1, "unit": "MB" }'
           ASSET_PURGATORY_URL: 'https://raw.githubusercontent.com/oceanprotocol/list-purgatory/main/list-assets.json'
@@ -178,7 +182,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'v20.19.0'
+          node-version: 'v22.15.0'
 
       - name: Cache node_modules
         uses: actions/cache@v3
@@ -226,7 +230,7 @@ jobs:
           done
 
       - name: docker logs
-        run: docker logs ocean-contracts-1 && docker logs ocean-typesense-1
+        run: docker logs ocean-ocean-contracts-1 && docker logs ocean-typesense-1
         if: ${{ failure() }}
 
       - name: Checkout Ocean Node
@@ -242,7 +246,7 @@ jobs:
           npm ci
           npm run build
           npm run start > ocean-node.log 2>&1 &
-        env:
+        env:          
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           IPFS_GATEWAY: http://172.15.0.16:8080/
           ARWEAVE_GATEWAY: https://arweave.net/
@@ -250,7 +254,6 @@ jobs:
           HTTP_API_PORT: 8001
           RPCS: '{ "8996": {"rpc": "http://127.0.0.1:8545", "chainId": 8996, "network": "development", "chunkSize": 100} }'
           INDEXER_NETWORKS: '[8996]'
-          DB_URL: 'http://localhost:9200'
           FEE_TOKENS: '{ "1": "0x967da4048cD07aB37855c090aAF366e4ce1b9F48", "137": "0x282d8efCe846A88B159800bd4130ad77443Fa1A1", "80001": "0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8", "56": "0xDCe07662CA8EbC241316a15B611c89711414Dd1a" }'
           FEE_AMOUNT: '{ "amount": 1, "unit": "MB" }'
           AUTHORIZED_DECRYPTERS: '["0xe2DD09d719Da89e5a3D0F2549c7E24566e947260"]'
@@ -258,13 +261,18 @@ jobs:
           P2P_ENABLE_AUTONAT: 'false'
           ALLOWED_ADMINS: '["0xe2DD09d719Da89e5a3D0F2549c7E24566e947260"]'
           DB_TYPE: 'elasticsearch'
+          DB_URL: 'http://localhost:9200'
+          #DB_TYPE: 'typesense'
+          #DB_URL: 'http://localhost:8108/?apiKey=xyz'
+          DB_USERNAME: 'elastic'
+          DB_PASSWORD: 'changeme'
           MAX_REQ_PER_MINUTE: 320
           MAX_CONNECTIONS_PER_MINUTE: 320
-          DOCKER_COMPUTE_ENVIRONMENTS: '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"fees":{"8996":[{"prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+          DOCKER_COMPUTE_ENVIRONMENTS: '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration": 60,"fees":{"8996":[{"prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration": 10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
       - name: Check Ocean Node is running
         run: |
           for i in $(seq 1 90); do
-            if curl --output /dev/null --silent --head --fail "http://localhost:8001"; then
+            if curl --output /dev/null --silent --max-time 1 --head --fail "http://localhost:8001"; then
               echo "Ocean Node is up"
               exit 0
             fi
@@ -298,7 +306,7 @@ jobs:
             echo "No ocean-node.log file found"
           fi
           echo "=== Docker Logs ==="
-          docker logs ocean-contracts-1 || echo "No ocean-contracts-1 container"
+          docker logs ocean-ocean-contracts-1 || echo "No ocean-contracts-1 container"
           docker logs ocean-typesense-1 || echo "No ocean-typesense-1 container"
           echo "=== System Processes ==="
           ps aux | grep -E "(node|ocean)" || echo "No node/ocean processes found"
@@ -309,7 +317,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 'v20.19.0'
+          node-version: 'v22.15.0'
       - name: Cache node_modules
         uses: actions/cache@v3
         env:

@@ -17,7 +17,7 @@ import {
   Blockchain
 } from '../../../utils/index.js'
 import { parseUnits, Contract, ZeroAddress, isAddress, Wallet } from 'ethers'
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template.sol/ERC20Template.json' assert { type: 'json' }
+import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template.sol/ERC20Template.json' with { type: 'json' }
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { Readable } from 'stream'
 
@@ -64,9 +64,8 @@ export class CollectFeesHandler extends AdminCommandHandler {
     }
 
     try {
-      const { rpc, network, chainId, fallbackRPCs } =
-        config.supportedNetworks[task.chainId]
-      const blockchain = new Blockchain(rpc, network, chainId, fallbackRPCs)
+      const { rpc, chainId, fallbackRPCs } = config.supportedNetworks[task.chainId]
+      const blockchain = new Blockchain(rpc, chainId, config, fallbackRPCs)
       const provider = blockchain.getProvider()
       const providerWallet = blockchain.getSigner() as Wallet
       const providerWalletAddress = await providerWallet.getAddress()
