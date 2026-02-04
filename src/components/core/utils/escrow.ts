@@ -231,8 +231,9 @@ export class Escrow {
             ethers.toUtf8Bytes(proof)
           )
           CORE_LOGGER.info('Claiming lock for job: ' + jobId)
+          CORE_LOGGER.info('Gas: ' + gas)
           const gasOptions = await blockchain.getGasOptions(gas, 1.2)
-          CORE_LOGGER.info('gasOptions: ' + JSON.stringify(gasOptions))
+          CORE_LOGGER.info('Gas options: ' + gasOptions)
           const tx = await contract.claimLockAndWithdraw(
             jobId,
             token,
@@ -241,6 +242,7 @@ export class Escrow {
             ethers.toUtf8Bytes(proof),
             gasOptions
           )
+          CORE_LOGGER.info('Transaction hash: ' + tx)
           return tx.hash
         }
       }
