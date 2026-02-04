@@ -230,7 +230,7 @@ jobs:
           done
 
       - name: docker logs
-        run: docker logs ocean-ocean-contracts-1 && docker logs ocean-typesense-1
+        run: docker logs ocean-contracts-1 && docker logs ocean-typesense-1
         if: ${{ failure() }}
 
       - name: Checkout Ocean Node
@@ -246,7 +246,7 @@ jobs:
           npm ci
           npm run build
           npm run start > ocean-node.log 2>&1 &
-        env:          
+        env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           IPFS_GATEWAY: http://172.15.0.16:8080/
           ARWEAVE_GATEWAY: https://arweave.net/
@@ -262,8 +262,6 @@ jobs:
           ALLOWED_ADMINS: '["0xe2DD09d719Da89e5a3D0F2549c7E24566e947260"]'
           DB_TYPE: 'elasticsearch'
           DB_URL: 'http://localhost:9200'
-          #DB_TYPE: 'typesense'
-          #DB_URL: 'http://localhost:8108/?apiKey=xyz'
           DB_USERNAME: 'elastic'
           DB_PASSWORD: 'changeme'
           MAX_REQ_PER_MINUTE: 320
@@ -306,7 +304,7 @@ jobs:
             echo "No ocean-node.log file found"
           fi
           echo "=== Docker Logs ==="
-          docker logs ocean-ocean-contracts-1 || echo "No ocean-contracts-1 container"
+          docker logs ocean-contracts-1 || echo "No ocean-contracts-1 container"
           docker logs ocean-typesense-1 || echo "No ocean-typesense-1 container"
           echo "=== System Processes ==="
           ps aux | grep -E "(node|ocean)" || echo "No node/ocean processes found"

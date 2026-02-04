@@ -67,7 +67,6 @@ import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templat
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
 import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
 import { createHash } from 'crypto'
-import { encrypt } from '../../utils/crypt.js'
 import { EncryptMethod } from '../../@types/fileObject.js'
 import {
   getAlgoChecksums,
@@ -158,8 +157,21 @@ describe('Compute', () => {
     )
     config = await getConfiguration(true)
     dbconn = await Database.init(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(config, dbconn, null, null, null, true)
-    indexer = new OceanIndexer(dbconn, config.indexingNetworks)
+    oceanNode = await OceanNode.getInstance(
+      config,
+      dbconn,
+      null,
+      null,
+      null,
+      null,
+      null,
+      true
+    )
+    indexer = new OceanIndexer(
+      dbconn,
+      config.indexingNetworks,
+      oceanNode.blockchainRegistry
+    )
     oceanNode.addIndexer(indexer)
     oceanNode.addC2DEngines()
 
@@ -1206,7 +1218,9 @@ describe('Compute', () => {
         ]
       }
       const filesData = Uint8Array.from(Buffer.from(JSON.stringify(files)))
-      algoDDO.services[0].files = await encrypt(filesData, EncryptMethod.ECIES)
+      algoDDO.services[0].files = await oceanNode
+        .getKeyManager()
+        .encrypt(filesData, EncryptMethod.ECIES)
 
       const metadata = hexlify(Buffer.from(JSON.stringify(algoDDO)))
       const hash = createHash('sha256').update(metadata).digest('hex')
@@ -1276,7 +1290,9 @@ describe('Compute', () => {
         ]
       }
       const filesData = Uint8Array.from(Buffer.from(JSON.stringify(files)))
-      datasetDDO.services[0].files = await encrypt(filesData, EncryptMethod.ECIES)
+      datasetDDO.services[0].files = await oceanNode
+        .getKeyManager()
+        .encrypt(filesData, EncryptMethod.ECIES)
 
       datasetDDO.services[0].compute = {
         allowRawAlgorithm: false,
@@ -1387,7 +1403,7 @@ describe('Compute', () => {
 
   after(async () => {
     await tearDownEnvironment(previousConfiguration)
-    indexer.stopAllThreads()
+    indexer.stopAllChainIndexers()
   })
 })
 
@@ -1525,8 +1541,21 @@ describe('Compute Access Restrictions', () => {
       )
       config = await getConfiguration(true)
       dbconn = await Database.init(config.dbConfig)
-      oceanNode = await OceanNode.getInstance(config, dbconn, null, null, null, true)
-      const indexer = new OceanIndexer(dbconn, config.indexingNetworks)
+      oceanNode = await OceanNode.getInstance(
+        config,
+        dbconn,
+        null,
+        null,
+        null,
+        null,
+        null,
+        true
+      )
+      const indexer = new OceanIndexer(
+        dbconn,
+        config.indexingNetworks,
+        oceanNode.blockchainRegistry
+      )
       oceanNode.addIndexer(indexer)
       oceanNode.addC2DEngines()
 
@@ -1706,8 +1735,21 @@ describe('Compute Access Restrictions', () => {
       )
       config = await getConfiguration(true)
       dbconn = await Database.init(config.dbConfig)
-      oceanNode = await OceanNode.getInstance(config, dbconn, null, null, null, true)
-      const indexer = new OceanIndexer(dbconn, config.indexingNetworks)
+      oceanNode = await OceanNode.getInstance(
+        config,
+        dbconn,
+        null,
+        null,
+        null,
+        null,
+        null,
+        true
+      )
+      const indexer = new OceanIndexer(
+        dbconn,
+        config.indexingNetworks,
+        oceanNode.blockchainRegistry
+      )
       oceanNode.addIndexer(indexer)
       oceanNode.addC2DEngines()
 
