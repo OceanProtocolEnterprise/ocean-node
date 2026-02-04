@@ -27,6 +27,7 @@ export class Escrow {
   // eslint-disable-next-line require-await
   getEscrowContractAddressForChain(chainId: number): string | null {
     const addresses = getOceanArtifactsAdressesByChainId(chainId)
+    if (addresses && addresses.EnterpriseEscrow) return addresses.EnterpriseEscrow
     if (addresses && addresses.Escrow) return addresses.Escrow
     return null
   }
