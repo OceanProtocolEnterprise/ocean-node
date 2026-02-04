@@ -1300,6 +1300,7 @@ export class C2DEngineDocker extends C2DEngine {
         cost = this.getTotalCostOfJob(job.resources, minDuration, fee)
         const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
         try {
+          CORE_LOGGER.info('Claiming lock for job: ' + job.jobId)
           txId = await this.escrow.claimLock(
             job.payment.chainId,
             job.jobId,
@@ -1308,8 +1309,10 @@ export class C2DEngineDocker extends C2DEngine {
             cost,
             proof
           )
+          CORE_LOGGER.info('Claimed lock for job: ' + job.jobId)
         } catch (e) {
           CORE_LOGGER.error('Failed to claim lock: ' + e.message)
+          CORE_LOGGER.info('Failed to claim lock: ' + e.message)
         }
       } else {
         // release the lock, we are not getting paid

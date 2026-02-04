@@ -215,9 +215,12 @@ export class Escrow {
     const contract = this.getContract(chain, signer)
     const wei = await this.getPaymentAmountInWei(amount, chain, token)
     const jobId = create256Hash(job)
+    CORE_LOGGER.info('ClaimLock function init')
+
     if (!contract) return null
     try {
       const locks = await this.getLocks(chain, token, payer, await signer.getAddress())
+      CORE_LOGGER.info(`Found ${locks.length} locks for job ${jobId}`)
       for (const lock of locks) {
         if (BigInt(lock.jobId.toString()) === BigInt(jobId)) {
           const gas = await contract.claimLockAndWithdraw.estimateGas(
@@ -227,7 +230,9 @@ export class Escrow {
             wei,
             ethers.toUtf8Bytes(proof)
           )
+          CORE_LOGGER.info('Claiming lock for job: ' + jobId)
           const gasOptions = await blockchain.getGasOptions(gas, 1.2)
+          CORE_LOGGER.info('gasOptions: ' + JSON.stringify(gasOptions))
           const tx = await contract.claimLockAndWithdraw(
             jobId,
             token,
