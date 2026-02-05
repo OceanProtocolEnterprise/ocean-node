@@ -214,7 +214,7 @@ export class UrlStorage extends Storage {
     const response = await axios({
       method: 'get',
       url: input,
-      headers: file.headers ? file.headers[0] : undefined,
+      headers: file.headers ? file.headers : undefined,
       responseType: 'stream',
       timeout: 30000
     })
