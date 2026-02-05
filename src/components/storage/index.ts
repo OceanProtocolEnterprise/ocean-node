@@ -209,6 +209,8 @@ export class UrlStorage extends Storage {
   async getReadableStream(): Promise<StorageReadable> {
     const input = this.getDownloadUrl()
     const file = this.getFile()
+    CORE_LOGGER.info(`Fetching the file from ${input}`)
+    CORE_LOGGER.debug(`Using headers: ${JSON.stringify(file.headers)}`)
     const response = await axios({
       method: 'get',
       url: input,
