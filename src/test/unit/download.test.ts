@@ -121,10 +121,13 @@ describe('Should validate files structure for download', () => {
 
   it('should validate "nftAddress" and "datatokenAddress" from files', async () => {
     const decryptedFileArray = await getDecryptedData()
-    const decriptedFileObject: any = decryptedFileArray.files
-    expect(decriptedFileObject[0]).to.be.deep.equal(assetURL.files[0])
+    console.log('decryptedFileArray:', decryptedFileArray)
+    const decryptedFileObject: any = decryptedFileArray.files
+    console.log('decryptedFileObject', decryptedFileObject)
+    expect(decryptedFileObject[0]).to.be.deep.equal(assetURL.files[0])
     // validate the structure of the files object
     const service = AssetUtils.getServiceByIndex(ddoObj, 0)
+    console.log('service:', service)
     expect(validateFilesStructure(ddoObj, service, decryptedFileArray)).to.be.equal(true)
   })
 
