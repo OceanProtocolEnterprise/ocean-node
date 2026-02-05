@@ -198,7 +198,7 @@ const alignedWithColorsAndTime: winston.Logform.Format = winston.format.combine(
   winston.format.timestamp(),
   winston.format.align(),
   winston.format.printf(
-    (info: any) => `${info.timestamp} ${info.level}: ${String(info.message).trim()}`
+    (info) => `${info.timestamp} ${info.level}: ${(info.message as string).trim()}`
   )
 )
 const consoleColorFormatting: winston.Logform.Format | Record<string, any> = {
