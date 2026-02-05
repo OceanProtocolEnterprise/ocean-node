@@ -92,6 +92,7 @@ describe('Should validate files structure for download', () => {
     )
     const messageHashBytes = ethers.toBeArray(consumerMessage)
     const signature = await consumerAccount.signMessage(messageHashBytes)
+    console.log('before handle')
     const result = await new EncryptHandler(oceanNode).handle({
       blob: JSON.stringify(assetURL),
       encoding: 'string',
@@ -101,7 +102,7 @@ describe('Should validate files structure for download', () => {
       consumerAddress: await consumerAccount.getAddress(),
       signature
     })
-
+    console.log('result>', result)
     const encryptedData: string = await streamToString(result.stream as Readable)
     const serviceData = {
       files: encryptedData
@@ -120,6 +121,7 @@ describe('Should validate files structure for download', () => {
   }
 
   it('should validate "nftAddress" and "datatokenAddress" from files', async () => {
+    console.log('Start test')
     const decryptedFileArray = await getDecryptedData()
     console.log('decryptedFileArray:', decryptedFileArray)
     const decryptedFileObject: any = decryptedFileArray.files
