@@ -211,10 +211,11 @@ export class UrlStorage extends Storage {
     const file = this.getFile()
     CORE_LOGGER.info(`Fetching the file from ${input}`)
     CORE_LOGGER.debug(`Using headers: ${JSON.stringify(file.headers)}`)
+    const { headers } = file
     const response = await axios({
       method: 'get',
       url: input,
-      headers: file.headers ? file.headers : undefined,
+      headers,
       responseType: 'stream',
       timeout: 30000
     })
@@ -275,9 +276,9 @@ export class UrlStorage extends Storage {
     const { url, method, headers } = fileObject
     const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
       url,
-      method,
+      method || 'get',
       forceChecksum,
-      headers ? headers[0] : undefined
+      headers
     )
     return {
       valid: true,
