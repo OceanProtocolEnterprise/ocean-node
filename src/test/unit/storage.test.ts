@@ -19,24 +19,21 @@ import {
 } from '../utils/utils.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
 import { getConfiguration } from '../../utils/index.js'
-import { Readable } from 'stream'
-import fs from 'fs'
 import { expectedTimeoutFailure } from '../integration/testUtils.js'
 
-let nodeId: string
-
+// let nodeId: string
+const nodeId = '16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72'
+const nodeId2 = '16Uiu2HAmQWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq73'
 describe('URL Storage tests', () => {
   let file: any = {
     type: 'url',
     url: 'http://someUrl.com/file.json',
     method: 'get',
-    headers: [
-      {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer auth_token_X'
-      }
-    ],
-    encryptedBy: '16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer auth_token_X'
+    },
+    encryptedBy: nodeId,
     encryptMethod: EncryptMethod.AES
   }
   let storage: Storage
@@ -58,11 +55,7 @@ describe('URL Storage tests', () => {
   })
 
   it('canDecrypt should return true for the correct nodeId', () => {
-    assert(
-      storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-        true,
-      "can't decrypt with the correct nodeId"
-    )
+    assert(storage.canDecrypt(nodeId) === true, "can't decrypt with the correct nodeId")
   })
 
   it('canDecrypt should return false for an incorrect nodeId', () => {
@@ -75,12 +68,10 @@ describe('URL Storage tests', () => {
     file = {
       type: 'url',
       method: 'get',
-      headers: [
-        {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer auth_token_X'
-        }
-      ]
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer auth_token_X'
+      }
     }
     try {
       Storage.getStorageClass(file, config)
@@ -88,17 +79,15 @@ describe('URL Storage tests', () => {
       error = err
     }
     expect(error.message).to.eql(
-      'Error validationg the URL file: URL or method are missing'
+      'Error validating the URL file: URL or method are missing'
     )
     file = {
       type: 'url',
       url: 'http://someUrl.com/file.json',
-      headers: [
-        {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer auth_token_X'
-        }
-      ]
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer auth_token_X'
+      }
     }
     try {
       Storage.getStorageClass(file, config)
@@ -106,7 +95,7 @@ describe('URL Storage tests', () => {
       error = err
     }
     expect(error.message).to.eql(
-      'Error validationg the URL file: URL or method are missing'
+      'Error validating the URL file: URL or method are missing'
     )
   })
   it('URL validation fails on invalid method', () => {
@@ -114,19 +103,17 @@ describe('URL Storage tests', () => {
       type: 'url',
       url: 'http://someUrl.com/file.json',
       method: 'put',
-      headers: [
-        {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer auth_token_X'
-        }
-      ]
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer auth_token_X'
+      }
     }
     try {
       Storage.getStorageClass(file, config)
     } catch (err) {
       error = err
     }
-    expect(error.message).to.eql('Error validationg the URL file: Invalid method for URL')
+    expect(error.message).to.eql('Error validating the URL file: Invalid method for URL')
   })
 
   it('URL validation fails on filename', () => {
@@ -134,12 +121,10 @@ describe('URL Storage tests', () => {
       type: 'url',
       url: './../dir/file.json',
       method: 'get',
-      headers: [
-        {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer auth_token_X'
-        }
-      ]
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer auth_token_X'
+      }
     }
     try {
       Storage.getStorageClass(file, config)
@@ -147,7 +132,7 @@ describe('URL Storage tests', () => {
       error = err
     }
     expect(error.message).to.eql(
-      'Error validationg the URL file: URL looks like a file path'
+      'Error validating the URL file: URL looks like a file path'
     )
   })
   it('Gets download URL', () => {
@@ -155,12 +140,10 @@ describe('URL Storage tests', () => {
       type: 'url',
       url: 'http://someUrl.com/file.json',
       method: 'get',
-      headers: [
-        {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer auth_token_X'
-        }
-      ]
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer auth_token_X'
+      }
     }
     storage = Storage.getStorageClass(file, config)
     expect(storage.getDownloadUrl()).to.eql('http://someUrl.com/file.json')
@@ -171,6 +154,18 @@ describe('URL Storage tests', () => {
       type: 'url',
       url: 'https://stock-api.oceanprotocol.com/stock/stock.json',
       method: 'get'
+    }
+    const storage = Storage.getStorageClass(file, config)
+    const stream = await storage.getReadableStream()
+    expect(stream).not.to.eql(null)
+  })
+
+  it('Gets readable stream with headers as plain object', async () => {
+    file = {
+      type: 'url',
+      url: 'https://stock-api.oceanprotocol.com/stock/stock.json',
+      method: 'get',
+      headers: { 'X-Test-Header': 'test' }
     }
     const storage = Storage.getStorageClass(file, config)
     const stream = await storage.getReadableStream()
@@ -205,9 +200,7 @@ describe('Unsafe URL tests', () => {
     } catch (err) {
       error = err
     }
-    expect(error.message).to.eql(
-      'Error validationg the URL file: URL is marked as unsafe'
-    )
+    expect(error.message).to.eql('Error validating the URL file: URL is marked as unsafe')
   })
   it('Should allow safe URL', () => {
     file = {
@@ -254,7 +247,7 @@ describe('IPFS Storage tests', () => {
     } catch (err) {
       error = err
     }
-    expect(error.message).to.eql('Error validationg the IPFS file: Missing CID')
+    expect(error.message).to.eql('Error validating the IPFS file: Missing CID')
   })
 
   after(() => {
@@ -296,7 +289,7 @@ describe('Arweave Storage tests', () => {
       error = err
     }
     expect(error.message).to.eql(
-      'Error validationg the Arweave file: Missing transaction ID'
+      'Error validating the Arweave file: Missing transaction ID'
     )
   })
 
@@ -376,7 +369,7 @@ describe('URL Storage with malformed URL', () => {
       error = err
     }
     expect(error.message).to.equal(
-      'Error validationg the URL file: URL looks like a file path'
+      'Error validating the URL file: URL looks like a file path'
     )
   })
 })
@@ -442,7 +435,7 @@ describe('Arweave Storage with malformed transaction ID', () => {
       error = err
     }
     expect(error.message).to.equal(
-      'Error validationg the Arweave file: Transaction ID looks like an URL. Please specify URL storage instead.'
+      'Error validating the Arweave file: Transaction ID looks like an URL. Please specify URL storage instead.'
     )
   })
 
@@ -460,7 +453,7 @@ describe('Arweave Storage with malformed transaction ID', () => {
       error = err
     }
     expect(error.message).to.equal(
-      'Error validationg the Arweave file: Transaction ID looks like a file path'
+      'Error validating the Arweave file: Transaction ID looks like a file path'
     )
   })
 })
@@ -485,7 +478,7 @@ describe('Arweave Storage with malformed transaction ID', () => {
       error = err
     }
     expect(error.message).to.equal(
-      'Error validationg the IPFS file: CID looks like an URL. Please specify URL storage instead.'
+      'Error validating the IPFS file: CID looks like an URL. Please specify URL storage instead.'
     )
   })
 
@@ -503,7 +496,7 @@ describe('Arweave Storage with malformed transaction ID', () => {
       error = err
     }
     expect(error.message).to.equal(
-      'Error validationg the IPFS file: CID looks like a file path'
+      'Error validating the IPFS file: CID looks like a file path'
     )
   })
 })
@@ -586,36 +579,9 @@ describe('URL Storage encryption tests', () => {
 
   it('canDecrypt should return false when the file is not encrypted', () => {
     assert(
-      storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-        false,
+      storage.canDecrypt(nodeId) === false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
-  })
-
-  it('encrypt method should correctly encrypt data', async () => {
-    const { keys } = config
-    nodeId = keys.peerId.toString()
-    // Perform encryption
-    const encryptResponse = await storage.encrypt(EncryptMethod.AES)
-    assert(encryptResponse.httpStatus === 200, 'Response is not 200')
-    assert(encryptResponse.stream, 'Stream is not null')
-    assert(encryptResponse.stream instanceof Readable, 'Stream is not a ReadableStream')
-
-    // Create a writable stream for the output file
-    const fileStream = fs.createWriteStream('src/test/data/organizations-100.aes')
-
-    // Use the 'finish' event to know when the file has been fully written
-    fileStream.on('finish', () => {
-      console.log('Encrypted file has been written successfully')
-    })
-
-    // Handle errors in the stream
-    encryptResponse.stream.on('error', (err) => {
-      console.error('Stream encountered an error:', err)
-    })
-
-    // Pipe the encrypted content stream to the file stream
-    encryptResponse.stream.pipe(fileStream)
   })
 })
 
@@ -679,8 +645,11 @@ describe('URL Storage encryption tests', function () {
 
   it('canDecrypt should return false when called from an unauthorised node', () => {
     assert(
-      storage.canDecrypt('16Uiu2HAmUWwsSj39eAfi3GG9U2niNKi3FVxh3eTwyRxbs8cwCq72') ===
-        false,
+      storage.canDecrypt(nodeId) === true,
+      'Wrong response from canDecrypt() for an unencrypted file'
+    )
+    assert(
+      storage.canDecrypt(nodeId2) === false,
       'Wrong response from canDecrypt() for an unencrypted file'
     )
   })

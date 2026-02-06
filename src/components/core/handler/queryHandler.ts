@@ -1,4 +1,4 @@
-import { Handler } from './handler.js'
+import { CommandHandler } from './handler.js'
 import { QueryCommand } from '../../../@types/commands.js'
 import { P2PCommandResponse } from '../../../@types/OceanNode.js'
 import { Readable } from 'stream'
@@ -9,7 +9,7 @@ import {
 } from '../../httpRoutes/validateCommands.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 
-export class QueryHandler extends Handler {
+export class QueryHandler extends CommandHandler {
   validate(command: QueryCommand): ValidateParams {
     return validateCommandParameters(command, ['query'])
   }
@@ -20,7 +20,15 @@ export class QueryHandler extends Handler {
       return validationResponse
     }
     try {
-      let result = await this.getOceanNode().getDatabase().ddo.search(task.query)
+      const database = this.getOceanNode().getDatabase()
+      if (!database || !database.ddo) {
+        CORE_LOGGER.error('DDO database is not available')
+        return {
+          stream: null,
+          status: { httpStatus: 503, error: 'DDO database is not available' }
+        }
+      }
+      let result = await database.ddo.search(task.query)
       if (!result) {
         result = []
       }
@@ -45,7 +53,27 @@ export class QueryDdoStateHandler extends QueryHandler {
       return buildInvalidParametersResponse(validation)
     }
     try {
-      const result = await this.getOceanNode().getDatabase().ddoState.search(task.query)
+      const database = this.getOceanNode().getDatabase()
+      if (!database || !database.ddoState) {
+        CORE_LOGGER.error('DDO State database is not available')
+        return {
+          stream: null,
+          status: { httpStatus: 503, error: 'DDO State database is not available' }
+        }
+      }
+
+      const result = await database.ddoState.search(task.query)
+
+      CORE_LOGGER.debug(`DDO State search result: ${JSON.stringify(result)}`)
+
+      if (result === null) {
+        CORE_LOGGER.error('Database search returned null')
+        return {
+          stream: null,
+          status: { httpStatus: 500, error: 'Database search failed' }
+        }
+      }
+
       return {
         stream: Readable.from(JSON.stringify(result)),
         status: { httpStatus: 200 }

@@ -5,7 +5,6 @@ import { TypesenseSearchParams } from '../../@types/index.js'
 import { LOG_LEVELS_STR, GENERIC_EMOJIS } from '../../utils/logging/Logger.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 
-import { validateObject } from '../core/utils/validateDdoHandler.js'
 import { ENVIRONMENT_VARIABLES, TYPESENSE_HITS_CAP } from '../../utils/constants.js'
 import {
   AbstractDdoDatabase,
@@ -14,6 +13,8 @@ import {
   AbstractLogDatabase,
   AbstractOrderDatabase
 } from './BaseDatabase.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
+import { validateDDO } from '../../utils/asset.js'
 
 export class TypesenseOrderDatabase extends AbstractOrderDatabase {
   private provider: Typesense
@@ -371,7 +372,9 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
   getDDOSchema(ddo: Record<string, any>): TypesenseSchema {
     // Find the schema based on the DDO version OR use the short DDO schema when state !== 0
     let schemaName: string
-    if (ddo.nft?.state !== 0) {
+    const ddoInstance = DDOManager.getDDOClass(ddo)
+    const ddoData = ddoInstance.getDDOData()
+    if ('indexedMetadata' in ddoData && ddoData?.indexedMetadata?.nft.state !== 0) {
       schemaName = 'op_ddo_short'
     } else if (ddo.version) {
       schemaName = `op_ddo_v${ddo.version}`
@@ -384,35 +387,6 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       LOG_LEVELS_STR.LEVEL_INFO
     )
     return schema
-  }
-
-  async validateDDO(ddo: Record<string, any>): Promise<boolean> {
-    if (ddo.nft?.state !== 0) {
-      // Skipping validation for short DDOs as it currently doesn't work
-      // TODO: DDO validation needs to be updated to consider the fields required by the schema
-      // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
-      return true
-    } else {
-      const validation = await validateObject(ddo, ddo.chainId, ddo.nftAddress)
-      if (validation[0] === true) {
-        DATABASE_LOGGER.logMessageWithEmoji(
-          `Validation of DDO with did: ${ddo.id} has passed`,
-          true,
-          GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
-          LOG_LEVELS_STR.LEVEL_INFO
-        )
-        return true
-      } else {
-        DATABASE_LOGGER.logMessageWithEmoji(
-          `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-            JSON.stringify(validation[1]),
-          true,
-          GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-          LOG_LEVELS_STR.LEVEL_ERROR
-        )
-        return false
-      }
-    }
   }
 
   async search(
@@ -469,7 +443,10 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       throw new Error(`Schema for version ${ddo.version} not found`)
     }
     try {
-      const validation = await this.validateDDO(ddo)
+      // avoid failure because of schema
+      if (ddo?.indexedMetadata?.nft) delete ddo.nft
+
+      const validation = await validateDDO(ddo)
       if (validation === true) {
         return await this.provider
           .collections(schema.name)
@@ -530,7 +507,9 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       throw new Error(`Schema for version ${ddo.version} not found`)
     }
     try {
-      const validation = await this.validateDDO(ddo)
+      // avoid issue with nft fields, due to schema
+      if (ddo?.indexedMetadata?.nft) delete ddo.nft
+      const validation = await validateDDO(ddo)
       if (validation === true) {
         return await this.provider
           .collections(schema.name)
@@ -631,6 +610,9 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
 
 export class TypesenseIndexerDatabase extends AbstractIndexerDatabase {
   private provider: Typesense
+
+  // constant for the node version document ID
+  private static readonly VERSION_DOC_ID = 'node_version'
 
   constructor(config: OceanNodeDBConfig, schema: TypesenseSchema) {
     super(config, schema)
@@ -805,7 +787,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
     moduleName?: string,
     level?: string,
     page?: number
-  ): Promise<Record<string, any>[] | null> {
+  ): Promise<Record<string, any>[]> {
     try {
       let filterConditions = `timestamp:>=${startTime.getTime()} && timestamp:<${endTime.getTime()}`
       if (moduleName) {
@@ -851,7 +833,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
         GENERIC_EMOJIS.EMOJI_CROSS_MARK,
         LOG_LEVELS_STR.LEVEL_ERROR
       )
-      return null
+      return []
     }
   }
 
@@ -902,7 +884,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
           }
         }
       }
-      return oldLogs ? oldLogs.length : 0
+      return oldLogs.length
     } catch (error) {
       DATABASE_LOGGER.logMessageWithEmoji(
         `Error when deleting old log entries: ${error.message}`,

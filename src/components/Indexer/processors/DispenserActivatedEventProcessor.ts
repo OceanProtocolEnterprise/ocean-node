@@ -1,0 +1,119 @@
+import { DDOManager } from '@oceanprotocol/ddo-js'
+import { ethers, Signer, FallbackProvider, ZeroAddress } from 'ethers'
+import { EVENTS } from '../../../utils/constants.js'
+import { getDatabase } from '../../../utils/database.js'
+import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
+import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
+import {
+  getDtContract,
+  getDid,
+  doesDispenserAlreadyExist,
+  findServiceIdByDatatoken,
+  getPricesByDt,
+  isValidDispenserContract
+} from '../utils.js'
+import { BaseEventProcessor } from './BaseProcessor.js'
+import Dispenser from '@oceanprotocol/contracts/artifacts/contracts/pools/dispenser/Dispenser.sol/Dispenser.json' with { type: 'json' }
+
+export class DispenserActivatedEventProcessor extends BaseEventProcessor {
+  async processEvent(
+    event: ethers.Log,
+    chainId: number,
+    signer: Signer,
+    provider: FallbackProvider
+  ): Promise<any> {
+    const decodedEventData = await this.getEventData(
+      provider,
+      event.transactionHash,
+      Dispenser.abi,
+      EVENTS.DISPENSER_ACTIVATED
+    )
+    const datatokenAddress = decodedEventData.args[0].toString()
+    if (!datatokenAddress) {
+      INDEXER_LOGGER.error(
+        `Datatoken address is not found in decoded event. Decoded event: ${JSON.stringify(
+          decodedEventData
+        )}`
+      )
+      return null
+    }
+    if (datatokenAddress === ZeroAddress) {
+      INDEXER_LOGGER.error(
+        `Datatoken address is ZERO ADDRESS. Cannot find DDO by ZERO ADDRESS contract.`
+      )
+      return null
+    }
+    const datatokenContract = getDtContract(signer, datatokenAddress)
+
+    const nftAddress = await datatokenContract.getERC721Address()
+    const did = getDid(nftAddress, chainId)
+    try {
+      const { ddo: ddoDatabase } = await getDatabase()
+      const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
+      if (!ddo) {
+        INDEXER_LOGGER.logMessage(
+          `Detected DispenserActivated changed for ${did}, but it does not exists.`
+        )
+        return
+      }
+      if (!(await isValidDispenserContract(event.address, chainId, signer))) {
+        INDEXER_LOGGER.warn(
+          `Dispenser contract ${event.address} is not approved by Router. 
+            Abort updating DDO pricing! Returning the existing DDO...`
+        )
+        return ddo
+      }
+      const ddoInstance = DDOManager.getDDOClass(ddo)
+      if (!ddoInstance.getAssetFields().indexedMetadata) {
+        ddoInstance.updateFields({ indexedMetadata: {} })
+      }
+
+      if (!Array.isArray(ddoInstance.getAssetFields().indexedMetadata.stats)) {
+        ddoInstance.updateFields({ indexedMetadata: { stats: [] } })
+      }
+
+      if (ddoInstance.getAssetFields().indexedMetadata.stats.length !== 0) {
+        for (const stat of ddoInstance.getAssetFields().indexedMetadata.stats) {
+          if (
+            stat.datatokenAddress.toLowerCase() === datatokenAddress.toLowerCase() &&
+            !doesDispenserAlreadyExist(event.address, stat.prices)[0]
+          ) {
+            stat.prices.push({
+              type: 'dispenser',
+              price: '0',
+              contract: event.address,
+              token: datatokenAddress
+            })
+            break
+          } else if (doesDispenserAlreadyExist(event.address, stat.prices)[0]) {
+            break
+          }
+        }
+      } else {
+        INDEXER_LOGGER.logMessage(`[DispenserActivated] - No stats were found on the ddo`)
+        const serviceIdToFind = findServiceIdByDatatoken(ddoInstance, datatokenAddress)
+        if (!serviceIdToFind) {
+          INDEXER_LOGGER.logMessage(
+            `[DispenserActivated] - This datatoken does not contain this service. Invalid service id!`
+          )
+          return
+        }
+        ddo.indexedMetadata.stats.push({
+          datatokenAddress,
+          name: await datatokenContract.name(),
+          serviceId: serviceIdToFind,
+          orders: 0,
+          prices: await getPricesByDt(datatokenContract, signer)
+        })
+      }
+
+      const savedDDO = await this.createOrUpdateDDO(
+        ddoInstance,
+        EVENTS.DISPENSER_ACTIVATED
+      )
+      return savedDDO
+    } catch (err) {
+      INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error retrieving DDO: ${err}`, true)
+    }
+  }
+}

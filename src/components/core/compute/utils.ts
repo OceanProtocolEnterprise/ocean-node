@@ -1,11 +1,11 @@
 import { OceanNode } from '../../../OceanNode.js'
-import { AlgoChecksums } from '../../../@types/C2D.js'
+import { AlgoChecksums } from '../../../@types/C2D/C2D.js'
+import { OceanNodeConfig } from '../../../@types/OceanNode.js'
 import {
   ArweaveFileObject,
   IpfsFileObject,
   UrlFileObject
 } from '../../../@types/fileObject.js'
-import { DDO } from '../../../@types/DDO/DDO.js'
 import { getFile } from '../../../utils/file.js'
 import urlJoin from 'url-join'
 import { fetchFileMetadata } from '../../../utils/asset.js'
@@ -13,15 +13,28 @@ import { fetchFileMetadata } from '../../../utils/asset.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { createHash } from 'crypto'
 import { FindDdoHandler } from '../../core/handler/ddoHandler.js'
+import { DDOManager, VersionedDDO } from '@oceanprotocol/ddo-js'
+
+export function generateUniqueID(jobStructure: any): string {
+  const timestamp =
+    BigInt(Date.now()) * 1_000_000n + (process.hrtime.bigint() % 1_000_000n)
+  const random = Math.random()
+  const jobId = createHash('sha256')
+    .update(JSON.stringify(jobStructure) + timestamp.toString() + random.toString())
+    .digest('hex')
+  return jobId
+}
 
 export async function getAlgoChecksums(
   algoDID: string,
   algoServiceId: string,
-  oceanNode: OceanNode
+  oceanNode: OceanNode,
+  config: OceanNodeConfig
 ): Promise<AlgoChecksums> {
   const checksums: AlgoChecksums = {
     files: '',
-    container: ''
+    container: '',
+    serviceId: algoServiceId
   }
   try {
     const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
@@ -35,22 +48,21 @@ export async function getAlgoChecksums(
         file.type === 'url'
           ? (file as UrlFileObject).url
           : file.type === 'arweave'
-            ? urlJoin(
-                process.env.ARWEAVE_GATEWAY,
-                (file as ArweaveFileObject).transactionId
-              )
+            ? urlJoin(config.arweaveGateway, (file as ArweaveFileObject).transactionId)
             : file.type === 'ipfs'
-              ? urlJoin(process.env.IPFS_GATEWAY, (file as IpfsFileObject).hash)
+              ? urlJoin(config.ipfsGateway, (file as IpfsFileObject).hash)
               : null
+      const headers = file.type === 'url' ? (file as UrlFileObject).headers : undefined
 
-      const { contentChecksum } = await fetchFileMetadata(url, 'get', false)
+      const { contentChecksum } = await fetchFileMetadata(url, 'get', false, headers)
       checksums.files = checksums.files.concat(contentChecksum)
     }
 
+    const ddoInstance = DDOManager.getDDOClass(algoDDO)
+    const { metadata } = ddoInstance.getDDOFields()
     checksums.container = createHash('sha256')
       .update(
-        algoDDO.metadata.algorithm.container.entrypoint +
-          algoDDO.metadata.algorithm.container.checksum
+        metadata.algorithm.container.entrypoint + metadata.algorithm.container.checksum
       )
       .digest('hex')
     return checksums
@@ -65,54 +77,73 @@ export async function validateAlgoForDataset(
   algoChecksums: {
     files: string
     container: string
+    serviceId?: string
   },
-  datasetDDO: DDO,
+  ddoInstance: VersionedDDO,
   datasetServiceId: string,
   oceanNode: OceanNode
 ) {
   try {
-    const datasetService = datasetDDO.services.find(
-      (service) => service.id === datasetServiceId
+    const { services } = ddoInstance.getDDOFields() as any
+    const datasetService = services.find(
+      (service: any) => service.id === datasetServiceId
     )
     if (!datasetService) {
       throw new Error('Dataset service not found')
+    }
+    if (datasetService.type === 'access') {
+      return true
     }
     const { compute } = datasetService
     if (datasetService.type !== 'compute' || !compute) {
       throw new Error('Service not compute')
     }
+    const publishers = compute.publisherTrustedAlgorithmPublishers || []
+    const algorithms = compute.publisherTrustedAlgorithms || []
+
+    // If no restrictions are set, deny by default
+    const hasTrustedPublishers = publishers.length > 0
+    const hasTrustedAlgorithms = algorithms.length > 0
+    if (!hasTrustedPublishers && !hasTrustedAlgorithms) return false
 
     if (algoDID) {
-      if (
-        // if not set allow them all
-        !compute.publisherTrustedAlgorithms &&
-        !compute.publisherTrustedAlgorithmPublishers
-      ) {
-        return true
-      }
-      // if is set only allow if match
-      if (compute.publisherTrustedAlgorithms) {
-        const trustedAlgo = compute.publisherTrustedAlgorithms.find(
-          (algo) => algo.did === algoDID
-        )
-        if (trustedAlgo) {
-          return (
-            trustedAlgo.filesChecksum === algoChecksums.files &&
-            trustedAlgo.containerSectionChecksum === algoChecksums.container
-          )
+      // Check if algorithm is explicitly trusted
+      const isAlgoTrusted =
+        hasTrustedAlgorithms &&
+        algorithms.some((algo: any) => {
+          const didMatch = algo.did === '*' || algo.did === algoDID
+          const filesMatch =
+            algo.filesChecksum === '*' || algo.filesChecksum === algoChecksums.files
+          const containerMatch =
+            algo.containerSectionChecksum === '*' ||
+            algo.containerSectionChecksum === algoChecksums.container
+          if ('serviceId' in algo) {
+            const serviceIdMatch =
+              algo.serviceId === '*' || algo.serviceId === algoChecksums.serviceId
+            return didMatch && filesMatch && containerMatch && serviceIdMatch
+          }
+
+          return didMatch && filesMatch && containerMatch
+        })
+
+      // Check if algorithm publisher is trusted
+      let isPublisherTrusted = false
+      if (hasTrustedPublishers) {
+        if (!publishers.includes('*')) {
+          const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
+          if (!algoDDO) return false
+          const algoInstance = DDOManager.getDDOClass(algoDDO)
+          const { nftAddress } = algoInstance.getDDOFields()
+
+          isPublisherTrusted = publishers
+            .map((addr: string) => addr?.toLowerCase())
+            .includes(nftAddress?.toLowerCase())
+        } else {
+          isPublisherTrusted = true
         }
-        return false
       }
-      if (compute.publisherTrustedAlgorithmPublishers) {
-        const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
-        if (algoDDO) {
-          return compute.publisherTrustedAlgorithmPublishers
-            .map((address) => address?.toLowerCase())
-            .includes(algoDDO.nftAddress?.toLowerCase())
-        }
-        return false
-      }
-      return true
+
+      return isAlgoTrusted || isPublisherTrusted
     }
 
     return compute.allowRawAlgorithm

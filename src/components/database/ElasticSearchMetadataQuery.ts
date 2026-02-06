@@ -48,6 +48,6 @@ export class ElasticSearchMetadataQuery implements IMetadataQuery {
   }
 
   private isElasticSearchQuery(query: any): boolean {
-    return query && query.query && query.query.bool !== undefined
+    return query && query.query
   }
 }

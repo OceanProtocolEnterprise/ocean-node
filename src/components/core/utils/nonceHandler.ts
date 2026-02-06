@@ -2,8 +2,15 @@ import { ReadableString } from '../../P2P/handleProtocolCommands.js'
 import { P2PCommandResponse } from '../../../@types/OceanNode.js'
 import { ethers } from 'ethers'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
-import { DATABASE_LOGGER } from '../../../utils/logging/common.js'
+import { CORE_LOGGER, DATABASE_LOGGER } from '../../../utils/logging/common.js'
 import { AbstractNonceDatabase } from '../../database/BaseDatabase.js'
+import { CoreHandlersRegistry } from '../handler/coreHandlersRegistry.js'
+import { OceanNode } from '../../../OceanNode.js'
+import { PROTOCOL_COMMANDS } from '../../../utils/constants.js'
+import { NonceCommand } from '../../../@types/commands.js'
+import { streamToString } from '../../../utils/util.js'
+import { Readable } from 'node:stream'
+import { getConfiguration } from '../../../utils/config.js'
 
 export function getDefaultErrorResponse(errorMessage: string): P2PCommandResponse {
   return {
@@ -32,6 +39,18 @@ export type NonceResponse = {
   error?: string
 }
 
+// we are doing the nonce stream response transformation in a few places
+// so we can use this shortcut function when we just want the final number
+export async function getNonceAsNumber(address: string): Promise<number> {
+  const command: NonceCommand = { command: PROTOCOL_COMMANDS.NONCE, address }
+  const nonceResponse = await CoreHandlersRegistry.getInstance(OceanNode.getInstance())
+    .getHandlerForTask(command)
+    .handle(command)
+  if (nonceResponse.stream) {
+    return await Number(streamToString(nonceResponse.stream as Readable))
+  }
+  return 0
+}
 // get stored nonce for an address ( 0 if not found)
 export async function getNonce(
   db: AbstractNonceDatabase,
@@ -101,7 +120,8 @@ export async function checkNonce(
   consumer: string,
   nonce: number,
   signature: string,
-  message: string
+  message: string,
+  chainId?: string | null
 ): Promise<NonceResponse> {
   try {
     // get nonce from db
@@ -111,18 +131,30 @@ export async function checkNonce(
       previousNonce = existingNonce.nonce
     }
     // check if bigger than previous stored one and validate signature
-    const validate = validateNonceAndSignature(
+    const validate = await validateNonceAndSignature(
       nonce,
       previousNonce, // will return 0 if none exists
       consumer,
       signature,
-      message // String(ddoId + nonce)
+      message, // String(ddoId + nonce)
+      chainId
     )
     if (validate.valid) {
       const updateStatus = await updateNonce(db, consumer, nonce)
       return updateStatus
+    } else {
+      // log error level when validation failed
+      CORE_LOGGER.logMessageWithEmoji(
+        'Failure when validating nonce and signature: ' + validate.error,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return {
+        valid: false,
+        error: validate.error
+      }
     }
-    return validate
     // return validation status and possible error msg
   } catch (err) {
     DATABASE_LOGGER.logMessageWithEmoji(
@@ -147,46 +179,92 @@ export async function checkNonce(
  * @param message Use this message instead of default String(nonce)
  * @returns true or false + error message
  */
-function validateNonceAndSignature(
+async function validateNonceAndSignature(
   nonce: number,
   existingNonce: number,
   consumer: string,
   signature: string,
-  message: string = null
-): NonceResponse {
-  // check if is bigger than previous nonce
+  message: string = null,
+  chainId?: string | null
+): Promise<NonceResponse> {
+  if (nonce <= existingNonce) {
+    return {
+      valid: false,
+      error: 'nonce: ' + nonce + ' is not a valid nonce'
+    }
+  }
 
-  if (nonce > existingNonce) {
-    // nonce good
-    // now validate signature
-    if (!message) message = String(nonce)
-    const consumerMessage = ethers.solidityPackedKeccak256(
-      ['bytes'],
-      [ethers.hexlify(ethers.toUtf8Bytes(message))]
-    )
-    const messageHashBytes = ethers.toBeArray(consumerMessage)
+  if (!message) message = String(nonce)
+  const consumerMessage = ethers.solidityPackedKeccak256(
+    ['bytes'],
+    [ethers.hexlify(ethers.toUtf8Bytes(message))]
+  )
+  const messageHashBytes = ethers.toBeArray(consumerMessage)
+
+  // Try EOA signature validation
+  try {
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
-
     if (
       ethers.getAddress(addressFromHashSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase() ||
       ethers.getAddress(addressFromBytesSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase()
     ) {
-      // update nonce on DB, return OK
-      return {
-        valid: true
+      return { valid: true }
+    }
+  } catch (error) {
+    // Continue to smart account check
+  }
+
+  // Try ERC-1271 (smart account) validation
+  try {
+    const config = await getConfiguration()
+    const targetChainId = chainId || Object.keys(config?.supportedNetworks || {})[0]
+    if (targetChainId && config?.supportedNetworks?.[targetChainId]) {
+      const provider = new ethers.JsonRpcProvider(
+        config.supportedNetworks[targetChainId].rpc
+      )
+
+      // Try custom hash format (for backward compatibility)
+      if (await isERC1271Valid(consumer, consumerMessage, signature, provider)) {
+        return { valid: true }
+      }
+
+      // Try EIP-191 prefixed hash (standard for smart wallets)
+      const eip191Hash = ethers.hashMessage(message)
+      if (await isERC1271Valid(consumer, eip191Hash, signature, provider)) {
+        return { valid: true }
       }
     }
-    return {
-      valid: false,
-      error: 'consumer address and nonce signature mismatch'
-    }
+  } catch (error) {
+    // Smart account validation failed
   }
+
   return {
     valid: false,
-    error: 'nonce: ' + nonce + ' is not a valid nonce'
+    error: 'consumer address and nonce signature mismatch'
+  }
+}
+
+// Smart account validation
+export async function isERC1271Valid(
+  address: string,
+  hash: string | Uint8Array,
+  signature: string,
+  provider: ethers.Provider
+): Promise<boolean> {
+  try {
+    const contract = new ethers.Contract(
+      address,
+      ['function isValidSignature(bytes32, bytes) view returns (bytes4)'],
+      provider
+    )
+    const hashToUse = typeof hash === 'string' ? hash : ethers.hexlify(hash)
+    const result = await contract.isValidSignature(hashToUse, signature)
+    return result === '0x1626ba7e' // ERC-1271 magic value
+  } catch {
+    return false
   }
 }
 

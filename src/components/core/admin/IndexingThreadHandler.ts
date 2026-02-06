@@ -8,11 +8,11 @@ import {
   validateCommandParameters,
   ValidateParams
 } from '../../httpRoutes/validateCommands.js'
-import { AdminHandler } from './adminHandler.js'
+import { AdminCommandHandler } from './adminHandler.js'
 import { checkSupportedChainId } from '../../../utils/blockchain.js'
 
-export class IndexingThreadHandler extends AdminHandler {
-  validate(command: StartStopIndexingCommand): ValidateParams {
+export class IndexingThreadHandler extends AdminCommandHandler {
+  async validateAdminCommand(command: StartStopIndexingCommand): Promise<ValidateParams> {
     if (
       !validateCommandParameters(command, ['action']) ||
       ![IndexingCommand.START_THREAD, IndexingCommand.STOP_THREAD].includes(
@@ -24,12 +24,12 @@ export class IndexingThreadHandler extends AdminHandler {
         `Missing or invalid "action" and/or "chainId" fields for command: "${command}".`
       )
     }
-    return super.validate(command)
+    return await super.validate(command)
   }
 
   // eslint-disable-next-line require-await
   async handle(task: StartStopIndexingCommand): Promise<P2PCommandResponse> {
-    const validation = this.validate(task)
+    const validation = await this.validateAdminCommand(task)
     if (!validation.valid) {
       return buildInvalidParametersResponse(validation)
     }
@@ -39,8 +39,8 @@ export class IndexingThreadHandler extends AdminHandler {
     }
     if (task.action === IndexingCommand.START_THREAD) {
       const output = task.chainId
-        ? indexer.startThread(task.chainId)
-        : indexer.startThreads()
+        ? indexer.startChainIndexer(task.chainId)
+        : indexer.startAllChainIndexers()
       return {
         status: {
           httpStatus: output ? 200 : 400,
@@ -50,8 +50,8 @@ export class IndexingThreadHandler extends AdminHandler {
       }
     } else if (task.action === IndexingCommand.STOP_THREAD) {
       const output = task.chainId
-        ? indexer.stopThread(task.chainId)
-        : indexer.stopAllThreads()
+        ? indexer.stopChainIndexer(task.chainId)
+        : indexer.stopAllChainIndexers()
       return {
         status: {
           httpStatus: output ? 200 : 400,

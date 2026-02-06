@@ -1,18 +1,20 @@
 import { expect } from 'chai'
 import { PROTOCOL_COMMANDS, SUPPORTED_PROTOCOL_COMMANDS } from '../../utils/index.js'
 import { CoreHandlersRegistry } from '../../components/core/handler/coreHandlersRegistry.js'
-import { Handler } from '../../components/core/handler/handler.js'
+import { BaseHandler } from '../../components/core/handler/handler.js'
+import { getConfiguration } from '../../utils/config.js'
 import { OceanNode } from '../../OceanNode.js'
+import { Database } from '../../components/database/index.js'
+import { KeyManager } from '../../components/KeyManager/index.js'
 import {
   ComputeGetEnvironmentsCommand,
   ComputeGetResultCommand,
   ComputeGetStatusCommand,
   ComputeInitializeCommand,
-  ComputeStartCommand,
+  PaidComputeStartCommand,
   ComputeStopCommand,
   DecryptDDOCommand,
   DownloadCommand,
-  EchoCommand,
   EncryptCommand,
   EncryptFileCommand,
   FileInfoCommand,
@@ -22,7 +24,8 @@ import {
   NonceCommand,
   QueryCommand,
   StatusCommand,
-  ValidateDDOCommand
+  ValidateDDOCommand,
+  GetJobsCommand
 } from '../../@types/commands.js'
 import { NonceHandler } from '../../components/core/handler/nonceHandler.js'
 import { DownloadHandler } from '../../components/core/handler/downloadHandler.js'
@@ -38,10 +41,9 @@ import {
 import { QueryHandler } from '../../components/core/handler/queryHandler.js'
 import { StatusHandler } from '../../components/core/handler/statusHandler.js'
 import { FeesHandler } from '../../components/core/handler/feesHandler.js'
-import { EchoHandler } from '../../components/core/handler/echoHandler.js'
 import { FileInfoHandler } from '../../components/core/handler/fileInfoHandler.js'
 import { ComputeGetEnvironmentsHandler } from '../../components/core/compute/environments.js'
-import { ComputeStartHandler } from '../../components/core/compute/startCompute.js'
+import { PaidComputeStartHandler } from '../../components/core/compute/startCompute.js'
 import { ComputeStopHandler } from '../../components/core/compute/stopCompute.js'
 import { ComputeGetStatusHandler } from '../../components/core/compute/getStatus.js'
 import { ComputeGetResultHandler } from '../../components/core/compute/getResults.js'
@@ -50,28 +52,39 @@ import { StopNodeHandler } from '../../components/core/admin/stopNodeHandler.js'
 import { ReindexTxHandler } from '../../components/core/admin/reindexTxHandler.js'
 import { ReindexChainHandler } from '../../components/core/admin/reindexChainHandler.js'
 import { CollectFeesHandler } from '../../components/core/admin/collectFeesHandler.js'
-
+import { GetJobsHandler } from '../../components/core/handler/getJobs.js'
+import { Wallet, ethers } from 'ethers'
 describe('Commands and handlers', () => {
+  let node: OceanNode
+  let consumerAccount: Wallet
+  let consumerAddress: string
+  before(async () => {
+    const config = await getConfiguration()
+    const keyManager = new KeyManager(config)
+    const db = await Database.init(config.dbConfig)
+    node = OceanNode.getInstance(config, db, null, null, null, keyManager, null, true)
+    consumerAccount = new Wallet(process.env.PRIVATE_KEY)
+    consumerAddress = await consumerAccount.getAddress()
+  })
+
   it('Check that all supported commands have registered handlers', () => {
     // To make sure we do not forget to register handlers
-    const node: OceanNode = OceanNode.getInstance()
+
     for (const command of SUPPORTED_PROTOCOL_COMMANDS) {
       expect(CoreHandlersRegistry.getInstance(node).getHandler(command)).to.be.instanceof(
-        Handler
+        BaseHandler
       )
     }
   })
 
   it('Check that supported commands and handlers match', () => {
     // To make sure we do not forget to register anything on supported commands
-    const node: OceanNode = OceanNode.getInstance()
     const handlers: string[] = node.getCoreHandlers().getRegisteredCommands()
     expect(SUPPORTED_PROTOCOL_COMMANDS.length).to.be.equal(handlers.length)
   })
 
-  it('Check that all commands are validating required parameters', () => {
+  it('Check that all commands are validating required parameters', async () => {
     // To make sure we do not forget to register anything on supported commands
-    const node: OceanNode = OceanNode.getInstance()
 
     // downloadHandler
     const downloadHandler: DownloadHandler = CoreHandlersRegistry.getInstance(
@@ -88,7 +101,7 @@ describe('Commands and handlers', () => {
       command: PROTOCOL_COMMANDS.DOWNLOAD
     }
     expect(downloadHandler.validate(downloadCommand).valid).to.be.equal(true)
-    downloadCommand.nonce = null
+    downloadCommand.documentId = undefined
     expect(downloadHandler.validate(downloadCommand).valid).to.be.equal(false)
     // -----------------------------------------
     // DecryptDDOHandler
@@ -124,9 +137,20 @@ describe('Commands and handlers', () => {
     const encryptHandler: EncryptHandler = CoreHandlersRegistry.getInstance(
       node
     ).getHandler(PROTOCOL_COMMANDS.ENCRYPT)
+    let nonce = Date.now().toString()
+    let message = String(nonce)
+    let consumerMessage = ethers.solidityPackedKeccak256(
+      ['bytes'],
+      [ethers.hexlify(ethers.toUtf8Bytes(message))]
+    )
+    let messageHashBytes = ethers.toBeArray(consumerMessage)
+    let signature = await consumerAccount.signMessage(messageHashBytes)
     const encryptCommand: EncryptCommand = {
       blob: '1425252525',
-      command: PROTOCOL_COMMANDS.ENCRYPT
+      command: PROTOCOL_COMMANDS.ENCRYPT,
+      nonce,
+      consumerAddress,
+      signature
     }
     expect(encryptHandler.validate(encryptCommand).valid).to.be.equal(true)
     delete encryptCommand.blob
@@ -136,9 +160,20 @@ describe('Commands and handlers', () => {
     const encryptFileHandler: EncryptFileHandler = CoreHandlersRegistry.getInstance(
       node
     ).getHandler(PROTOCOL_COMMANDS.ENCRYPT_FILE)
+    nonce = (parseFloat(nonce) + 1).toString()
+    message = String(nonce)
+    consumerMessage = ethers.solidityPackedKeccak256(
+      ['bytes'],
+      [ethers.hexlify(ethers.toUtf8Bytes(message))]
+    )
+    messageHashBytes = ethers.toBeArray(consumerMessage)
+    signature = await consumerAccount.signMessage(messageHashBytes)
     const encryptFileCommand: EncryptFileCommand = {
       rawData: Buffer.from('12345'),
-      command: PROTOCOL_COMMANDS.ENCRYPT_FILE
+      command: PROTOCOL_COMMANDS.ENCRYPT_FILE,
+      nonce,
+      consumerAddress,
+      signature
     }
     expect(encryptFileHandler.validate(encryptFileCommand).valid).to.be.equal(true)
     delete encryptFileCommand.rawData
@@ -202,37 +237,28 @@ describe('Commands and handlers', () => {
     feesCommand.consumerAddress = 'INVALID_1234567'
     expect(feesHandler.validate(feesCommand).valid).to.be.equal(false)
     // -----------------------------------------
-    // EchoHandler
-    const echoHandler: EchoHandler = CoreHandlersRegistry.getInstance(node).getHandler(
-      PROTOCOL_COMMANDS.ECHO
-    )
-    const echoCommand: EchoCommand = {
-      command: PROTOCOL_COMMANDS.ECHO
-    }
-    expect(echoHandler.validate(echoCommand).valid).to.be.equal(true)
-    // -----------------------------------------
     // Stop Node Handler for Admin
     const stopNodeHandler: StopNodeHandler = CoreHandlersRegistry.getInstance(
       node
-    ).getHandler(PROTOCOL_COMMANDS.ECHO)
+    ).getHandler(PROTOCOL_COMMANDS.STOP_NODE) as StopNodeHandler
     expect(stopNodeHandler).to.be.not.equal(null)
     // -----------------------------------------
     // Reindex Tx Handler
     const reindexTxHandler: ReindexTxHandler = CoreHandlersRegistry.getInstance(
       node
-    ).getHandler(PROTOCOL_COMMANDS.REINDEX_TX)
+    ).getHandler(PROTOCOL_COMMANDS.REINDEX_TX) as ReindexTxHandler
     expect(reindexTxHandler).to.be.not.equal(null)
     // -----------------------------------------
     // Reindex Chain Handler
     const reindexChainHandler: ReindexChainHandler = CoreHandlersRegistry.getInstance(
       node
-    ).getHandler(PROTOCOL_COMMANDS.REINDEX_CHAIN)
+    ).getHandler(PROTOCOL_COMMANDS.REINDEX_CHAIN) as ReindexChainHandler
     expect(reindexChainHandler).to.be.not.equal(null)
     // -----------------------------------------
     // CollectFeesHandler
     const collectFeesHandler: CollectFeesHandler = CoreHandlersRegistry.getInstance(
       node
-    ).getHandler(PROTOCOL_COMMANDS.COLLECT_FEES)
+    ).getHandler(PROTOCOL_COMMANDS.COLLECT_FEES) as CollectFeesHandler
     expect(collectFeesHandler).to.be.not.equal(null)
     // -----------------------------------------
     // FileInfoHandler
@@ -279,17 +305,18 @@ describe('Commands and handlers', () => {
     expect(getEnvHandler.validate(getEnvCommand).valid).to.be.equal(true)
     // -----------------------------------------
     // ComputeStartHandler
-    const startEnvHandler: ComputeStartHandler = CoreHandlersRegistry.getInstance(
+    const startEnvHandler: PaidComputeStartHandler = CoreHandlersRegistry.getInstance(
       node
     ).getHandler(PROTOCOL_COMMANDS.COMPUTE_START)
-    const startEnvCommand: ComputeStartCommand = {
+    const startEnvCommand: PaidComputeStartCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_START,
       consumerAddress: '',
       signature: '',
       nonce: '',
       environment: '',
       algorithm: undefined,
-      dataset: undefined
+      datasets: undefined,
+      payment: undefined
     }
     expect(startEnvHandler.validate(startEnvCommand).valid).to.be.equal(false)
     // -----------------------------------------
@@ -341,8 +368,20 @@ describe('Commands and handlers', () => {
       consumerAddress: 'abcdef',
       datasets: null,
       algorithm: undefined,
-      compute: undefined
+      payment: undefined,
+      environment: undefined,
+      maxJobDuration: 60
     }
     expect(initComputeHandler.validate(computeInitCommand).valid).to.be.equal(false)
+    // -----------------------------------------
+    // JobsHandler
+    const jobsHandler: GetJobsHandler = CoreHandlersRegistry.getInstance(node).getHandler(
+      PROTOCOL_COMMANDS.JOBS
+    )
+    const getJobsCommand: GetJobsCommand = {
+      command: PROTOCOL_COMMANDS.JOBS
+    }
+    expect(jobsHandler.validate(getJobsCommand).valid).to.be.equal(true)
+    // -----------------------------------------
   })
 })

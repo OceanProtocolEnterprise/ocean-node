@@ -81,6 +81,14 @@ export function fetchEventFromTransaction(
   }
 }
 
+export async function streamToUint8Array(stream: Readable): Promise<Uint8Array> {
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  return new Uint8Array(Buffer.concat(chunks))
+}
+
 // Helper function to read from a stream
 export function readStream(stream: Stream): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -144,4 +152,23 @@ export function asyncCallWithTimeout(
 
 export function isDefined(something: any): boolean {
   return something !== undefined && something !== null
+}
+
+export function deleteKeysFromObject(source: any, keys: string[]): any {
+  keys.forEach((keyName) => {
+    if (keyName in source) {
+      delete source[keyName]
+    }
+  })
+  return source
+}
+
+export function convertGigabytesToBytes(gigabytes: number): number {
+  if (gigabytes < 0) {
+    throw new Error('Input must be a non-negative number')
+  }
+
+  const bytesInAGigabyte = 1024 ** 3 // 1 gigabyte = 1024^3 bytes
+  const bytes = gigabytes * bytesInAGigabyte
+  return bytes
 }

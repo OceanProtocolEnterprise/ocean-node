@@ -1,8 +1,7 @@
 import { P2PCommandResponse } from '../../../@types/index.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
-import { Handler } from '../handler/handler.js'
+import { CommandHandler } from '../handler/handler.js'
 import { ComputeGetResultCommand } from '../../../@types/commands.js'
-import { checkNonce, NonceResponse } from '../utils/nonceHandler.js'
 import {
   buildInvalidRequestMessage,
   validateCommandParameters,
@@ -10,15 +9,9 @@ import {
 } from '../../httpRoutes/validateCommands.js'
 import { isAddress } from 'ethers'
 
-export class ComputeGetResultHandler extends Handler {
+export class ComputeGetResultHandler extends CommandHandler {
   validate(command: ComputeGetResultCommand): ValidateParams {
-    const validation = validateCommandParameters(command, [
-      'consumerAddress',
-      'signature',
-      'nonce',
-      'jobId',
-      'index'
-    ])
+    const validation = validateCommandParameters(command, ['jobId', 'index'])
     if (validation.valid) {
       if (command.consumerAddress && !isAddress(command.consumerAddress)) {
         return buildInvalidRequestMessage(
@@ -38,33 +31,17 @@ export class ComputeGetResultHandler extends Handler {
       return validationResponse
     }
 
-    let error = null
-
-    // signature message to check against
-    const message = task.consumerAddress + task.jobId + task.index.toString() + task.nonce
-    const nonceCheckResult: NonceResponse = await checkNonce(
-      this.getOceanNode().getDatabase().nonce,
+    const authValidationResponse = await this.validateTokenOrSignature(
+      task.authorization,
       task.consumerAddress,
-      parseInt(task.nonce),
+      task.nonce,
       task.signature,
-      message // task.jobId + task.index.toString()
+      String(task.consumerAddress + task.jobId + task.index.toString() + task.nonce)
     )
-
-    if (!nonceCheckResult.valid) {
-      // eslint-disable-next-line prefer-destructuring
-      error = nonceCheckResult.error
+    if (authValidationResponse.status.httpStatus !== 200) {
+      return authValidationResponse
     }
 
-    if (error) {
-      CORE_LOGGER.logMessage(error, true)
-      return {
-        stream: null,
-        status: {
-          httpStatus: 400,
-          error
-        }
-      }
-    }
     // split jobId (which is already in hash-jobId format) and get the hash
     // then get jobId which might contain dashes as well
     const index = task.jobId.indexOf('-')
@@ -90,16 +67,15 @@ export class ComputeGetResultHandler extends Handler {
         jobId,
         task.index
       )
-      const anyResp: any = respStream as any
       const response: P2PCommandResponse = {
-        stream: respStream,
+        stream: respStream?.stream,
         status: {
           httpStatus: 200
         }
       }
       // need to pass the headers properly
-      if (anyResp.headers) {
-        response.status.headers = anyResp.headers
+      if (respStream?.headers) {
+        response.status.headers = respStream?.headers
       }
       return response
     } catch (error) {

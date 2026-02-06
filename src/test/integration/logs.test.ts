@@ -37,7 +37,7 @@ describe('LogDatabase CRUD', () => {
       buildEnvOverrideConfig([ENVIRONMENT_VARIABLES.LOG_DB], ['true'])
     )
     const { dbConfig } = await getConfiguration(true)
-    database = await new Database(dbConfig)
+    database = await Database.init(dbConfig)
     // Initialize logger with the custom transport that writes to the LogDatabase
     logger = getCustomLoggerForModule(
       LOGGER_MODULE_NAMES.HTTP,
@@ -87,11 +87,11 @@ describe('LogDatabase CRUD', () => {
     if (logs.length > 0) {
       logs = logs.filter((log) => log.message === newLogEntry.message)
 
-      expect(logs?.length).to.equal(1)
-      expect(Number(logs?.[0].id)).to.greaterThan(Number(logId))
-      expect(logs?.[0].level).to.equal(newLogEntry.level)
-      expect(logs?.[0].message).to.equal(newLogEntry.message)
-      expect(logs?.[0].moduleName).to.equal('HTTP')
+      expect(logs.length).to.equal(1)
+      expect(Number(logs[0].id)).to.greaterThan(Number(logId))
+      expect(logs[0].level).to.equal(newLogEntry.level)
+      expect(logs[0].message).to.equal(newLogEntry.message)
+      expect(logs[0].moduleName).to.equal('HTTP')
     }
   })
 
@@ -118,11 +118,11 @@ describe('LogDatabase CRUD', () => {
     logs = logs.filter((log) => log.message === newLogEntry.message)
 
     if (logs.length > 0) {
-      expect(logs?.length).to.equal(1)
-      expect(Number(logs?.[0].id)).to.greaterThan(Number(logId))
-      expect(logs?.[0].level).to.equal(newLogEntry.level)
-      expect(logs?.[0].message).to.equal(newLogEntry.message)
-      expect(logs?.[0].moduleName).to.equal('HTTP')
+      expect(logs.length).to.equal(1)
+      expect(Number(logs[0].id)).to.greaterThan(Number(logId))
+      expect(logs[0].level).to.equal(newLogEntry.level)
+      expect(logs[0].message).to.equal(newLogEntry.message)
+      expect(logs[0].moduleName).to.equal('HTTP')
     }
   })
 
@@ -153,11 +153,11 @@ describe('LogDatabase CRUD', () => {
     logs = logs.filter((log) => log.message.includes(newLogEntry.message))
 
     if (logs.length > 0) {
-      expect(logs?.length).to.equal(1)
-      expect(Number(logs?.[0].id)).to.greaterThan(Number(logId))
-      expect(logs?.[0].level).to.equal(newLogEntry.level)
-      assert(logs?.[0].message)
-      expect(logs?.[0].moduleName).to.equal('HTTP')
+      expect(logs.length).to.equal(1)
+      expect(Number(logs[0].id)).to.greaterThan(Number(logId))
+      expect(logs[0].level).to.equal(newLogEntry.level)
+      assert(logs[0].message)
+      expect(logs[0].moduleName).to.equal('HTTP')
     }
   })
 
@@ -179,7 +179,7 @@ describe('LogDatabase retrieveMultipleLogs with specific parameters', () => {
     )
 
     const { dbConfig } = await getConfiguration(true)
-    database = await new Database(dbConfig)
+    database = await Database.init(dbConfig)
   })
 
   it('should retrieve logs with a specific moduleName', async () => {
@@ -245,7 +245,7 @@ describe('LogDatabase retrieveMultipleLogs with specific parameters', () => {
 
     before(async () => {
       const { dbConfig } = await getConfiguration(true)
-      database = await new Database(dbConfig)
+      database = await Database.init(dbConfig)
     })
 
     it('should insert a log for deletion', async () => {
@@ -293,13 +293,13 @@ describe('LogDatabase retrieveMultipleLogs with specific parameters', () => {
 
   it('should return an empty array for negative maxLogs', async () => {
     const logs = await database.logs.retrieveMultipleLogs(startTime, endTime, -1)
-    assert.isNull(logs, 'Expected logs to be null')
+    assert.isEmpty(logs, 'Expected logs to be empty')
   })
 
   it('should retrieve a maximum of one log when maxLogs is set to 1', async () => {
     const logs = await database.logs.retrieveMultipleLogs(startTime, endTime, 1)
     // check if the length of logs is 1 or less
-    expect(logs?.length).to.be.at.most(1)
+    expect(logs.length).to.be.at.most(1)
   })
 
   it('should retrieve no logs when maxLogs is set to 0', async () => {
@@ -348,7 +348,7 @@ describe('LogDatabase deleteOldLogs', () => {
       buildEnvOverrideConfig([ENVIRONMENT_VARIABLES.LOG_DB], ['true'])
     )
     const { dbConfig } = await getConfiguration(true)
-    database = await new Database(dbConfig)
+    database = await Database.init(dbConfig)
   })
 
   it('should insert an old log and a recent log', async () => {
@@ -383,14 +383,14 @@ describe('LogDatabase deleteOldLogs', () => {
       let logs = await database.logs.retrieveMultipleLogs(startTime, endTime, 100)
 
       // Check that the old log is not present, but the recent one is
-      const oldLogPresent = logs?.some((log) => log.message === oldLogEntry.message)
+      const oldLogPresent = logs.some((log) => log.message === oldLogEntry.message)
       assert(oldLogPresent === false, 'Old logs are still present')
 
       // since we have many logs going to DB by default, we need to re-frame the timestamp to grab it
       startTime = new Date(recentLogEntry.timestamp - 1000)
       endTime = new Date(recentLogEntry.timestamp + 1000)
       logs = await database.logs.retrieveMultipleLogs(startTime, endTime, 100)
-      const recentLogPresent = logs?.some((log) => log.message === recentLogEntry.message)
+      const recentLogPresent = logs.some((log) => log.message === recentLogEntry.message)
       assert(recentLogPresent === true, 'Recent logs are not present')
     } else
       assert(
@@ -413,7 +413,7 @@ describe('LogDatabase retrieveMultipleLogs with pagination', () => {
       buildEnvOverrideConfig([ENVIRONMENT_VARIABLES.LOG_DB], ['true'])
     )
     const { dbConfig } = await getConfiguration(true)
-    database = await new Database(dbConfig)
+    database = await Database.init(dbConfig)
 
     // Insert multiple log entries to ensure there are enough logs for pagination
     for (let i = 0; i < logCount; i++) {

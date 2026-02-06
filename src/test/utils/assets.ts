@@ -10,30 +10,26 @@ import {
 import { Readable } from 'stream'
 import { createHash } from 'crypto'
 import { EncryptMethod } from '../../@types/fileObject.js'
-import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' assert { type: 'json' }
-import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
+import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' with { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import {
   DEVELOPMENT_CHAIN_ID,
   getOceanArtifactsAdresses,
   getOceanArtifactsAdressesByChainId
 } from '../../utils/address.js'
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
+import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 import { getEventFromTx, streamToObject } from '../../utils/util.js'
 
-import { encrypt } from '../../utils/crypt.js'
 import { AssetUtils } from '../../utils/asset.js'
 
-import {
-  DDO_IDENTIFIER_PREFIX,
-  PROTOCOL_COMMANDS,
-  getConfiguration
-} from '../../utils/index.js'
+import { DDO_IDENTIFIER_PREFIX, PROTOCOL_COMMANDS } from '../../utils/index.js'
 import { FeesHandler } from '../../components/core/handler/feesHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { ProviderFees } from '../../@types/Fees.js'
 
 export async function publishAsset(asset: any, publisherAccount: Signer) {
   const genericAsset = JSON.parse(JSON.stringify(asset))
+  const oceanNode = OceanNode.getInstance()
   try {
     let network = getOceanArtifactsAdressesByChainId(DEVELOPMENT_CHAIN_ID)
     if (!network) {
@@ -78,12 +74,16 @@ export async function publishAsset(asset: any, publisherAccount: Signer) {
 
     genericAsset.services[0].files.datatokenAddress = datatokenAddress
     genericAsset.services[0].files.nftAddress = nftAddress
+    genericAsset.services[0].datatokenAddress = datatokenAddress
+    genericAsset.nftAddress = nftAddress
     // let's call node to encrypt
 
     const data = Uint8Array.from(
       Buffer.from(JSON.stringify(genericAsset.services[0].files))
     )
-    const encryptedData = await encrypt(data, EncryptMethod.ECIES)
+    const encryptedData = await oceanNode
+      .getKeyManager()
+      .encrypt(data, EncryptMethod.ECIES)
     const encryptedDataString = encryptedData.toString('hex')
 
     const nftContract = new ethers.Contract(
@@ -182,15 +182,14 @@ export async function orderAsset(
   )
 
   if (!providerFees) {
-    const oceanNodeConfig = await getConfiguration(true)
-    const statusCommand = {
+    const getFeesCommand = {
       command: PROTOCOL_COMMANDS.GET_FEES,
       ddoId: genericAsset.id,
       serviceId: service.id,
       consumerAddress,
-      node: oceanNodeConfig.keys.peerId.toString()
+      node: oceanNode.getKeyManager().getPeerId().toString()
     }
-    const response = await new FeesHandler(oceanNode).handle(statusCommand)
+    const response = await new FeesHandler(oceanNode).handle(getFeesCommand)
     const fees = await streamToObject(response.stream as Readable)
     providerFees = fees.providerFee
   }
@@ -268,13 +267,12 @@ export async function reOrderAsset(
   )
 
   if (!providerFees) {
-    const oceanNodeConfig = await getConfiguration(true)
     const statusCommand = {
       command: PROTOCOL_COMMANDS.GET_FEES,
       ddoId: genericAsset.id,
       serviceId: service.id,
       consumerAddress,
-      node: oceanNodeConfig.keys.peerId.toString()
+      node: oceanNode.getKeyManager().getPeerId().toString()
     }
     const response = await new FeesHandler(oceanNode).handle(statusCommand)
     const fees = await streamToObject(response.stream as Readable)

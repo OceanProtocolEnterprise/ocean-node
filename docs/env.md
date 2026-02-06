@@ -5,6 +5,7 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 ## Core
 
 - `PRIVATE_KEY` (Required): The private key for the node, required for node operations. Example: `"0x1d751ded5a32226054cd2e71261039b65afb9ee1c746d055dd699b1150a5befc"`
+- `CONFIG_PATH`: Absolute path to JSON config file
 - `RPCS`: JSON object defining RPC endpoints for various networks. Example: `"{ \"11155420\":{ \"rpc\":\"https://sepolia.optimism.io\", \"fallbackRPCs\": [\"https://public.stackup.sh/api/v1/node/optimism-sepolia\"], \"chainId\": 11155420, \"network\": \"optimism-sepolia\", \"chunkSize\": 1000 }}"`
 - `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
 - `IPFS_GATEWAY`: The gateway URL for IPFS, used for downloading files from IPFS. Example: `"https://ipfs.io/"`
@@ -15,16 +16,43 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 - `ADDRESS_FILE`: File location where Ocean contract addresses are saved. Example: `"ADDRESS_FILE=${HOME}/.ocean/ocean-contracts/artifacts/address.json"`
 - `NODE_ENV`: Typically used to specify the environment (e.g., development, production) the node is running in. Example: `'development'`
 - `AUTHORIZED_DECRYPTERS`: A JSON array of addresses that are authorized to decrypt data. Example: `"['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']"`
+- `AUTHORIZED_DECRYPTERS_LIST`: AccessList contract addresses (per chain). If present, only accounts present on the given access lists can decrypt data. Example: `"{ \"8996\": [\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"] }"`
 - `OPERATOR_SERVICE_URL`: Configures C2D cluster URLs for the node. Example: `"[\"http://example.c2d.cluster1.com\",\"http://example.cd2.cluster2.com\"]"`
 - `INTERFACES`: Network interfaces the node supports, e.g., HTTP and P2P. By default, if not specified, both are supported. Example: `"[\"HTTP\",\"P2P\"]"`
 - `ALLOWED_VALIDATORS`: Array of addresses for allowed validators to verify asset signatures before indexing. Example: `"[\"0x123\",\"0x456\"]"`
+- `ALLOWED_VALIDATORS_LIST`: Array of access list addresses (per chain) for allowed validators to verify asset signatures before indexing. Example: `"{ \"8996\": [\"0x123\",\"0x456\"]"`
 - `INDEXER_INTERVAL`: Sets the interval in milliseconds for the indexer to crawl. The default is 30 seconds if not set. Example: `10000`
 - `INDEXER_NETWORKS`: Specifies the networks the Indexer will crawl. If not set, the Indexer will index all networks defined in the RPCS environment variable. If set to an empty string, indexing will be disabled. Example: `[1, 137]`
 - `ALLOWED_ADMINS`: Sets the public address of accounts which have access to admin endpoints e.g. shutting down the node. Example: `"[\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"]"`
-- `DASHBOARD`: If `false` the dashboard will not run. If not set or `true` the dashboard will start with the node. Example: `false`
+- `ALLOWED_ADMINS_LIST`: Array of access list addresses (per chain) for accounts that have access to admin endpoints. Example: `"{ \"8996\": [\"0x123\",\"0x456\"]"`
+- `CONTROL_PANEL`: If `false` the control panel will not run. If not set or `true` the control panel will start with the node. Example: `false`
 - `RATE_DENY_LIST`: Blocked list of IPs and peer IDs. Example: `"{ \"peers\": [\"16Uiu2HAkuYfgjXoGcSSLSpRPD6XtUgV71t5RqmTmcqdbmrWY9MJo\"], \"ips\": [\"127.0.0.1\"] }"`
-- `MAX_REQ_PER_SECOND`: Number of requests per second allowed by the same client. Example: `3`
+- `MAX_REQ_PER_MINUTE`: Number of requests per minute allowed by the same client (IP or Peer id). Example: `30`
+- `MAX_CONNECTIONS_PER_MINUTE`: Max number of requests allowed per minute (all clients). Example: `120`
 - `MAX_CHECKSUM_LENGTH`: Define the maximum length for a file if checksum is required (Mb). Example: `10`
+- `IS_BOOTSTRAP`: Is this node to be used as bootstrap node or not. Default is `false`.
+- `AUTHORIZED_PUBLISHERS`: Authorized list of publishers. If present, Node will only index assets published by the accounts in the list. Example: `"[\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"]"`
+- `AUTHORIZED_PUBLISHERS_LIST`: AccessList contract addresses (per chain). If present, Node will only index assets published by the accounts present on the given access lists. Example: `"{ \"8996\": [\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"] }"`
+- `VALIDATE_UNSIGNED_DDO`: If set to `false`, the node will not validate unsigned DDOs and will request a signed message with the publisher address, nonce and signature. Default is `true`. Example: `false`
+- `JWT_SECRET`: Secret used to sign JWT tokens. Default is `ocean-node-secret`. Example: `"my-secret-jwt-token"`
+
+## Database
+
+- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
+- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
+- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
+- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
+- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
+- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
+- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
+- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
+- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
+- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
+- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
+
+## Payments
+
+- `ESCROW_CLAIM_TIMEOUT`: Amount of time reserved to claim a escrow payment, in seconds. Defaults to `3600`. Example: `3600`
 
 ## Logs
 
@@ -37,6 +65,8 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 ## HTTP
 
 - `HTTP_API_PORT`: Port number for the HTTP API. Example: `8000`
+- `HTTP_CERT_PATH`: Absolute path to the TLS certificate file. If provided along with `HTTP_KEY_PATH`, the node will start an HTTPS server. Example: `"/etc/letsencrypt/live/example.com/fullchain.pem"`
+- `HTTP_KEY_PATH`: Absolute path to the TLS private key file. If provided along with `HTTP_CERT_PATH`, the node will start an HTTPS server. Example: `"/etc/letsencrypt/live/example.com/privkey.pem"`
 
 ## P2P
 
@@ -49,11 +79,16 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 - `P2P_ipV6BindTcpPort`: Port used on IPv6 TCP connections. Defaults to `0` (Use whatever port is free. When running as docker, please set it explicitly). Example: `0`
 - `P2P_ipV6BindWsPort`: Port used on IPv6 WS connections. Defaults to `0` (Use whatever port is free. When running as docker, please set it explicitly). Example: `0`
 - `P2P_ANNOUNCE_ADDRESSES`: List of addresses to announce to the network. Example: `"[\"/ip4/1.2.3.4/tcp/8000\"]"`
+
+  To enable SNI (Server Name Indication) with autoTLS, include `/tls/ws` or `/tls/wss` addresses:
+  - `"["/ip4/<your-ip-addr>/tcp/9001/tls/ws"]"` - TLS WebSocket
+  - `"["/ip4/<your-ip-addr>/tcp/9005/tls/wss"]"` - TLS WebSocket Secure
+
 - `P2P_ANNOUNCE_PRIVATE`: Announce private IPs. Default: `True`
 - `P2P_pubsubPeerDiscoveryInterval`: Interval (in ms) for discovery using pubsub. Defaults to `10000` (three seconds). Example: `10000`
 - `P2P_dhtMaxInboundStreams`: Maximum number of DHT inbound streams. Defaults to `500`. Example: `500`
 - `P2P_dhtMaxOutboundStreams`: Maximum number of DHT outbound streams. Defaults to `500`. Example: `500`
-- `P2P_ENABLE_DHT_SERVER`: Enable DHT server mode. This should be enabled for bootstrapers & well established nodes. Default: `false`
+- `P2P_DHT_FILTER`: Filter address in DHT. 0 = (Default) No filter 1. Filter private ddresses. 2. Filter public addresses
 - `P2P_mDNSInterval`: Interval (in ms) for discovery using mDNS. Defaults to `20000` (20 seconds). Example: `20000`
 - `P2P_connectionsMaxParallelDials`: Maximum number of parallel dials. Defaults to `150`. Example: `150`
 - `P2P_connectionsDialTimeout`: Timeout for dial commands. Defaults to `10000` (10 seconds). Example: `10000`
@@ -83,3 +118,111 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 
 - `NODE1_PRIVATE_KEY`: Used on test environments, specifically CI, represents the private key for node 1. Example: `"0xfd5c1ccea015b6d663618850824154a3b3fb2882c46cefb05b9a93fea8c3d215"`
 - `NODE2_PRIVATE_KEY`: Used on test environments, specifically CI, represents the private key for node 2. Example: `"0x1263dc73bef43a9da06149c7e598f52025bf4027f1d6c13896b71e81bb9233fb"`
+
+## Cron Jobs
+
+- `CRON_DELETE_DB_LOGS`: Delete old logs from database Cron expression. Example: `0 0 * * *` (runs every day at midnight)
+- `CRON_CLEANUP_C2D_STORAGE`: Clear c2d expired resources/storage and delete old jobs. Example: `*/5 * * * *` (runs every 5 minutes)
+
+## Compute
+
+The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable is used to configure Docker-based compute environments in Ocean Node. This guide will walk you through the options available for defining `DOCKER_COMPUTE_ENVIRONMENTS` and how to set it up correctly. For configuring compute environments and setting prices for each resource (including pricing units and examples), see [Compute pricing](compute-pricing.md).
+
+Example Configuration
+The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of objects, where each object represents a Docker compute environment configuration. Below is an example configuration:
+
+`Disk` and `Ram` resources are always expressed in GB.
+
+```json
+[
+  {
+    "socketPath": "/var/run/docker.sock",
+    "imageRetentionDays": 7,
+    "imageCleanupInterval": 86400,
+    "resources": [
+      {
+        "id": "disk",
+        "total": 10
+      }
+    ],
+    "storageExpiry": 604800,
+    "maxJobDuration": 3600,
+    "minJobDuration": 60,
+    "access": {
+      "addresses": ["0x123", "0x456"],
+      "accessLists": []
+    },
+    "fees": {
+      "1": [
+        {
+          "feeToken": "0x123",
+          "prices": [
+            {
+              "id": "cpu",
+              "price": 1
+            }
+          ]
+        }
+      ]
+    },
+    "free": {
+      "maxJobDuration": 60,
+      "minJobDuration": 10,
+      "maxJobs": 3,
+      "access": {
+        "addresses": [],
+        "accessLists": ["0x789"]
+      },
+      "resources": [
+        {
+          "id": "cpu",
+          "max": 1
+        },
+        {
+          "id": "ram",
+          "max": 1
+        },
+        {
+          "id": "disk",
+          "max": 1
+        }
+      ]
+    }
+  }
+]
+```
+
+#### Configuration Options
+
+- **socketPath**: Path to the Docker socket (e.g., docker.sock).
+- **imageRetentionDays** - how long docker images are kept, in days. Default: 7
+- **imageCleanupInterval** - how often to run cleanup for docker images, in seconds. Min: 3600 (1hour), Default: 86400 (24 hours)
+- **storageExpiry**: Amount of seconds for storage expiry.(Mandatory)
+- **maxJobDuration**: Maximum duration in seconds for a job.(Mandatory)
+- **minJobDuration**: Minimum duration in seconds for a job.(Mandatory)
+- **access**: Access control configuration for paid compute jobs. If both `addresses` and `accessLists` are empty, all addresses are allowed.
+  - **addresses**: Array of Ethereum addresses allowed to run compute jobs. If empty and no access lists are configured, all addresses are allowed.
+  - **accessLists**: Array of AccessList contract addresses. Users holding NFTs from these contracts can run compute jobs. Checked across all supported networks.
+- **fees**: Fee structure for the compute environment.
+  - **feeToken**: Token address for the fee.
+  - **prices**: Array of resource pricing information.
+    - **id**: Resource type (e.g., `cpu`, `ram`, `disk`).
+    - **price**: Price per unit of the resource.
+- **resources**: Array of resources available in the compute environment.
+  - **id**: Resource type (e.g., `cpu`, `ram`, `disk`).
+  - **total**: Total number of the resource available.
+  - **min**: Minimum number of the resource needed for a job.
+  - **max**: Maximum number of the resource for a job.
+- **free**: Optional configuration for free jobs.
+  - **storageExpiry**: Amount of seconds for storage expiry for free jobs.
+  - **maxJobDuration**: Maximum duration in seconds for a free job.
+  - **minJobDuration**: Minimum duration in seconds for a free job.
+  - **maxJobs**: Maximum number of simultaneous free jobs.
+  - **access**: Access control configuration for free compute jobs. Works the same as the main `access` field.
+    - **addresses**: Array of Ethereum addresses allowed to run free compute jobs.
+    - **accessLists**: Array of AccessList contract addresses for free compute access control.
+  - **resources**: Array of resources available for free jobs.
+    - **id**: Resource type (e.g., `cpu`, `ram`, `disk`).
+    - **total**: Total number of the resource available.
+    - **min**: Minimum number of the resource needed for a job.
+    - **max**: Maximum number of the resource for a job.

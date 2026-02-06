@@ -25,7 +25,7 @@ import {
   INDEXER_CRAWLING_EVENTS
 } from '../../utils/index.js'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template.sol/ERC20Template.json' assert { type: 'json' }
+import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template.sol/ERC20Template.json' with { type: 'json' }
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import {
   AdminReindexChainCommand,
@@ -49,10 +49,12 @@ import {
   OceanIndexer
 } from '../../components/Indexer/index.js'
 import { getCrawlingInterval } from '../../components/Indexer/utils.js'
-import { ReindexTask } from '../../components/Indexer/crawlerThread.js'
+import { ReindexTask } from '../../components/Indexer/ChainIndexer.js'
 import { create256Hash } from '../../utils/crypt.js'
 import { CollectFeesHandler } from '../../components/core/admin/collectFeesHandler.js'
 import { getProviderFeeToken } from '../../components/core/utils/feesHandler.js'
+import { KeyManager } from '../../components/KeyManager/index.js'
+import { BlockchainRegistry } from '../../components/BlockchainRegistry/index.js'
 
 describe('Should test admin operations', () => {
   let config: OceanNodeConfig
@@ -105,9 +107,23 @@ describe('Should test admin operations', () => {
     )
 
     config = await getConfiguration(true) // Force reload the configuration
-    dbconn = await new Database(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(dbconn)
-    indexer = new OceanIndexer(dbconn, config.indexingNetworks)
+    dbconn = await Database.init(config.dbConfig)
+    const keyManager = new KeyManager(config)
+    const blockchainRegistry = new BlockchainRegistry(keyManager, config)
+    oceanNode = await OceanNode.getInstance(
+      config,
+      dbconn,
+      null,
+      null,
+      null,
+      keyManager,
+      blockchainRegistry
+    )
+    indexer = new OceanIndexer(
+      dbconn,
+      config.indexingNetworks,
+      oceanNode.blockchainRegistry
+    )
     oceanNode.addIndexer(indexer)
   })
 
@@ -120,11 +136,13 @@ describe('Should test admin operations', () => {
 
     const stopNodeCommand: AdminStopNodeCommand = {
       command: PROTOCOL_COMMANDS.STOP_NODE,
-      node: config.keys.peerId.toString(),
+      node: oceanNode.getKeyManager().getPeerId().toString(),
       expiryTimestamp,
       signature
     }
-    const validationResponse = new StopNodeHandler(oceanNode).validate(stopNodeCommand)
+    const validationResponse = await new StopNodeHandler(oceanNode).validate(
+      stopNodeCommand
+    )
     assert(validationResponse, 'invalid stop node validation response')
     assert(validationResponse.valid === true, 'validation for stop node command failed')
   })
@@ -135,7 +153,7 @@ describe('Should test admin operations', () => {
     // CollectFeesHandler
     const collectFeesHandler: CollectFeesHandler = CoreHandlersRegistry.getInstance(
       oceanNode
-    ).getHandler(PROTOCOL_COMMANDS.COLLECT_FEES)
+    ).getHandler(PROTOCOL_COMMANDS.COLLECT_FEES) as CollectFeesHandler
 
     const signature = await getSignature(expiryTimestamp.toString())
     const collectFeesCommand: AdminCollectFeesCommand = {
@@ -147,7 +165,7 @@ describe('Should test admin operations', () => {
       expiryTimestamp,
       signature
     }
-    const validationResponse = collectFeesHandler.validate(collectFeesCommand)
+    const validationResponse = await collectFeesHandler.validate(collectFeesCommand)
     assert(validationResponse, 'invalid collect fees validation response')
     assert(
       validationResponse.valid === true,
@@ -160,7 +178,9 @@ describe('Should test admin operations', () => {
       providerWallet
     )
     const balanceBefore = await token.balanceOf(await destinationWallet.getAddress())
-    expect(collectFeesHandler.validate(collectFeesCommand).valid).to.be.equal(true) // OK
+    expect((await collectFeesHandler.validate(collectFeesCommand)).valid).to.be.equal(
+      true
+    ) // OK
     const result = await collectFeesHandler.handle(collectFeesCommand)
     expect(result.status.httpStatus).to.be.equal(200) // OK
 
@@ -221,14 +241,14 @@ describe('Should test admin operations', () => {
 
     const reindexTxCommand: AdminReindexTxCommand = {
       command: PROTOCOL_COMMANDS.REINDEX_TX,
-      node: config.keys.peerId.toString(),
+      node: oceanNode.getKeyManager().getPeerId().toString(),
       txId: publishedDataset.trxReceipt.hash,
       chainId: DEVELOPMENT_CHAIN_ID,
       expiryTimestamp,
       signature
     }
     const reindexTxHandler = new ReindexTxHandler(oceanNode)
-    const validationResponse = reindexTxHandler.validate(reindexTxCommand)
+    const validationResponse = await reindexTxHandler.validate(reindexTxCommand)
     assert(validationResponse, 'invalid reindex tx validation response')
     assert(validationResponse.valid === true, 'validation for reindex tx command failed')
 
@@ -237,7 +257,7 @@ describe('Should test admin operations', () => {
       INDEXER_CRAWLING_EVENTS.REINDEX_QUEUE_POP, // triggered when tx completes and removed from queue
       (data) => {
         // {ReindexTask}
-        reindexResult = data.result as ReindexTask
+        reindexResult = data as ReindexTask
         expect(reindexResult.txId).to.be.equal(publishedDataset.trxReceipt.hash)
         expect(reindexResult.chainId).to.be.equal(DEVELOPMENT_CHAIN_ID)
       }
@@ -266,11 +286,16 @@ describe('Should test admin operations', () => {
       'wrong job hash'
     )
     // wait a bit
-    await sleep(getCrawlingInterval() * 2)
-    if (reindexResult !== null) {
-      assert('chainId' in reindexResult, 'expected a chainId')
-      assert('txId' in reindexResult, 'expected a txId')
-    }
+    let loopCount = 0
+    do {
+      if (reindexResult !== null || loopCount > 10) {
+        break
+      }
+      await sleep(getCrawlingInterval())
+      loopCount++
+    } while (true)
+    assert('chainId' in reindexResult, 'expected a chainId')
+    assert('txId' in reindexResult, 'expected a txId')
 
     const response = await new FindDdoHandler(oceanNode).handle(findDDOTask)
     const actualDDO = await streamToObject(response.stream as Readable)
@@ -291,13 +316,13 @@ describe('Should test admin operations', () => {
     } else {
       const reindexChainCommand: AdminReindexChainCommand = {
         command: PROTOCOL_COMMANDS.REINDEX_CHAIN,
-        node: config.keys.peerId.toString(),
+        node: oceanNode.getKeyManager().getPeerId().toString(),
         chainId: DEVELOPMENT_CHAIN_ID,
         expiryTimestamp,
         signature
       }
       const reindexChainHandler = new ReindexChainHandler(oceanNode)
-      const validationResponse = reindexChainHandler.validate(reindexChainCommand)
+      const validationResponse = await reindexChainHandler.validate(reindexChainCommand)
       assert(validationResponse, 'invalid reindex chain validation response')
       assert(
         validationResponse.valid === true,
@@ -348,8 +373,9 @@ describe('Should test admin operations', () => {
     // -----------------------------------------
     // IndexingThreadHandler
     const indexingHandler: IndexingThreadHandler = CoreHandlersRegistry.getInstance(
-      oceanNode
-    ).getHandler(PROTOCOL_COMMANDS.HANDLE_INDEXING_THREAD)
+      oceanNode,
+      true
+    ).getHandler(PROTOCOL_COMMANDS.HANDLE_INDEXING_THREAD) as IndexingThreadHandler
 
     const signature = await getSignature(expiryTimestamp.toString())
     const indexingStartCommand: StartStopIndexingCommand = {
@@ -358,7 +384,7 @@ describe('Should test admin operations', () => {
       expiryTimestamp,
       signature
     }
-    expect(indexingHandler.validate(indexingStartCommand).valid).to.be.equal(true) // OK
+    expect((await indexingHandler.validate(indexingStartCommand)).valid).to.be.equal(true) // OK
 
     const indexingStopCommand: StartStopIndexingCommand = {
       command: PROTOCOL_COMMANDS.HANDLE_INDEXING_THREAD,
@@ -366,15 +392,16 @@ describe('Should test admin operations', () => {
       expiryTimestamp: 10,
       signature
     }
-    expect(indexingHandler.validate(indexingStopCommand).valid).to.be.equal(false) // NOK
+    expect((await indexingHandler.validate(indexingStopCommand)).valid).to.be.equal(false) // NOK
 
     // OK now
     indexingStopCommand.expiryTimestamp = expiryTimestamp
     indexingStopCommand.chainId = 8996
-    expect(indexingHandler.validate(indexingStopCommand).valid).to.be.equal(true) // OK
+    expect((await indexingHandler.validate(indexingStopCommand)).valid).to.be.equal(true) // OK
 
     // should exist a running thread for this network atm
     const response = await indexingHandler.handle(indexingStopCommand)
+    console.log({ responseStoppingThread: response })
     assert(response.stream, 'Failed to get stream when stoping thread')
     expect(response.status.httpStatus).to.be.equal(200)
 
@@ -390,6 +417,6 @@ describe('Should test admin operations', () => {
   after(async () => {
     await tearDownEnvironment(previousConfiguration)
     INDEXER_CRAWLING_EVENT_EMITTER.removeAllListeners()
-    indexer.stopAllThreads()
+    indexer.stopAllChainIndexers()
   })
 })

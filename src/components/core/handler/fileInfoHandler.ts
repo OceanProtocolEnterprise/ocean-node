@@ -6,10 +6,11 @@ import {
   IpfsFileObject,
   UrlFileObject
 } from '../../../@types/fileObject.js'
+import { OceanNodeConfig } from '../../../@types/OceanNode.js'
 import { FileInfoCommand } from '../../../@types/commands.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { Storage } from '../../storage/index.js'
-import { Handler } from './handler.js'
+import { CommandHandler } from './handler.js'
 import { validateDDOIdentifier } from './ddoHandler.js'
 import { fetchFileMetadata } from '../../../utils/asset.js'
 import {
@@ -19,22 +20,27 @@ import {
 } from '../../httpRoutes/validateCommands.js'
 import { getFile } from '../../../utils/file.js'
 import { getConfiguration } from '../../../utils/index.js'
-async function formatMetadata(file: ArweaveFileObject | IpfsFileObject | UrlFileObject) {
+
+async function formatMetadata(
+  file: ArweaveFileObject | IpfsFileObject | UrlFileObject,
+  config: OceanNodeConfig
+) {
   const url =
     file.type === 'url'
       ? (file as UrlFileObject).url
       : file.type === 'arweave'
-        ? urlJoin(process.env.ARWEAVE_GATEWAY, (file as ArweaveFileObject).transactionId)
+        ? urlJoin(config.arweaveGateway, (file as ArweaveFileObject).transactionId)
         : file.type === 'ipfs'
-          ? urlJoin(process.env.IPFS_GATEWAY, (file as IpfsFileObject).hash)
+          ? urlJoin(config.ipfsGateway, (file as IpfsFileObject).hash)
           : null
+  const headers = file.type === 'url' ? (file as UrlFileObject).headers : undefined
 
   const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
     url,
     'get',
-    false
+    false,
+    headers
   )
-  CORE_LOGGER.logMessage(`Metadata for file: ${contentLength} ${contentType}`)
 
   return {
     valid: true,
@@ -45,7 +51,7 @@ async function formatMetadata(file: ArweaveFileObject | IpfsFileObject | UrlFile
     type: file.type
   }
 }
-export class FileInfoHandler extends Handler {
+export class FileInfoHandler extends CommandHandler {
   validate(command: FileInfoCommand): ValidateParams {
     let validation = validateCommandParameters(command, []) // all optional? weird
     if (validation.valid) {
@@ -76,10 +82,11 @@ export class FileInfoHandler extends Handler {
     }
     try {
       const oceanNode = this.getOceanNode()
+      const config = await getConfiguration()
       let fileInfo = []
 
       if (task.file && task.type) {
-        const storage = Storage.getStorageClass(task.file, await getConfiguration())
+        const storage = Storage.getStorageClass(task.file, config)
 
         fileInfo = await storage.getFileInfo({
           type: task.type,
@@ -88,11 +95,11 @@ export class FileInfoHandler extends Handler {
       } else if (task.did && task.serviceId) {
         const fileArray = await getFile(task.did, task.serviceId, oceanNode)
         if (task.fileIndex) {
-          const fileMetadata = await formatMetadata(fileArray[task.fileIndex])
+          const fileMetadata = await formatMetadata(fileArray[task.fileIndex], config)
           fileInfo.push(fileMetadata)
         } else {
           for (const file of fileArray) {
-            const fileMetadata = await formatMetadata(file)
+            const fileMetadata = await formatMetadata(file, config)
             fileInfo.push(fileMetadata)
           }
         }

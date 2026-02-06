@@ -1,6 +1,7 @@
-// import { CORE_LOGGER } from '../../utils/logging/common.js'
+import { DDO } from '@oceanprotocol/ddo-js'
 import { PolicyServerResult } from '../../@types/policyServer.js'
-import { DDO } from '../../@types/DDO/DDO.js'
+import { isDefined } from '../../utils/util.js'
+import { BaseFileObject } from '../../@types/fileObject.js'
 
 export class PolicyServer {
   serverUrl: string
@@ -10,7 +11,7 @@ export class PolicyServer {
   }
 
   private async askServer(command: any): Promise<PolicyServerResult> {
-    if (!this.serverUrl) return { success: true, message: '', httpStatus: 0 }
+    if (!this.serverUrl) return { success: true, message: '', httpStatus: 404 }
     let response
     try {
       response = await fetch(this.serverUrl, {
@@ -21,10 +22,18 @@ export class PolicyServer {
         body: JSON.stringify(command)
       })
     } catch (e) {
-      return { success: true, message: '', httpStatus: 0 }
+      return {
+        success: true,
+        message: '',
+        httpStatus: 400
+      }
     }
     if (response.status === 200) {
-      return { success: true, message: '', httpStatus: response.status }
+      return {
+        success: true,
+        message: await response.text(),
+        httpStatus: response.status
+      }
     }
     return { success: false, message: await response.text(), httpStatus: response.status }
   }
@@ -61,20 +70,28 @@ export class PolicyServer {
     return await this.askServer(command)
   }
 
-  async checkInitialize(
-    documentId: string,
-    ddo: DDO,
-    serviceId: string,
+  async checkEncrypt(
     consumerAddress: string,
     policyServer: any
   ): Promise<PolicyServerResult> {
     const command = {
-      action: 'initialize',
-      documentId,
-      ddo,
-      serviceId,
+      action: 'encrypt',
       consumerAddress,
       policyServer
+    }
+    return await this.askServer(command)
+  }
+
+  async checkEncryptFile(
+    consumerAddress: string,
+    policyServer: any,
+    files?: BaseFileObject
+  ): Promise<PolicyServerResult> {
+    const command = {
+      action: 'encryptFile',
+      consumerAddress,
+      policyServer,
+      files
     }
     return await this.askServer(command)
   }
@@ -83,8 +100,6 @@ export class PolicyServer {
     documentId: string,
     ddo: DDO,
     serviceId: string,
-    fileIndex: number,
-    transferTxId: string,
     consumerAddress: string,
     policyServer: any
   ): Promise<PolicyServerResult> {
@@ -93,8 +108,42 @@ export class PolicyServer {
       documentId,
       ddo,
       serviceId,
-      fileIndex,
-      transferTxId,
+      consumerAddress,
+      policyServer
+    }
+    return await this.askServer(command)
+  }
+
+  async checkStartCompute(
+    documentId: string,
+    ddo: DDO | Record<string, any>,
+    serviceId: string,
+    consumerAddress: string,
+    policyServer: any
+  ): Promise<PolicyServerResult> {
+    const command = {
+      action: 'startCompute',
+      documentId,
+      ddo,
+      serviceId,
+      consumerAddress,
+      policyServer
+    }
+    return await this.askServer(command)
+  }
+
+  async initializePSVerification(
+    documentId: string,
+    ddo: DDO,
+    serviceId: string,
+    consumerAddress: string,
+    policyServer: any
+  ): Promise<PolicyServerResult> {
+    const command = {
+      action: 'initiate',
+      documentId,
+      serviceId,
+      ddo,
       consumerAddress,
       policyServer
     }
@@ -103,5 +152,9 @@ export class PolicyServer {
 
   async passThrough(request: any): Promise<PolicyServerResult> {
     return await this.askServer(request)
+  }
+
+  public isConfigured(): boolean {
+    return isDefined(this.serverUrl)
   }
 }

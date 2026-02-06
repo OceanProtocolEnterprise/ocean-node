@@ -1,34 +1,29 @@
 import { P2PCommandResponse } from '../../../@types/OceanNode.js'
-import { OceanNode } from '../../../OceanNode.js'
-import { Command, ICommandHandler } from '../../../@types/commands.js'
+import { OceanNode, RequestDataCheck, RequestLimiter } from '../../../OceanNode.js'
 import {
-  ValidateParams,
+  Command,
+  ICommandHandler,
+  IValidateCommandHandler
+} from '../../../@types/commands.js'
+import {
+  // ValidateParams,
   buildInvalidParametersResponse,
-  buildRateLimitReachedResponse
+  buildRateLimitReachedResponse,
+  ValidateParams
 } from '../../httpRoutes/validateCommands.js'
 import { getConfiguration } from '../../../utils/index.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { ReadableString } from '../../P2P/handlers.js'
+import { CONNECTION_HISTORY_DELETE_THRESHOLD } from '../../../utils/constants.js'
 
-export interface RequestLimiter {
-  requester: string | string[] // IP address or peer ID
-  lastRequestTime: number // time of the last request done (in miliseconds)
-  numRequests: number // number of requests done in the specific time period
-}
-
-export interface RequestDataCheck {
-  valid: boolean
-  updatedRequestData: RequestLimiter
-}
-export abstract class Handler implements ICommandHandler {
-  private nodeInstance?: OceanNode
-  private requestMap: Map<string, RequestLimiter>
+export abstract class BaseHandler implements ICommandHandler {
+  public nodeInstance: OceanNode
   public constructor(oceanNode: OceanNode) {
     this.nodeInstance = oceanNode
-    this.requestMap = new Map<string, RequestLimiter>()
   }
 
-  abstract validate(command: Command): ValidateParams
+  // abstract validate(command: Command): ValidateParams
+  abstract verifyParamsAndRateLimits(task: Command): Promise<P2PCommandResponse>
 
   abstract handle(task: Command): Promise<P2PCommandResponse>
 
@@ -37,11 +32,23 @@ export abstract class Handler implements ICommandHandler {
   }
 
   // TODO LOG, implement all handlers
-  async checkRateLimit(): Promise<boolean> {
-    const ratePerSecond = (await getConfiguration()).rateLimit
-    const caller: string | string[] = this.getOceanNode().getRemoteCaller()
+  async checkRateLimit(caller: string | string[]): Promise<boolean> {
+    const requestMap = this.getOceanNode().getRequestMap()
+    const ratePerMinute = (await getConfiguration()).rateLimit
     const requestTime = new Date().getTime()
     let isOK = true
+
+    // If caller is not set, we cannot rate limit - allow the request
+    if (!caller) {
+      CORE_LOGGER.debug('No remote caller set, allowing request without rate limiting')
+      return true
+    }
+
+    // we have to clear this from time to time, so it does not grow forever
+    if (requestMap.size > CONNECTION_HISTORY_DELETE_THRESHOLD) {
+      CORE_LOGGER.info('Request history reached threeshold, cleaning cache...')
+      requestMap.clear()
+    }
 
     const self = this
     // common stuff
@@ -49,22 +56,22 @@ export abstract class Handler implements ICommandHandler {
       const updatedRequestData = self.checkRequestData(
         remoteCaller,
         requestTime,
-        ratePerSecond
+        ratePerMinute
       )
       isOK = updatedRequestData.valid
-      self.requestMap.set(remoteCaller, updatedRequestData.updatedRequestData)
+      requestMap.set(remoteCaller, updatedRequestData.updatedRequestData)
     }
 
     let data: RequestLimiter = null
     if (Array.isArray(caller)) {
       for (const remote of caller) {
-        if (!this.requestMap.has(remote)) {
+        if (!requestMap.has(remote)) {
           data = {
             requester: remote,
             lastRequestTime: requestTime,
             numRequests: 1
           }
-          this.requestMap.set(remote, data)
+          requestMap.set(remote, data)
         } else {
           updateRequestData(remote)
         }
@@ -72,20 +79,20 @@ export abstract class Handler implements ICommandHandler {
         if (!isOK) {
           CORE_LOGGER.warn(
             `Request denied (rate limit exceeded) for remote caller ${remote}. Current request map: ${JSON.stringify(
-              this.requestMap.get(remote)
+              requestMap.get(remote)
             )}`
           )
           return false
         }
       }
     } else {
-      if (!this.requestMap.has(caller)) {
+      if (!requestMap.has(caller)) {
         data = {
           requester: caller,
           lastRequestTime: requestTime,
           numRequests: 1
         }
-        this.requestMap.set(caller, data)
+        requestMap.set(caller, data)
         return true
       } else {
         updateRequestData(caller)
@@ -93,7 +100,7 @@ export abstract class Handler implements ICommandHandler {
         if (!isOK) {
           CORE_LOGGER.warn(
             `Request denied (rate limit exceeded) for remote caller ${caller}. Current request map: ${JSON.stringify(
-              this.requestMap.get(caller)
+              requestMap.get(caller)
             )}`
           )
         }
@@ -105,18 +112,19 @@ export abstract class Handler implements ICommandHandler {
   /**
    * Checks if the request is within the rate limit defined
    * @param remote remote endpoint (ip or peer identifier)
-   * @param ratePerSecond number of calls per second allowed
+   * @param ratePerMinute number of calls per minute allowed (per ip or peer identifier)
    * @returns updated request data
    */
   checkRequestData(
     remote: string,
     currentTime: number,
-    ratePerSecond: number
+    ratePerMinute: number
   ): RequestDataCheck {
-    const requestData: RequestLimiter = this.requestMap.get(remote)
-    const diffSeconds = (currentTime - requestData.lastRequestTime) / 1000
-    // more than 1 sec difference means no problem
-    if (diffSeconds >= 1) {
+    const requestMap = this.getOceanNode().getRequestMap()
+    const requestData: RequestLimiter = requestMap.get(remote)
+    const diffMinutes = ((currentTime - requestData.lastRequestTime) / 1000) * 60
+    // more than 1 minute difference means no problem
+    if (diffMinutes >= 1) {
       // its fine
       requestData.lastRequestTime = currentTime
       requestData.numRequests = 1
@@ -128,15 +136,28 @@ export abstract class Handler implements ICommandHandler {
       // requests in the same interval of 1 second
       requestData.numRequests++
       return {
-        valid: requestData.numRequests <= ratePerSecond,
+        valid: requestData.numRequests <= ratePerMinute,
         updatedRequestData: requestData
       }
     }
   }
 
+  shouldDenyTaskHandling(validationResponse: P2PCommandResponse): boolean {
+    return (
+      validationResponse.status.httpStatus !== 200 ||
+      validationResponse.status.error !== null
+    )
+  }
+}
+
+export abstract class CommandHandler
+  extends BaseHandler
+  implements IValidateCommandHandler
+{
+  abstract validate(command: Command): ValidateParams
   async verifyParamsAndRateLimits(task: Command): Promise<P2PCommandResponse> {
     // first check rate limits, if any
-    if (!(await this.checkRateLimit())) {
+    if (!(await this.checkRateLimit(task.caller))) {
       return buildRateLimitReachedResponse()
     }
     // then validate the command arguments
@@ -152,10 +173,38 @@ export abstract class Handler implements ICommandHandler {
     }
   }
 
-  shouldDenyTaskHandling(validationResponse: P2PCommandResponse): boolean {
-    return (
-      validationResponse.status.httpStatus !== 200 ||
-      validationResponse.status.error !== null
-    )
+  async validateTokenOrSignature(
+    authToken: string,
+    address: string,
+    nonce: string,
+    signature: string,
+    message: string
+  ): Promise<P2PCommandResponse> {
+    const oceanNode = this.getOceanNode()
+    const auth = oceanNode.getAuth()
+    if (!auth) {
+      return {
+        stream: null,
+        status: { httpStatus: 401, error: 'Auth not configured' }
+      }
+    }
+    const isAuthRequestValid = await auth.validateAuthenticationOrToken({
+      token: authToken,
+      address,
+      nonce,
+      signature,
+      message
+    })
+    if (!isAuthRequestValid.valid) {
+      return {
+        stream: null,
+        status: { httpStatus: 401, error: isAuthRequestValid.error }
+      }
+    }
+
+    return {
+      stream: null,
+      status: { httpStatus: 200 }
+    }
   }
 }

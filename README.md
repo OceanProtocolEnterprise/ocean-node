@@ -32,6 +32,11 @@ npm run quickstart
 
 This command will run you through the process of setting up the environmental variables for your node.
 
+> [!NOTE]
+> The quickstart script attempts to automatically detect GPUs (NVIDIA via `nvidia-smi`, others via `lspci`) and appends them to your `DOCKER_COMPUTE_ENVIRONMENTS`.
+> If you choose to manually configure `DOCKER_COMPUTE_ENVIRONMENTS` before running the script (e.g. via environment variable), be aware that auto-detected GPUs will be **merged** into your configuration, which could lead to duplication if you already manually defined them.
+> For most users, it is recommended to let the script handle GPU detection automatically.
+
 ## Option 3: Running Ocean Nodes with PM2
 
 PM2 is a process manager that makes it easy to manage and monitor your Node.js applications.
@@ -57,6 +62,14 @@ export PRIVATE_KEY="0x_your_private_key_here"
 ```
 
 The `PRIVATE_KEY` is the only mandatory environmental variable, you must include the `0x` at the front of your private key. Additional configurations can be set as needed. For all available configurations, refer to the [Environment Variables](docs/env.md) documentation.
+
+2.1. If the config is a JSON file, run:
+
+```
+export CONFIG_PATH='<absolute_path_to_json_file>'
+```
+
+Config file should be absolute path.
 
 3.  Quick start the Ocean Node with PM2
 
@@ -137,5 +150,19 @@ Your node is now running, the control panel will be available at `http://localho
 - [Testing Guide](docs/testing.md)
 - [Network Configuration](docs/networking.md)
 - [Logging & accessing logs](docs/networking.md)
-- [Control Panel: Local development](dashboard/README.md)
+- [Control Panel: Local development](controlpanel/README.md)
 - [Docker Deployment Guide](docs/dockerDeployment.md)
+- [C2D GPU Guide](docs/GPU.md)
+- [Compute pricing](docs/compute-pricing.md)
+
+## Control Panel
+
+The control panel is available at `http://localhost:8000/controlpanel/` when your node is running. The built files are included in the distribution, so you **don't need to rebuild it** unless you make changes to the control panel code.
+
+To rebuild after changes:
+
+```bash
+npm run build:controlpanel
+```
+
+For more details, see the [Control Panel Development Guide](controlpanel/README.md).

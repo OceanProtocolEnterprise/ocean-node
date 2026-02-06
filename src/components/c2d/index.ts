@@ -1,48 +1,62 @@
 import { OceanNode } from '../../OceanNode.js'
-import { CORE_LOGGER } from '../../utils/logging/common.js'
 import { createHash } from 'crypto'
 import { FindDdoHandler } from '../core/handler/ddoHandler.js'
-import { getConfiguration } from '../../utils/config.js'
-import { ComputeGetEnvironmentsHandler } from '../core/compute/index.js'
-import { PROTOCOL_COMMANDS } from '../../utils/constants.js'
-import { streamToObject } from '../../utils/util.js'
-import { Readable } from 'stream'
 import {
   ArweaveFileObject,
   IpfsFileObject,
-  UrlFileObject
+  UrlFileObject,
+  BaseFileObject,
+  EncryptMethod
 } from '../../@types/fileObject.js'
-import { AlgoChecksums } from '../../@types/C2D.js'
-import { DDO } from '../../@types/DDO/DDO.js'
 import { getFile } from '../../utils/file.js'
 import urlJoin from 'url-join'
 import { fetchFileMetadata } from '../../utils/asset.js'
+import { DDO, DDOManager } from '@oceanprotocol/ddo-js'
+import { deleteKeysFromObject, sanitizeServiceFiles } from '../../utils/util.js'
+
+import { CORE_LOGGER } from '../../utils/logging/common.js'
+import { AlgoChecksums, ComputeJob, DBComputeJob } from '../../@types/index.js'
 export { C2DEngine } from './compute_engine_base.js'
 
-export async function checkC2DEnvExists(
-  envId: string,
-  oceanNode: OceanNode
-): Promise<boolean> {
-  const config = await getConfiguration()
-  const { supportedNetworks } = config
-  for (const supportedNetwork of Object.keys(supportedNetworks)) {
-    const getEnvironmentsTask = {
-      command: PROTOCOL_COMMANDS.COMPUTE_GET_ENVIRONMENTS,
-      chainId: parseInt(supportedNetwork)
-    }
-    const response = await new ComputeGetEnvironmentsHandler(oceanNode).handle(
-      getEnvironmentsTask
-    )
-    if (response.status.httpStatus === 200) {
-      const computeEnvironments = await streamToObject(response.stream as Readable)
-      for (const computeEnvironment of computeEnvironments[parseInt(supportedNetwork)]) {
-        if (computeEnvironment.id === envId) {
-          return true
-        }
-      }
-    }
+export async function decryptFilesObject(
+  serviceFiles: any
+): Promise<BaseFileObject | null> {
+  const node = OceanNode.getInstance()
+
+  try {
+    // 2. Decrypt the url
+    const decryptedUrlBytes = await node
+      .getKeyManager()
+      .decrypt(
+        Uint8Array.from(Buffer.from(sanitizeServiceFiles(serviceFiles), 'hex')),
+        EncryptMethod.ECIES
+      )
+
+    // 3. Convert the decrypted bytes back to a string
+    const decryptedFilesString = Buffer.from(decryptedUrlBytes as Uint8Array).toString()
+    const decryptedFileArray = JSON.parse(decryptedFilesString)
+
+    return decryptedFileArray.files[0]
+  } catch (err) {
+    CORE_LOGGER.error('Error decrypting files object: ' + err.message)
+    return null
   }
-  return false
+}
+
+export function omitDBComputeFieldsFromComputeJob(dbCompute: DBComputeJob): ComputeJob {
+  const job: ComputeJob = deleteKeysFromObject(dbCompute, [
+    'clusterHash',
+    'configlogURL',
+    'publishlogURL',
+    'algologURL',
+    'outputsURL',
+    // 'algorithm',
+    // 'assets',
+    'isRunning',
+    'isStarted',
+    'containerImage'
+  ]) as ComputeJob
+  return job
 }
 
 export async function getAlgoChecksums(
@@ -77,11 +91,11 @@ export async function getAlgoChecksums(
       const { contentChecksum } = await fetchFileMetadata(url, 'get', false)
       checksums.files = checksums.files.concat(contentChecksum)
     }
-
+    const ddoInstance = DDOManager.getDDOClass(algoDDO)
+    const { metadata } = ddoInstance.getDDOFields() as any
     checksums.container = createHash('sha256')
       .update(
-        algoDDO.metadata.algorithm.container.entrypoint +
-          algoDDO.metadata.algorithm.container.checksum
+        metadata.algorithm.container.entrypoint + metadata.algorithm.container.checksum
       )
       .digest('hex')
     return checksums
@@ -97,13 +111,15 @@ export async function validateAlgoForDataset(
     files: string
     container: string
   },
-  datasetDDO: DDO,
+  datasetDDO: DDO | Record<string, any>,
   datasetServiceId: string,
   oceanNode: OceanNode
 ) {
   try {
-    const datasetService = datasetDDO.services.find(
-      (service) => service.id === datasetServiceId
+    const ddoInstance = DDOManager.getDDOClass(datasetDDO)
+    const { services } = ddoInstance.getDDOFields() as any
+    const datasetService = services.find(
+      (service: any) => service.id === datasetServiceId
     )
     if (!datasetService) {
       throw new Error('Dataset service not found')
@@ -124,7 +140,7 @@ export async function validateAlgoForDataset(
       // if is set only allow if match
       if (compute.publisherTrustedAlgorithms) {
         const trustedAlgo = compute.publisherTrustedAlgorithms.find(
-          (algo) => algo.did === algoDID
+          (algo: any) => algo.did === algoDID
         )
         if (trustedAlgo) {
           return (
@@ -136,10 +152,12 @@ export async function validateAlgoForDataset(
       }
       if (compute.publisherTrustedAlgorithmPublishers) {
         const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
+        const algoInstance = DDOManager.getDDOClass(algoDDO)
+        const { nftAddress } = algoInstance.getDDOFields()
         if (algoDDO) {
           return compute.publisherTrustedAlgorithmPublishers
-            .map((address) => address?.toLowerCase())
-            .includes(algoDDO.nftAddress?.toLowerCase())
+            .map((address: string) => address?.toLowerCase())
+            .includes(nftAddress?.toLowerCase())
         }
         return false
       }

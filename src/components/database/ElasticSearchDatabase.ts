@@ -6,12 +6,14 @@ import {
   AbstractLogDatabase,
   AbstractOrderDatabase
 } from './BaseDatabase.js'
-import { createElasticsearchClient } from './ElasticsearchConfigHelper.js'
+import { createElasticsearchClientWithRetry } from './ElasticsearchConfigHelper.js'
 import { OceanNodeDBConfig } from '../../@types'
 import { ElasticsearchSchema } from './ElasticSchemas.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
-import { validateObject } from '../core/utils/validateDdoHandler.js'
+
+import { DDOManager } from '@oceanprotocol/ddo-js'
+import { validateDDO } from '../../utils/asset.js'
 
 export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
   private client: Client
@@ -19,10 +21,13 @@ export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
 
   constructor(config: OceanNodeDBConfig) {
     super(config)
-    this.client = new Client({ node: config.url })
     this.index = 'indexer'
 
-    this.initializeIndex()
+    return (async (): Promise<ElasticsearchIndexerDatabase> => {
+      this.client = await createElasticsearchClientWithRetry(config)
+      await this.initializeIndex()
+      return this
+    })() as unknown as ElasticsearchIndexerDatabase
   }
 
   private async initializeIndex() {
@@ -139,16 +144,20 @@ export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
     }
   }
 }
+
 export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
   private client: Client
   private index: string
 
   constructor(config: OceanNodeDBConfig) {
     super(config)
-    this.client = new Client({ node: config.url })
     this.index = 'ddo_state'
 
-    this.initializeIndex()
+    return (async (): Promise<ElasticsearchDdoStateDatabase> => {
+      this.client = await createElasticsearchClientWithRetry(config)
+      await this.initializeIndex()
+      return this
+    })() as unknown as ElasticsearchDdoStateDatabase
   }
 
   private async initializeIndex() {
@@ -228,12 +237,9 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
     try {
       const result = await this.client.search({
         index: this.index,
-        query: {
-          match: {
-            [query.query_by]: query.q
-          }
-        }
+        query
       })
+      console.log('Query result: ', result)
       return result.hits.hits.map((hit: any) => {
         return normalizeDocumentId(hit._source, hit._id)
       })
@@ -311,12 +317,17 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
     }
   }
 }
+
 export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
   private provider: Client
 
   constructor(config: OceanNodeDBConfig, schema: ElasticsearchSchema) {
     super(config, schema)
-    this.provider = createElasticsearchClient(config)
+
+    return (async (): Promise<ElasticsearchOrderDatabase> => {
+      this.provider = await createElasticsearchClientWithRetry(config)
+      return this
+    })() as unknown as ElasticsearchOrderDatabase
   }
 
   getSchema(): ElasticsearchSchema {
@@ -377,6 +388,7 @@ export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
         did,
         startOrderId
       }
+
       await this.provider.index({
         index: this.getSchema().index,
         id: orderId,
@@ -462,7 +474,11 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
 
   constructor(config: OceanNodeDBConfig, schemas: ElasticsearchSchema[]) {
     super(config, schemas)
-    this.client = createElasticsearchClient(config)
+
+    return (async (): Promise<ElasticsearchDdoDatabase> => {
+      this.client = await createElasticsearchClientWithRetry(config)
+      return this
+    })() as unknown as ElasticsearchDdoDatabase
   }
 
   getSchemas(): ElasticsearchSchema[] {
@@ -471,10 +487,15 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
 
   getDDOSchema(ddo: Record<string, any>) {
     let schemaName: string | undefined
-    if (ddo.nft?.state !== 0) {
-      schemaName = 'op_ddo_short'
-    } else if (ddo.version) {
+    const ddoInstance = DDOManager.getDDOClass(ddo)
+    const ddoData = ddoInstance.getDDOData()
+    if (ddoData.version) {
       schemaName = `op_ddo_v${ddo.version}`
+    } else if (
+      'indexedMetadata' in ddoData &&
+      ddoData?.indexedMetadata?.nft?.state !== 0
+    ) {
+      schemaName = 'op_ddo_short'
     }
     const schema = this.getSchemas().find((s) => s.index === schemaName)
     DATABASE_LOGGER.logMessageWithEmoji(
@@ -484,32 +505,6 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       LOG_LEVELS_STR.LEVEL_INFO
     )
     return schema
-  }
-
-  async validateDDO(ddo: Record<string, any>): Promise<boolean> {
-    if (ddo.nft?.state !== 0) {
-      return true
-    } else {
-      const validation = await validateObject(ddo, ddo.chainId, ddo.nftAddress)
-      if (validation[0] === true) {
-        DATABASE_LOGGER.logMessageWithEmoji(
-          `Validation of DDO with did: ${ddo.id} has passed`,
-          true,
-          GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
-          LOG_LEVELS_STR.LEVEL_INFO
-        )
-        return true
-      } else {
-        DATABASE_LOGGER.logMessageWithEmoji(
-          `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-            JSON.stringify(validation[1]),
-          true,
-          GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-          LOG_LEVELS_STR.LEVEL_ERROR
-        )
-        return false
-      }
-    }
   }
 
   async search(query: Record<string, any>): Promise<any> {
@@ -529,10 +524,18 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
           }
         })
         if (response.hits?.hits.length > 0) {
-          const nomalizedResponse = response.hits.hits.map((hit: any) => {
-            return normalizeDocumentId(hit._source, hit._id)
+          const totalHits =
+            typeof response.hits.total === 'number'
+              ? response.hits.total
+              : response.hits.total?.value || 0
+
+          const normalizedResults = response.hits.hits.map((hit: any) =>
+            normalizeDocumentId(hit._source, hit._id)
+          )
+          results.push({
+            results: normalizedResults,
+            totalResults: totalHits
           })
-          results.push(nomalizedResponse)
         }
       } catch (error) {
         const schemaErrorMsg = `Error for schema ${query.index}: ${error.message}`
@@ -555,10 +558,18 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
             }
           })
           if (response.hits?.hits.length > 0) {
-            const nomalizedResponse = response.hits.hits.map((hit: any) => {
-              return normalizeDocumentId(hit._source, hit._id)
+            const totalHits =
+              typeof response.hits.total === 'number'
+                ? response.hits.total
+                : response.hits.total?.value || 0
+
+            const normalizedResults = response.hits.hits.map((hit: any) =>
+              normalizeDocumentId(hit._source, hit._id)
+            )
+            results.push({
+              results: normalizedResults,
+              totalResults: totalHits
             })
-            results.push(nomalizedResponse)
           }
         } catch (error) {
           const schemaErrorMsg = `Error for schema ${schema.index}: ${error.message}`
@@ -582,7 +593,10 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       throw new Error(`Schema for version ${ddo.version} not found`)
     }
     try {
-      const validation = await this.validateDDO(ddo)
+      // avoid issue with nft fields, due to schema
+      if (ddo?.indexedMetadata?.nft) delete ddo.nft
+      const validation = await validateDDO(ddo)
+
       if (validation === true) {
         const response = await this.client.index({
           index: schema.index,
@@ -650,7 +664,9 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       throw new Error(`Schema for version ${ddo.version} not found`)
     }
     try {
-      const validation = await this.validateDDO(ddo)
+      // avoid issue with nft fields, due to schema
+      if (ddo?.indexedMetadata?.nft) delete ddo.nft
+      const validation = await validateDDO(ddo)
       if (validation === true) {
         const response: any = await this.client.update({
           index: schema.index,
@@ -768,10 +784,13 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
 
   constructor(config: OceanNodeDBConfig) {
     super(config)
-    this.client = new Client({ node: config.url })
     this.index = 'log'
 
-    this.initializeIndex()
+    return (async (): Promise<ElasticsearchLogDatabase> => {
+      this.client = await createElasticsearchClientWithRetry(config)
+      await this.initializeIndex()
+      return this
+    })() as unknown as ElasticsearchLogDatabase
   }
 
   private async initializeIndex() {
@@ -849,7 +868,7 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
     moduleName?: string,
     level?: string,
     page?: number
-  ): Promise<Record<string, any>[] | null> {
+  ): Promise<Record<string, any>[]> {
     try {
       const filterConditions: any = {
         bool: {
@@ -888,10 +907,6 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
         from
       })
 
-      console.log('logs results:', result)
-      console.log('logs results hits:', result.hits)
-      console.log('logs results hits hits:', result.hits.hits)
-
       return result.hits.hits.map((hit: any) => {
         return normalizeDocumentId(hit._source, hit._id)
       })
@@ -903,7 +918,7 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
         GENERIC_EMOJIS.EMOJI_CROSS_MARK,
         LOG_LEVELS_STR.LEVEL_ERROR
       )
-      return null
+      return []
     }
   }
 
@@ -943,13 +958,12 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
     try {
       const oldLogs = await this.retrieveMultipleLogs(new Date(0), deleteBeforeTime, 200)
 
-      if (oldLogs) {
-        for (const log of oldLogs) {
-          if (log.id) {
-            await this.delete(log.id)
-          }
+      for (const log of oldLogs) {
+        if (log.id) {
+          await this.delete(log.id)
         }
       }
+
       return oldLogs ? oldLogs.length : 0
     } catch (error) {
       DATABASE_LOGGER.logMessageWithEmoji(

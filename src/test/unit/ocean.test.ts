@@ -1,6 +1,8 @@
 import { OceanNode } from '../../OceanNode.js'
 import { OceanIndexer } from '../../components/Indexer/index.js'
 import { OceanP2P } from '../../components/P2P/index.js'
+import { KeyManager } from '../../components/KeyManager/index.js'
+import { BlockchainRegistry } from '../../components/BlockchainRegistry/index.js'
 import { OceanProvider } from '../../components/Provider/index.js'
 import { Database } from '../../components/database/index.js'
 import { ENVIRONMENT_VARIABLES, getConfiguration } from '../../utils/index.js'
@@ -8,10 +10,12 @@ import { ENVIRONMENT_VARIABLES, getConfiguration } from '../../utils/index.js'
 import { expect } from 'chai'
 import {
   OverrideEnvConfig,
+  TEST_ENV_CONFIG_FILE,
   buildEnvOverrideConfig,
   setupEnvironment,
   tearDownEnvironment
 } from '../utils/utils.js'
+import { sleep } from '../../utils/util.js'
 
 let envOverrides: OverrideEnvConfig[]
 
@@ -33,22 +37,25 @@ describe('Status command tests', async () => {
       JSON.stringify([1, 137])
     ]
   )
-  envOverrides = await setupEnvironment(null, envOverrides)
+  envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
   // because of this
   const config = await getConfiguration(true)
-  const db = await new Database(config.dbConfig)
-  const oceanP2P = new OceanP2P(config, db)
-  const oceanIndexer = new OceanIndexer(db, config.indexingNetworks)
+  const db = await Database.init(config.dbConfig)
+  const keyManager = new KeyManager(config)
+  const blockchainRegistry = new BlockchainRegistry(keyManager, config)
+  const oceanP2P = new OceanP2P(config, keyManager, db)
+  const oceanIndexer = new OceanIndexer(db, config.indexingNetworks, blockchainRegistry)
   const oceanProvider = new OceanProvider(db)
-  const oceanNode = OceanNode.getInstance(db, oceanP2P)
+  const oceanNode = OceanNode.getInstance(config, db, oceanP2P)
 
   after(async () => {
     // Restore original local setup / env variables after test
     await tearDownEnvironment(envOverrides)
-    await oceanIndexer.stopAllThreads()
+    await oceanIndexer.stopAllChainIndexers()
   })
 
-  it('Ocean Node instance', () => {
+  it('Ocean Node instance', async () => {
+    await sleep(3000)
     expect(oceanNode).to.be.instanceOf(OceanNode)
     expect(config.supportedNetworks).to.eql({
       '1': 'https://rpc.eth.gateway.fm',
@@ -60,7 +67,7 @@ describe('Status command tests', async () => {
   })
   it('Ocean P2P should be initialized correctly', () => {
     expect(oceanNode.getP2PNode()).to.not.eql(null)
-    expect(OceanNode.getInstance(db).getP2PNode()).to.not.eql(null)
+    expect(OceanNode.getInstance(config, db).getP2PNode()).to.not.eql(null)
   })
   it('Ocean Indexer should be initialized correctly', () => {
     oceanNode.addIndexer(oceanIndexer)

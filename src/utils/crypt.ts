@@ -1,7 +1,7 @@
 import eciesjs from 'eciesjs'
+import { EncryptMethod } from '../@types/fileObject.js'
 import crypto from 'crypto'
 import { getConfiguration } from './config.js'
-import { EncryptMethod } from '../@types/fileObject.js'
 
 /**
  * This method encrypts data according to a given algorithm using node keys
@@ -19,11 +19,11 @@ export async function encrypt(
     // use first 16 bytes of public key as an initialisation vector
     const initVector = publicKey.subarray(0, 16)
     // creates cipher object, with the given algorithm, key and initialization vector
-    const cipher = crypto.createCipheriv('aes-256-cbc', privateKey, initVector)
+    const cipher = crypto.createCipheriv('aes-256-cbc', privateKey.raw, initVector)
     // encoding is ignored because we are working with bytes and want to return a buffer
     encryptedData = Buffer.concat([cipher.update(data), cipher.final()])
   } else if (algorithm === EncryptMethod.ECIES) {
-    const sk = new eciesjs.PrivateKey(privateKey)
+    const sk = new eciesjs.PrivateKey(privateKey.raw)
     // get public key from Elliptic curve
     encryptedData = eciesjs.encrypt(sk.publicKey.toHex(), data)
   }
@@ -47,16 +47,17 @@ export async function decrypt(
     const initVector = publicKey.subarray(0, 16)
     // creates decipher object, with the given algorithm, key and initialization vector
 
-    const decipher = crypto.createDecipheriv('aes-256-cbc', privateKey, initVector)
+    const decipher = crypto.createDecipheriv('aes-256-cbc', privateKey.raw, initVector)
 
     // encoding is ignored because we are working with bytes and want to return a buffer
     decryptedData = Buffer.concat([decipher.update(data), decipher.final()])
   } else if (algorithm === EncryptMethod.ECIES) {
-    const sk = new eciesjs.PrivateKey(privateKey)
+    const sk = new eciesjs.PrivateKey(privateKey.raw)
     decryptedData = eciesjs.decrypt(sk.secret, data)
   }
   return decryptedData
 }
+
 // this can be handy as we do this kind of hash in multiple places
 export function create256Hash(input: string): string {
   const result = crypto.createHash('sha256').update(input).digest('hex')

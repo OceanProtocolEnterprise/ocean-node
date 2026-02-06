@@ -4,6 +4,8 @@ import { OceanIndexer } from './components/Indexer/index.js'
 import { Database } from './components/database/index.js'
 import express, { Express } from 'express'
 import { OceanNode } from './OceanNode.js'
+import { KeyManager } from './components/KeyManager/index.js'
+import { BlockchainRegistry } from './components/BlockchainRegistry/index.js'
 import { httpRoutes } from './components/httpRoutes/index.js'
 import {
   getConfiguration,
@@ -13,11 +15,12 @@ import {
 
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from './utils/logging/Logger.js'
 import fs from 'fs'
+import https from 'https'
 import { OCEAN_NODE_LOGGER } from './utils/logging/common.js'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import cors from 'cors'
-import { scheduleCronJobs } from './utils/logging/logDeleteCron.js'
+import { scheduleCronJobs } from './utils/cronjobs/scheduleCronJobs.js'
 import { requestValidator } from './components/httpRoutes/requestValidator.js'
 import { hasValidDBConfiguration } from './utils/database.js'
 
@@ -33,6 +36,7 @@ declare global {
     // eslint-disable-next-line no-unused-vars
     interface Request {
       oceanNode: OceanNode
+      caller?: string | string[]
     }
   }
 }
@@ -65,7 +69,6 @@ const isStartup: boolean = true
 // this is to avoid too much verbose logging, cause we're calling getConfig() from many parts
 // and we are always running though the same process.env checks
 // (we must start accessing the config from the OceanNode class only once we refactor)
-console.log('\n\n\n\n')
 OCEAN_NODE_LOGGER.logMessageWithEmoji(
   '[ Starting Ocean Node ]',
   true,
@@ -86,7 +89,10 @@ let node: OceanP2P = null
 let indexer = null
 let provider = null
 // If there is no DB URL only the nonce database will be available
-const dbconn: Database = await new Database(config.dbConfig)
+const dbconn: Database = await Database.init(config.dbConfig)
+if (!dbconn) {
+  OCEAN_NODE_LOGGER.error('Database failed to initialize')
+}
 
 if (!hasValidDBConfiguration(config.dbConfig)) {
   // once we create a database instance, we check the environment and possibly add the DB transport
@@ -98,16 +104,21 @@ if (!hasValidDBConfiguration(config.dbConfig)) {
   )
 }
 
+// Create KeyManager and BlockchainRegistry
+// KeyManager will determine provider type from config.keys.type and initialize in constructor
+const keyManager = new KeyManager(config)
+const blockchainRegistry = new BlockchainRegistry(keyManager, config)
+
 if (config.hasP2P) {
   if (dbconn) {
-    node = new OceanP2P(config, dbconn)
+    node = new OceanP2P(config, keyManager, dbconn)
   } else {
-    node = new OceanP2P(config)
+    node = new OceanP2P(config, keyManager)
   }
   await node.start()
 }
 if (config.hasIndexer && dbconn) {
-  indexer = new OceanIndexer(dbconn, config.indexingNetworks)
+  indexer = new OceanIndexer(dbconn, config.indexingNetworks, blockchainRegistry)
   // if we set this var
   // it also loads initial data (useful for testing, or we might actually want to have a bootstrap list)
   // store and advertise DDOs
@@ -126,8 +137,17 @@ if (dbconn) {
 }
 
 // Singleton instance across application
-const oceanNode = OceanNode.getInstance(dbconn, node, provider, indexer)
-oceanNode.addC2DEngines(config)
+const oceanNode = OceanNode.getInstance(
+  config,
+
+  dbconn,
+  node,
+  provider,
+  indexer,
+  keyManager,
+  blockchainRegistry
+)
+oceanNode.addC2DEngines()
 
 function removeExtraSlashes(req: any, res: any, next: any) {
   req.url = req.url.replace(/\/{2,}/g, '/')
@@ -139,14 +159,13 @@ if (config.hasHttp) {
   app.use(express.raw({ limit: '25mb' }))
   app.use(cors())
 
-  if (config.hasDashboard) {
+  if (config.hasControlPanel) {
     // Serve static files expected at the root, under the '/_next' path
-    app.use('/_next', express.static(path.join(__dirname, '/dashboard/_next')))
+    app.use('/_next', express.static(path.join(__dirname, '/controlpanel/_next')))
 
-    // Serve static files for Next.js under both '/dashboard' and '/controlpanel'
-    const dashboardPath = path.join(__dirname, '/dashboard')
-    app.use('/dashboard', express.static(dashboardPath))
-    app.use('/controlpanel', express.static(dashboardPath))
+    // Serve static files for Next.js under '/controlpanel'
+    const controlPanelPath = path.join(__dirname, '/controlpanel')
+    app.use('/controlpanel', express.static(controlPanelPath))
 
     // Custom middleware for SPA routing: Serve index.html for non-static asset requests
     const serveIndexHtml = (
@@ -158,15 +177,14 @@ if (config.hasHttp) {
         return next() // Skip this middleware if the request is for a static asset
       }
       // For any other requests, serve index.html
-      res.sendFile(path.join(dashboardPath, 'index.html'))
+      res.sendFile(path.join(controlPanelPath, 'index.html'))
     }
 
-    app.use('/dashboard', serveIndexHtml)
     app.use('/controlpanel', serveIndexHtml)
   }
 
   app.use(requestValidator, (req, res, next) => {
-    oceanNode.setRemoteCaller(req.headers['x-forwarded-for'] || req.socket.remoteAddress)
+    req.caller = req.headers['x-forwarded-for'] || req.socket.remoteAddress
     req.oceanNode = oceanNode
     next()
   })
@@ -175,10 +193,28 @@ if (config.hasHttp) {
   app.use(removeExtraSlashes)
   app.use('/', httpRoutes)
 
-  app.listen(config.httpPort, () => {
-    OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
-  })
+  if (config.httpCertPath && config.httpKeyPath) {
+    try {
+      const options = {
+        cert: fs.readFileSync(config.httpCertPath),
+        key: fs.readFileSync(config.httpKeyPath)
+      }
+      https.createServer(options, app).listen(config.httpPort, () => {
+        OCEAN_NODE_LOGGER.logMessage(`HTTPS port: ${config.httpPort}`, true)
+      })
+    } catch (err) {
+      OCEAN_NODE_LOGGER.error(`Error starting HTTPS server: ${err.message}`)
+      OCEAN_NODE_LOGGER.logMessage(`Falling back to HTTP`, true)
+      app.listen(config.httpPort, () => {
+        OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
+      })
+    }
+  } else {
+    app.listen(config.httpPort, () => {
+      OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
+    })
+  }
 
   // Call the function to schedule the cron job to delete old logs
-  scheduleCronJobs(dbconn)
+  scheduleCronJobs(oceanNode)
 }

@@ -1,11 +1,12 @@
 import express from 'express'
 import { validateAdminSignature } from '../../utils/auth.js'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
+import { CommonValidation } from '../../utils/validators.js'
 
 export const logRoutes = express.Router()
 
 // Middleware to validate signature and expiry timestamp
-const validateRequest = (
+const validateRequest = async (
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
@@ -26,7 +27,10 @@ const validateRequest = (
     return res.status(400).send('Invalid expiryTimestamp')
   }
 
-  const isValid = validateAdminSignature(expiryTimestamp, signature)
+  const isValid: CommonValidation = await validateAdminSignature(
+    expiryTimestamp,
+    signature
+  )
   if (!isValid.valid) {
     return res.status(403).send(`Invalid signature: ${isValid.error}`)
   }
@@ -56,7 +60,7 @@ logRoutes.post('/logs', express.json(), validateRequest, async (req, res) => {
       .getDatabase()
       .logs.retrieveMultipleLogs(startTime, endTime, maxLogs, moduleName, level, page)
 
-    if (logs) {
+    if (logs.length > 0) {
       res.json(logs)
     } else {
       res.status(404).send('No logs found')
@@ -70,7 +74,12 @@ logRoutes.post('/logs', express.json(), validateRequest, async (req, res) => {
 logRoutes.post('/log/:id', express.json(), validateRequest, async (req, res) => {
   try {
     const logId = req.params.id
-    const log = await req.oceanNode.getDatabase().logs.retrieveLog(logId)
+    const database = req.oceanNode.getDatabase()
+    if (!database || !database.logs) {
+      res.status(503).send('Logs database is not available')
+      return
+    }
+    const log = await database.logs.retrieveLog(logId)
     if (log) {
       res.json(log)
     } else {

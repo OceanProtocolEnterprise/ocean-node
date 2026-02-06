@@ -7,35 +7,20 @@ import {
   StorageTypes,
   OceanNodeConfig
 } from '../../../@types/OceanNode.js'
-import { existsEnvironmentVariable, getConfiguration } from '../../../utils/index.js'
-import { ENVIRONMENT_VARIABLES } from '../../../utils/constants.js'
+import { getConfiguration } from '../../../utils/index.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { OceanNode } from '../../../OceanNode.js'
-import { isAddress } from 'ethers'
 import { typesenseSchemas } from '../../database/TypesenseSchemas.js'
 import { SupportedNetwork } from '../../../@types/blockchain.js'
+import { getAdminAddresses } from '../../../utils/auth.js'
+import HumanHasher from 'humanhash'
 
-function getAdminAddresses(config: OceanNodeConfig) {
-  const validAddresses = []
-  if (config.allowedAdmins && config.allowedAdmins.length > 0) {
-    for (const admin of config.allowedAdmins) {
-      if (isAddress(admin) === true) {
-        validAddresses.push(admin)
-      }
-    }
-    if (validAddresses.length === 0) {
-      CORE_LOGGER.log(
-        LOG_LEVELS_STR.LEVEL_ERROR,
-        `Invalid format for ETH address from ALLOWED ADMINS.`
-      )
-    }
+function getSupportedStorageTypes(config: OceanNodeConfig): StorageTypes {
+  return {
+    url: true,
+    arwave: !!config.arweaveGateway,
+    ipfs: !!config.ipfsGateway
   }
-  return validAddresses
-}
-const supportedStorageTypes: StorageTypes = {
-  url: true,
-  arwave: existsEnvironmentVariable(ENVIRONMENT_VARIABLES.ARWEAVE_GATEWAY),
-  ipfs: existsEnvironmentVariable(ENVIRONMENT_VARIABLES.IPFS_GATEWAY)
 }
 
 // platform information
@@ -90,8 +75,15 @@ async function getIndexerBlockInfo(
 ): Promise<string> {
   let blockNr = '0'
   try {
-    const { indexer: indexerDatabase } = oceanNode.getDatabase()
-    const { lastIndexedBlock } = await indexerDatabase.retrieve(supportedNetwork.chainId)
+    const database = oceanNode.getDatabase()
+    if (!database || !database.indexer) {
+      CORE_LOGGER.log(
+        LOG_LEVELS_STR.LEVEL_WARN,
+        `Indexer database is not available for network ${supportedNetwork.network}`
+      )
+      return blockNr
+    }
+    const { lastIndexedBlock } = await database.indexer.retrieve(supportedNetwork.chainId)
     blockNr = lastIndexedBlock.toString()
   } catch (error) {
     CORE_LOGGER.log(
@@ -123,20 +115,27 @@ export async function status(
 
   // no previous status?
   if (!nodeStatus) {
+    const publicKey = oceanNode.getKeyManager().getPublicKey()
+    const publicKeyHex = Buffer.from(publicKey).toString('hex')
+
     nodeStatus = {
-      id: nodeId && nodeId !== undefined ? nodeId : config.keys.peerId.toString(), // get current node ID
-      publicKey: Buffer.from(config.keys.publicKey).toString('hex'),
-      address: config.keys.ethAddress,
+      id:
+        nodeId && nodeId !== undefined
+          ? nodeId
+          : oceanNode.getKeyManager().getPeerId().toString(), // get current node ID
+      publicKey: publicKeyHex,
+      friendlyName: new HumanHasher().humanize(publicKeyHex),
+      address: oceanNode.getKeyManager().getEthAddress(),
       version: process.env.npm_package_version,
       http: config.hasHttp,
       p2p: config.hasP2P,
       provider: [],
       indexer: [],
-      supportedStorage: supportedStorageTypes,
+      supportedStorage: getSupportedStorageTypes(config),
       // uptime: process.uptime(),
       platform: platformInfo,
       codeHash: config.codeHash,
-      allowedAdmins: getAdminAddresses(config)
+      allowedAdmins: await getAdminAddresses()
     }
   }
   // need to update at least block info if available
@@ -151,7 +150,20 @@ export async function status(
 
   // depends on request
   if (detailed) {
-    nodeStatus.c2dClusters = config.c2dClusters
+    nodeStatus.c2dClusters = []
+    try {
+      const engines = await oceanNode.getC2DEngines().getAllEngines()
+      for (const engine of engines) {
+        const type = await engine.getC2DType()
+        nodeStatus.c2dClusters.push({
+          type,
+          hash: await engine.getC2DConfig().hash,
+          environments: await engine.getComputeEnvironments()
+        })
+      }
+    } catch (error) {
+      CORE_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error getting c2d clusters: ${error}`)
+    }
     nodeStatus.supportedSchemas = typesenseSchemas.ddoSchemas
   }
   return nodeStatus

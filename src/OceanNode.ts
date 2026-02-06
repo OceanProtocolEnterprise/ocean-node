@@ -3,14 +3,27 @@ import { OceanProvider } from './components/Provider/index.js'
 import { OceanIndexer } from './components/Indexer/index.js'
 import { OceanNodeConfig, P2PCommandResponse } from './@types/OceanNode.js'
 import { Database } from './components/database/index.js'
+import { Escrow } from './components/core/utils/escrow.js'
 import { CoreHandlersRegistry } from './components/core/handler/coreHandlersRegistry.js'
 import { OCEAN_NODE_LOGGER } from './utils/logging/common.js'
-import { ReadableString } from './components/P2P/handleProtocolCommands.js'
-import StreamConcat from 'stream-concat'
-import { pipe } from 'it-pipe'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from './utils/logging/Logger.js'
-import { Handler } from './components/core/handler/handler.js'
+import { BaseHandler } from './components/core/handler/handler.js'
 import { C2DEngines } from './components/c2d/compute_engines.js'
+import { Auth } from './components/Auth/index.js'
+import { KeyManager } from './components/KeyManager/index.js'
+import { BlockchainRegistry } from './components/BlockchainRegistry/index.js'
+import { Blockchain } from './utils/blockchain.js'
+
+export interface RequestLimiter {
+  requester: string | string[] // IP address or peer ID
+  lastRequestTime: number // time of the last request done (in miliseconds)
+  numRequests: number // number of requests done in the specific time period
+}
+
+export interface RequestDataCheck {
+  valid: boolean
+  updatedRequestData: RequestLimiter
+}
 export class OceanNode {
   // eslint-disable-next-line no-use-before-define
   private static instance: OceanNode
@@ -18,31 +31,80 @@ export class OceanNode {
   private coreHandlers: CoreHandlersRegistry
   // compute engines
   private c2dEngines: C2DEngines
+  // escrow
+  public escrow: Escrow
   // requester
   private remoteCaller: string | string[]
+  private requestMap: Map<string, RequestLimiter>
+  private auth: Auth
+
   // eslint-disable-next-line no-useless-constructor
   private constructor(
+    private config: OceanNodeConfig,
     private db?: Database,
     private node?: OceanP2P,
     private provider?: OceanProvider,
-    private indexer?: OceanIndexer
+    private indexer?: OceanIndexer,
+    public keyManager?: KeyManager,
+    public blockchainRegistry?: BlockchainRegistry
   ) {
+    if (keyManager) {
+      this.keyManager = keyManager
+    } else {
+      this.keyManager = new KeyManager(config)
+    }
+    if (blockchainRegistry) {
+      this.blockchainRegistry = blockchainRegistry
+    } else {
+      this.blockchainRegistry = new BlockchainRegistry(this.keyManager, config)
+    }
     this.coreHandlers = CoreHandlersRegistry.getInstance(this)
+    this.requestMap = new Map<string, RequestLimiter>()
+    this.config = config
+    if (this.db && this.db?.authToken) {
+      this.auth = new Auth(this.db.authToken)
+    }
     if (node) {
       node.setCoreHandlers(this.coreHandlers)
+    }
+    if (this.config) {
+      this.escrow = new Escrow(
+        this.config.supportedNetworks,
+        this.config.claimDurationTimeout,
+        this.blockchainRegistry
+      )
     }
   }
 
   // Singleton instance
   public static getInstance(
+    config?: OceanNodeConfig,
     db?: Database,
     node?: OceanP2P,
     provider?: OceanProvider,
-    indexer?: OceanIndexer
+    indexer?: OceanIndexer,
+    keyManager?: KeyManager,
+    blockchainRegistry?: BlockchainRegistry,
+    newInstance: boolean = false
   ): OceanNode {
-    if (!OceanNode.instance) {
+    if (!OceanNode.instance || newInstance) {
+      if (!keyManager || !blockchainRegistry) {
+        if (!config) {
+          throw new Error('KeyManager and BlockchainRegistry are required')
+        }
+        keyManager = new KeyManager(config)
+        blockchainRegistry = new BlockchainRegistry(keyManager, config)
+      }
       // prepare compute engines
-      this.instance = new OceanNode(db, node, provider, indexer)
+      this.instance = new OceanNode(
+        config,
+        db,
+        node,
+        provider,
+        indexer,
+        keyManager,
+        blockchainRegistry
+      )
     }
     return this.instance
   }
@@ -56,11 +118,23 @@ export class OceanNode {
     this.indexer = _indexer
   }
 
-  public async addC2DEngines(_config: OceanNodeConfig) {
+  public async addC2DEngines() {
     if (this.c2dEngines) {
       await this.c2dEngines.stopAllEngines()
     }
-    if (_config && _config.c2dClusters) this.c2dEngines = new C2DEngines(_config)
+    if (this.config && this.config.c2dClusters) {
+      if (!this.db || !this.db.c2d) {
+        OCEAN_NODE_LOGGER.error('C2DDatabase is mandatory for compute engines!')
+        return
+      }
+      this.c2dEngines = new C2DEngines(
+        this.config,
+        this.db.c2d,
+        this.escrow,
+        this.keyManager
+      )
+      await this.c2dEngines.startAllEngines()
+    }
   }
 
   public getP2PNode(): OceanP2P | undefined {
@@ -87,66 +161,70 @@ export class OceanNode {
     return this.coreHandlers
   }
 
-  public setRemoteCaller(client: string | string[]) {
-    this.remoteCaller = client
+  public getRequestMapSize(): number {
+    return this.requestMap.size
   }
 
-  public getRemoteCaller(): string | string[] {
-    return this.remoteCaller
+  public getRequestMap(): Map<string, RequestLimiter> {
+    return this.requestMap
+  }
+
+  public getAuth(): Auth {
+    return this.auth
+  }
+
+  public getKeyManager(): KeyManager {
+    return this.keyManager
+  }
+
+  public getBlockchainRegistry(): BlockchainRegistry {
+    return this.blockchainRegistry
   }
 
   /**
-   * Use this method to direct calls to the node as node cannot dial into itself
-   * @param message command message
-   * @param sink transform function
+   * Get a Blockchain instance for the given chainId.
+   * Delegates to BlockchainRegistry.
    */
-  async handleDirectProtocolCommand(
-    message: string,
-    sink: any
-  ): Promise<P2PCommandResponse> {
-    OCEAN_NODE_LOGGER.logMessage('Incoming direct command for ocean peer', true)
-    let status = null
-    // let statusStream
-    let sendStream = null
-    let response: P2PCommandResponse = null
+  public getBlockchain(chainId: number): Blockchain | null {
+    return this.blockchainRegistry.getBlockchain(chainId)
+  }
 
+  public setConfig(config: OceanNodeConfig) {
+    this.config = config
+    if (this.config) {
+      this.escrow = new Escrow(
+        this.config.supportedNetworks,
+        this.config.claimDurationTimeout,
+        this.blockchainRegistry
+      )
+    }
+  }
+
+  /**
+   * v3: Direct protocol command handler - no P2P, just call handler directly
+   * Returns {status, stream} without buffering
+   * @param message - JSON command string
+   */
+  async handleDirectProtocolCommand(message: string): Promise<P2PCommandResponse> {
+    OCEAN_NODE_LOGGER.logMessage('Incoming direct command for ocean peer', true)
     OCEAN_NODE_LOGGER.logMessage('Performing task: ' + message, true)
 
     try {
       const task = JSON.parse(message)
-      const handler: Handler = this.coreHandlers.getHandler(task.command)
-      if (handler === null) {
-        status = {
-          httpStatus: 501,
-          error: 'Unknown command or unexisting handler for command: ' + task.command
+      const handler: BaseHandler = this.coreHandlers.getHandler(task.command)
+
+      if (!handler) {
+        return {
+          stream: null,
+          status: {
+            httpStatus: 501,
+            error: 'Unknown command or missing handler for: ' + task.command
+          }
         }
-      } else {
-        response = await handler.handle(task)
       }
 
-      if (response) {
-        // eslint-disable-next-line prefer-destructuring
-        status = response.status
-        sendStream = response.stream
-      }
-
-      const statusStream = new ReadableString(JSON.stringify(status))
-      if (sendStream == null) {
-        pipe(statusStream, sink)
-      } else {
-        const combinedStream = new StreamConcat([statusStream, sendStream], {
-          highWaterMark: JSON.stringify(status).length
-          // the size of the buffer is important!
-        })
-        pipe(combinedStream, sink)
-      }
-
-      return (
-        response || {
-          status,
-          stream: null
-        }
-      )
+      // Return response directly without buffering
+      return await handler.handle(task)
     } catch (err) {
       OCEAN_NODE_LOGGER.logMessageWithEmoji(
         'handleDirectProtocolCommands Error: ' + err.message,
@@ -156,8 +234,8 @@ export class OceanNode {
       )
 
       return {
-        status: { httpStatus: 500, error: err.message },
-        stream: null
+        stream: null,
+        status: { httpStatus: 500, error: err.message }
       }
     }
   }

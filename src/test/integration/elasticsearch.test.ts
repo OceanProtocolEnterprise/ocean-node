@@ -13,9 +13,11 @@ import { SQLLiteNonceDatabase } from '../../components/database/SQLLiteNonceData
 
 const dbConfig = {
   url: 'http://localhost:9200',
-  dbType: DB_TYPES.ELASTIC_SEARCH
+  dbType: DB_TYPES.ELASTIC_SEARCH,
+  username: 'elastic',
+  password: 'changeme'
 }
-const elasticsearch: Database = await new Database(dbConfig)
+const elasticsearch: Database = await Database.init(dbConfig)
 
 describe('Elastic Search', () => {
   it('Get instances of Elastic Search', () => {

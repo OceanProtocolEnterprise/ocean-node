@@ -20,7 +20,8 @@ providerRoutes.post(`${SERVICES_API_BASE_PATH}/decrypt`, async (req, res) => {
   try {
     const result = await new DecryptDdoHandler(req.oceanNode).handle({
       ...req.body,
-      command: PROTOCOL_COMMANDS.DECRYPT_DDO
+      command: PROTOCOL_COMMANDS.DECRYPT_DDO,
+      caller: req.caller
     })
     if (result.stream) {
       const decryptedData = await streamToString(result.stream as Readable)
@@ -46,7 +47,11 @@ providerRoutes.post(`${SERVICES_API_BASE_PATH}/encrypt`, async (req, res) => {
       blob: data,
       encoding: 'string',
       encryptionType: EncryptMethod.ECIES,
-      command: PROTOCOL_COMMANDS.ENCRYPT
+      command: PROTOCOL_COMMANDS.ENCRYPT,
+      caller: req.caller,
+      nonce: req.query.nonce as string,
+      consumerAddress: req.query.consumerAddress as string,
+      signature: req.query.signature as string
     })
     if (result.stream) {
       const encryptedData = await streamToString(result.stream as Readable)
@@ -97,7 +102,11 @@ providerRoutes.post(`${SERVICES_API_BASE_PATH}/encryptFile`, async (req, res) =>
     const result = await new EncryptFileHandler(req.oceanNode).handle({
       rawData: input,
       encryptionType: encryptMethod,
-      command: PROTOCOL_COMMANDS.ENCRYPT_FILE
+      command: PROTOCOL_COMMANDS.ENCRYPT_FILE,
+      caller: req.caller,
+      nonce: req.query.nonce as string,
+      consumerAddress: req.query.consumerAddress as string,
+      signature: req.query.signature as string
     })
     return result
   }
@@ -112,7 +121,11 @@ providerRoutes.post(`${SERVICES_API_BASE_PATH}/encryptFile`, async (req, res) =>
       result = await new EncryptFileHandler(req.oceanNode).handle({
         files: req.body as BaseFileObject,
         encryptionType: encryptMethod,
-        command: PROTOCOL_COMMANDS.ENCRYPT_FILE
+        command: PROTOCOL_COMMANDS.ENCRYPT_FILE,
+        caller: req.caller,
+        nonce: req.query.nonce as string,
+        consumerAddress: req.query.consumerAddress as string,
+        signature: req.query.signature as string
       })
       return await writeResponse(result, encryptMethod)
       // raw data on body
@@ -153,7 +166,8 @@ providerRoutes.get(`${SERVICES_API_BASE_PATH}/initialize`, async (req, res) => {
       serviceId: (req.query.serviceId as string) || null,
       consumerAddress: (req.query.consumerAddress as string) || null,
       validUntil: parseInt(req.query.validUntil as string) || null,
-      policyServer: req.query.policyServer || null
+      policyServer: (req.query.policyServer as any) || null,
+      caller: req.caller
     })
     if (result.stream) {
       const initializeREsponse = await streamToObject(result.stream as Readable)
@@ -200,6 +214,7 @@ providerRoutes.get(
       `Download request received: ${JSON.stringify(req.query)}`,
       true
     )
+    const authorization = req.headers?.authorization
     try {
       const {
         fileIndex,
@@ -208,8 +223,19 @@ providerRoutes.get(
         transferTxId,
         nonce,
         consumerAddress,
-        signature
+        signature,
+        userdata
       } = req.query
+
+      let parsedUserData: any = null
+      if (userdata) {
+        try {
+          parsedUserData = JSON.parse(userdata as string)
+        } catch (e) {
+          HTTP_LOGGER.logMessage(`Invalid userdata JSON: ${userdata}`, true)
+          parsedUserData = null
+        }
+      }
 
       const downloadTask: DownloadCommand = {
         fileIndex: Number(fileIndex),
@@ -220,14 +246,23 @@ providerRoutes.get(
         consumerAddress: consumerAddress as string,
         signature: signature as string,
         command: PROTOCOL_COMMANDS.DOWNLOAD,
-        policyServer: req.query.policyServer || null
+        policyServer: (req.query.policyServer as any) || null,
+        authorization: authorization as string,
+        userData: parsedUserData,
+        caller: req.caller
       }
 
       const response = await new DownloadHandler(req.oceanNode).handle(downloadTask)
 
       if (response.stream) {
         res.status(response.status.httpStatus)
-        res.set(response.status.headers)
+
+        const safeHeaders = { ...response.status.headers }
+        if (safeHeaders['content-length'] && safeHeaders['Transfer-Encoding']) {
+          delete safeHeaders['content-length']
+        }
+
+        res.set(safeHeaders)
         response.stream.pipe(res)
       } else {
         res.status(response.status.httpStatus).send(response.status.error)

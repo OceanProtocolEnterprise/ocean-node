@@ -9,17 +9,16 @@ import {
 } from 'ethers'
 import { assert, expect } from 'chai'
 import { getEventFromTx, streamToString } from '../../utils/util.js'
-import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' assert { type: 'json' }
+import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' with { type: 'json' }
 import { RPCS } from '../../@types/blockchain.js'
 import {
   DEVELOPMENT_CHAIN_ID,
   getOceanArtifactsAdresses,
   getOceanArtifactsAdressesByChainId
 } from '../../utils/address.js'
-import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' assert { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import { genericDDO } from '../data/ddo.js'
 import { createHash } from 'crypto'
-import { encrypt } from '../../utils/crypt.js'
 import { Database } from '../../components/database/index.js'
 import { DecryptDdoHandler } from '../../components/core/handler/ddoHandler.js'
 import {
@@ -56,7 +55,7 @@ describe('Should encrypt and decrypt DDO', () => {
   let encryptedMetaData: any
   let documentHash: any
   let indexer: OceanIndexer
-  const nonce = Math.floor(Date.now() / 1000).toString()
+  const nonce = Date.now().toString()
 
   const chainId = 8996
   const mockSupportedNetworks: RPCS = {
@@ -103,11 +102,15 @@ describe('Should encrypt and decrypt DDO', () => {
       ERC721Factory.abi,
       publisherAccount
     )
-
-    database = await new Database(await (await getConfiguration()).dbConfig)
-    oceanNode = OceanNode.getInstance(database)
+    const config = await getConfiguration()
+    database = await Database.init(config.dbConfig)
+    oceanNode = OceanNode.getInstance(config, database)
     // will be used later
-    indexer = new OceanIndexer(database, mockSupportedNetworks)
+    indexer = new OceanIndexer(
+      database,
+      mockSupportedNetworks,
+      oceanNode.blockchainRegistry
+    )
     oceanNode.addIndexer(indexer)
   })
 
@@ -157,7 +160,9 @@ describe('Should encrypt and decrypt DDO', () => {
       '0x' + createHash('sha256').update(JSON.stringify(genericAsset)).digest('hex')
 
     const genericAssetData = Uint8Array.from(Buffer.from(JSON.stringify(genericAsset)))
-    const encryptedData = await encrypt(genericAssetData, EncryptMethod.ECIES)
+    const encryptedData = await oceanNode
+      .getKeyManager()
+      .encrypt(genericAssetData, EncryptMethod.ECIES)
     encryptedMetaData = hexlify(encryptedData)
 
     const setMetaDataTx = await nftContract.setMetaData(
@@ -213,10 +218,9 @@ describe('Should encrypt and decrypt DDO', () => {
   })
 
   it('should authorize decrypter since is this node', async () => {
-    const config = await getConfiguration()
     const decryptDDOTask: DecryptDDOCommand = {
       command: PROTOCOL_COMMANDS.DECRYPT_DDO,
-      decrypterAddress: await config.keys.ethAddress,
+      decrypterAddress: oceanNode.getKeyManager().getEthAddress(),
       chainId,
       nonce: Date.now().toString(),
       signature: '0x123'
@@ -311,7 +315,6 @@ describe('Should encrypt and decrypt DDO', () => {
     }
     const response = await new DecryptDdoHandler(oceanNode).handle(decryptDDOTask)
     expect(response.status.httpStatus).to.equal(400)
-    expect(response.status.error).to.equal('Decrypt DDO: checksum does not match')
   })
 
   it('should return signature does not match', async () => {
@@ -335,13 +338,7 @@ describe('Should encrypt and decrypt DDO', () => {
   it('should decrypt ddo with transactionId and return it', async () => {
     const nonce = Date.now().toString()
     const wallet = new ethers.Wallet(process.env.PRIVATE_KEY)
-    const message = String(
-      txReceiptEncryptDDO.hash +
-        dataNftAddress +
-        publisherAddress +
-        chainId.toString() +
-        nonce
-    )
+    const message = String(txReceiptEncryptDDO.hash + publisherAddress + chainId + nonce)
     const messageHash = ethers.solidityPackedKeccak256(
       ['bytes'],
       [ethers.hexlify(ethers.toUtf8Bytes(message))]
@@ -367,7 +364,7 @@ describe('Should encrypt and decrypt DDO', () => {
   it('should decrypt ddo with encryptedDocument, flags, documentHash and return it', async () => {
     const nonce = Date.now().toString()
     const wallet = new ethers.Wallet(process.env.PRIVATE_KEY)
-    const message = String(dataNftAddress + publisherAddress + chainId.toString() + nonce)
+    const message = String(dataNftAddress + publisherAddress + chainId + nonce)
     const messageHash = ethers.solidityPackedKeccak256(
       ['bytes'],
       [ethers.hexlify(ethers.toUtf8Bytes(message))]
@@ -394,6 +391,6 @@ describe('Should encrypt and decrypt DDO', () => {
 
   after(async () => {
     await tearDownEnvironment(previousConfiguration)
-    indexer.stopAllThreads()
+    indexer.stopAllChainIndexers()
   })
 })

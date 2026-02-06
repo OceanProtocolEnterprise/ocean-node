@@ -1,7 +1,13 @@
 import { ValidateParams } from '../components/httpRoutes/validateCommands.js'
-import { DDO } from './DDO/DDO'
 import { P2PCommandResponse } from './OceanNode'
-import type { ComputeAsset, ComputeAlgorithm, ComputeOutput } from './C2D'
+import { DDO } from '@oceanprotocol/ddo-js'
+import type {
+  ComputeAsset,
+  ComputeAlgorithm,
+  ComputeOutput,
+  ComputeResourceRequest,
+  DBComputeJobMetadata
+} from './C2D/C2D.js'
 import {
   ArweaveFileObject,
   FileObjectType,
@@ -14,11 +20,25 @@ import {
 export interface Command {
   command: string // command name
   node?: string // if not present it means current node
+  authorization?: string
+  caller?: string | string[] // added by our node for rate limiting
 }
+
+export interface GetP2PPeerCommand extends Command {
+  peerId: string
+}
+export interface FindPeerCommand extends Command {
+  peerId: string
+  timeout?: string
+}
+
+export interface GetP2PPeersCommand extends Command {}
+export interface GetP2PNetworkStatsCommand extends Command {}
 
 export interface AdminCommand extends Command {
   expiryTimestamp: number
   signature: string
+  address?: string
 }
 
 export interface AdminCollectFeesHandlerResponse {
@@ -41,6 +61,7 @@ export interface DownloadCommand extends Command {
   signature: string
   aes_encrypted_key?: string // if not present it means download without encryption
   policyServer?: any // object to pass to policy server
+  userData?: Record<string, any>
 }
 
 export interface FileInfoCommand extends Command {
@@ -63,9 +84,15 @@ export interface FindDDOCommand extends DDOCommand {
 // https://github.com/oceanprotocol/ocean-node/issues/47
 export interface ValidateDDOCommand extends Command {
   ddo: DDO
+  publisherAddress?: string
+  nonce?: string
+  signature?: string
+  message?: string
 }
 
-export interface StatusCommand extends Command {}
+export interface StatusCommand extends Command {
+  detailed?: boolean
+}
 export interface DetailedStatusCommand extends StatusCommand {}
 export interface EchoCommand extends Command {}
 
@@ -93,16 +120,23 @@ export interface DecryptDDOCommand extends Command {
 }
 
 export interface EncryptCommand extends Command {
+  nonce: string
+  consumerAddress: string
+  signature: string
   blob: string
   encoding?: string
   encryptionType?: EncryptMethod.AES | EncryptMethod.ECIES
+  policyServer?: any // object to pass to policy server
 }
 
 export interface EncryptFileCommand extends Command {
+  nonce: string
+  consumerAddress: string
+  signature: string
   encryptionType?: EncryptMethod.AES | EncryptMethod.ECIES
   files?: BaseFileObject
   rawData?: Buffer
-  // UrlFileObject | ArweaveFileObject | IpfsFileObject
+  policyServer?: any // object to pass to policy server
 }
 
 export interface NonceCommand extends Command {
@@ -135,35 +169,63 @@ export interface AdminReindexChainCommand extends AdminCommand {
   block?: number
 }
 
+export interface AdminFetchConfigCommand extends AdminCommand {}
+
+export interface AdminPushConfigCommand extends AdminCommand {
+  config: Record<string, any>
+}
+
 export interface ICommandHandler {
   handle(command: Command): Promise<P2PCommandResponse>
+  verifyParamsAndRateLimits(task: Command): Promise<P2PCommandResponse>
+}
+
+export interface IValidateCommandHandler extends ICommandHandler {
   validate(command: Command): ValidateParams
+}
+
+export interface IValidateAdminCommandHandler extends ICommandHandler {
+  validate(command: AdminCommand): Promise<ValidateParams>
 }
 
 export interface ComputeGetEnvironmentsCommand extends Command {
   chainId?: number
 }
 
-export interface ComputeDetails {
-  env: string // with hash
-  validUntil: number
+export interface ComputePayment {
+  chainId: number
+  token: string
+  resources?: ComputeResourceRequest[] // only used in initializeCompute
 }
 export interface ComputeInitializeCommand extends Command {
-  datasets: [ComputeAsset]
+  datasets: ComputeAsset[]
   algorithm: ComputeAlgorithm
-  compute: ComputeDetails
+  environment: string
+  payment: ComputePayment
   consumerAddress: string
+  signature?: string
+  maxJobDuration: number
+  policyServer?: any // object to pass to policy server
+  queueMaxWaitTime?: number // max time in seconds a job can wait in the queue before being started
 }
 
-export interface ComputeStartCommand extends Command {
+export interface FreeComputeStartCommand extends Command {
   consumerAddress: string
   signature: string
   nonce: string
   environment: string
   algorithm: ComputeAlgorithm
-  dataset: ComputeAsset
-  additionalDatasets?: ComputeAsset[]
+  datasets?: ComputeAsset[]
   output?: ComputeOutput
+  resources?: ComputeResourceRequest[]
+  maxJobDuration?: number
+  policyServer?: any // object to pass to policy server
+  metadata?: DBComputeJobMetadata
+  additionalViewers?: string[] // addresses of additional addresses that can get results
+  queueMaxWaitTime?: number // max time in seconds a job can wait in the queue before being started
+}
+export interface PaidComputeStartCommand extends FreeComputeStartCommand {
+  payment: ComputePayment
 }
 
 export interface ComputeStopCommand extends Command {
@@ -180,6 +242,12 @@ export interface ComputeGetResultCommand extends Command {
   nonce: string
   jobId: string
   index: number
+}
+export interface ComputeGetStreamableLogsCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  jobId: string
 }
 
 export interface ComputeGetStatusCommand extends Command {
@@ -217,4 +285,23 @@ export interface StartStopIndexingCommand extends AdminCommand {
 
 export interface PolicyServerPassthroughCommand extends Command {
   policyServerPassthrough?: any
+}
+
+export interface PolicyServerInitializeCommand extends Command {
+  documentId?: string
+  serviceId?: string
+  consumerAddress?: string
+  policyServer?: any
+}
+
+export interface CreateAuthTokenCommand extends Command {
+  address: string
+  signature: string
+  validUntil?: number | null
+}
+
+export interface GetJobsCommand extends Command {
+  environments?: string[]
+  fromTimestamp?: string
+  consumerAddrs?: string[]
 }

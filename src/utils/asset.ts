@@ -1,41 +1,48 @@
 import axios from 'axios'
-import { DDO } from '../@types/DDO/DDO'
-import { Service } from '../@types/DDO/Service'
+import { Service, DDOManager, DDO } from '@oceanprotocol/ddo-js'
 import { DDO_IDENTIFIER_PREFIX } from './constants.js'
 import { CORE_LOGGER } from './logging/common.js'
+import { GENERIC_EMOJIS, LOG_LEVELS_STR } from './logging/Logger.js'
 import { createHash } from 'crypto'
 import { ethers, getAddress, Signer } from 'ethers'
 import { KNOWN_CONFIDENTIAL_EVMS } from './address.js'
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/interfaces/IERC20Template.sol/IERC20Template.json' assert { type: 'json' }
-import ERC20Template4 from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template4.sol/ERC20Template4.json' assert { type: 'json' }
+import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/interfaces/IERC20Template.sol/IERC20Template.json' with { type: 'json' }
+import ERC20Template4 from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template4.sol/ERC20Template4.json' with { type: 'json' }
 import { getContractAddress, getNFTFactory } from '../components/Indexer/utils.js'
+import { HeadersObject } from '../@types/fileObject.js'
 
 // Notes:
 // Asset as per asset.py on provider, is a class there, while on ocean.Js we only have a type
 // this is an utility to extract information from the Asset services
 export const AssetUtils = {
-  getServiceIndexById(asset: DDO, id: string): number | null {
-    for (let c = 0; c < asset.services.length; c++)
-      if (asset.services[c].id === id) return c
+  getServiceIndexById(asset: DDO | Record<string, any>, id: string): number | null {
+    const ddoInstance = DDOManager.getDDOClass(asset)
+    const { services } = ddoInstance.getDDOFields()
+    for (let c = 0; c < services.length; c++) if (services[c].id === id) return c
     return null
   },
-  getServiceByIndex(asset: DDO, index: number): Service | null {
-    if (index >= 0 && index < asset.services.length) {
-      return asset.services[index]
+  getServiceByIndex(asset: DDO | Record<string, any>, index: number): any | null {
+    const ddoInstance = DDOManager.getDDOClass(asset)
+    const { services } = ddoInstance.getDDOFields()
+    if (index >= 0 && index < services.length) {
+      return services[index]
     }
     return null
   },
 
-  getServiceById(asset: DDO, id: string): Service | null {
-    const services = asset.services.filter((service: Service) => service.id === id)
-    return services.length ? services[0] : null
+  getServiceById(asset: DDO | Record<string, any>, id: string): any | null {
+    const ddoInstance = DDOManager.getDDOClass(asset)
+    const { services } = ddoInstance.getDDOFields() as any
+    const filteredServices = services.filter((service: any) => service.id === id)
+    return filteredServices.length ? filteredServices[0] : null
   }
 }
 
 export async function fetchFileMetadata(
   url: string,
   method: string,
-  forceChecksum: boolean
+  forceChecksum: boolean,
+  headers?: HeadersObject
 ): Promise<{ contentLength: string; contentType: string; contentChecksum: string }> {
   let contentType: string = ''
   let contentLength: number = 0
@@ -47,7 +54,9 @@ export async function fetchFileMetadata(
     const response = await axios({
       url,
       method: method || 'get',
-      responseType: 'stream'
+      headers,
+      responseType: 'stream',
+      timeout: 30000
     })
     contentType = response.headers['content-type']
     let totalSize = 0
@@ -91,6 +100,15 @@ export function validateDDOHash(
   return ddoID === hashAddressAndChain
 }
 
+export function deleteIndexedMetadataIfExists(ddo: DDO): DDO {
+  const ddoCopy: DDO = structuredClone(ddo)
+  if ('indexedMetadata' in ddoCopy) {
+    delete ddoCopy.indexedMetadata
+    return ddoCopy
+  }
+  return ddo
+}
+
 /**
  * Generates DDO Id given the chain and nft address provided
  * @param nftAddress the nft address
@@ -114,7 +132,7 @@ export function generateDDOHash(nftAddress: string, chainId: number): string | n
  * @param network name or chain id
  * @returns true if confidential evm
  */
-export function isConfidentialEVM(network: number): boolean {
+export function isConfidentialEVM(network: bigint): boolean {
   return KNOWN_CONFIDENTIAL_EVMS.includes(network)
 }
 
@@ -124,7 +142,7 @@ export async function isERC20Template4Active(
 ): Promise<boolean> {
   try {
     const nftFactoryAddress = getContractAddress(network, 'ERC721Factory')
-    const factoryERC721 = await getNFTFactory(owner, nftFactoryAddress)
+    const factoryERC721 = getNFTFactory(owner, nftFactoryAddress)
     const currentTokenCount = await factoryERC721.getCurrentTemplateCount()
 
     for (let i = 1; i <= currentTokenCount; i++) {
@@ -171,7 +189,7 @@ export async function isDataTokenTemplate4(
   }
 }
 
-export function isConfidentialChainDDO(ddoChain: number, ddoService: Service): boolean {
+export function isConfidentialChainDDO(ddoChain: bigint, ddoService: Service): boolean {
   const isConfidential = isConfidentialEVM(ddoChain)
   return isConfidential && (!ddoService.files || ddoService.files.length === 0)
 }
@@ -192,7 +210,10 @@ export async function getFilesObjectFromConfidentialEVM(
   signer: Signer,
   consumerAddress: string,
   consumerSignature: string,
-  consumerData: string // ddo id + nonce
+  consumerData: string
+  // NOTE about signatures consume data:
+  // ddo id + nonce (for downloading)
+  // consumerAddress + datasets[0].documentId + nonce (for start/init compute)
 ): Promise<string> {
   try {
     const currentProviderAddress = await signer.getAddress()
@@ -226,5 +247,36 @@ export async function getFilesObjectFromConfidentialEVM(
       'Unable to decrypt files object from Template4 on confidential EVM: ' + err.message
     )
     return null
+  }
+}
+
+export async function validateDDO(ddo: Record<string, any>): Promise<boolean> {
+  const ddoInstance = DDOManager.getDDOClass(ddo)
+  const ddoData = ddoInstance.getDDOData()
+  if ('indexedMetadata' in ddoData && ddoData.indexedMetadata?.nft?.state !== 0) {
+    // Skipping validation for short DDOs as it currently doesn't work
+    // TODO: DDO validation needs to be updated to consider the fields required by the schema
+    // See github issue: https://github.com/oceanprotocol/ocean-node/issues/256
+    return true
+  }
+
+  const validation = await ddoInstance.validate()
+  if (validation[0] === true) {
+    CORE_LOGGER.logMessageWithEmoji(
+      `Validation of DDO with did: ${ddo.id} has passed`,
+      true,
+      GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
+      LOG_LEVELS_STR.LEVEL_DEBUG
+    )
+    return true
+  } else {
+    CORE_LOGGER.logMessageWithEmoji(
+      `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
+        JSON.stringify(validation[1]),
+      true,
+      GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+      LOG_LEVELS_STR.LEVEL_WARN
+    )
+    return false
   }
 }

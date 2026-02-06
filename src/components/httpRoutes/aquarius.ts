@@ -6,7 +6,6 @@ import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 import { FindDdoHandler, ValidateDDOHandler } from '../core/handler/ddoHandler.js'
 import { QueryDdoStateHandler, QueryHandler } from '../core/handler/queryHandler.js'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
-import { DDO } from '../../@types/DDO/DDO.js'
 import { QueryCommand } from '../../@types/commands.js'
 import { DatabaseFactory } from '../database/DatabaseFactory.js'
 import { SearchQuery } from '../../@types/DDO/SearchQuery.js'
@@ -21,7 +20,7 @@ aquariusRoutes.get(
   async (req, res) => {
     try {
       const { did, force } = req.params
-      if (!did || !did.startsWith('did:op')) {
+      if (!did || !/^did:ope?/.test(did)) {
         res.status(400).send('Missing or invalid required parameter: "did"')
         return
       }
@@ -44,7 +43,7 @@ aquariusRoutes.get(
   async (req, res) => {
     try {
       const { did, force } = req.params
-      if (!did || !did.startsWith('did:op')) {
+      if (!did || !/^did:ope?/.test(did)) {
         res.status(400).send('Missing or invalid required parameter: "did"')
         return
       }
@@ -78,7 +77,8 @@ aquariusRoutes.post(
 
       const result = await new QueryHandler(req.oceanNode).handle({
         query: transformedQuery,
-        command: PROTOCOL_COMMANDS.QUERY
+        command: PROTOCOL_COMMANDS.QUERY,
+        caller: req.caller
       })
       if (result.stream) {
         const queryResult = JSON.parse(await streamToString(result.stream as Readable))
@@ -97,13 +97,15 @@ aquariusRoutes.get(`${AQUARIUS_API_BASE_PATH}/state/ddo`, async (req, res) => {
   try {
     const config = await getConfiguration()
     const queryStrategy = await DatabaseFactory.createDdoStateQuery(config.dbConfig)
+
+    const did = req.query.did ? String(req.query.did) : undefined
+    const nft = req.query.nft ? String(req.query.nft) : undefined
+    const txId = req.query.txId ? String(req.query.txId) : undefined
+
     const queryDdoState: QueryCommand = {
-      query: queryStrategy.buildQuery(
-        String(req.query.did),
-        String(req.query.nft),
-        String(req.query.txId)
-      ),
-      command: PROTOCOL_COMMANDS.QUERY
+      query: queryStrategy.buildQuery(did, nft, txId),
+      command: PROTOCOL_COMMANDS.QUERY,
+      caller: req.caller
     }
 
     if (!Object.keys(queryDdoState.query).length) {
@@ -119,9 +121,28 @@ aquariusRoutes.get(`${AQUARIUS_API_BASE_PATH}/state/ddo`, async (req, res) => {
 
     if (result.stream) {
       const queryResult = JSON.parse(await streamToString(result.stream as Readable))
-      if (queryResult[0].found) {
-        res.json(queryResult[0].hits[0])
+
+      if (
+        queryResult &&
+        typeof queryResult === 'object' &&
+        queryResult.found !== undefined
+      ) {
+        if (queryResult.found > 0 && queryResult.hits && queryResult.hits.length > 0) {
+          res.json(queryResult.hits[0].document || queryResult.hits[0])
+        } else {
+          res.status(404).send('Not found')
+        }
+      } else if (Array.isArray(queryResult)) {
+        if (queryResult.length > 0) {
+          res.json(queryResult[0])
+        } else {
+          res.status(404).send('Not found')
+        }
       } else {
+        HTTP_LOGGER.log(
+          LOG_LEVELS_STR.LEVEL_DEBUG,
+          `Query result structure (not found): ${JSON.stringify(queryResult)}`
+        )
         res.status(404).send('Not found')
       }
     } else {
@@ -134,23 +155,36 @@ aquariusRoutes.get(`${AQUARIUS_API_BASE_PATH}/state/ddo`, async (req, res) => {
 })
 
 aquariusRoutes.post(`${AQUARIUS_API_BASE_PATH}/assets/ddo/validate`, async (req, res) => {
+  const node = req.oceanNode
   try {
-    if (!req.body || req.body === undefined) {
+    if (!req.body) {
       res.status(400).send('Missing DDO object')
       return
     }
-    const ddo = JSON.parse(req.body) as DDO
+
+    const requestBody = JSON.parse(req.body)
+    const authorization = req.headers?.authorization
+    const { publisherAddress, nonce, signature } = requestBody
+
+    // This is for backward compatibility with the old way of sending the DDO
+    const ddo = requestBody.ddo || JSON.parse(req.body)
 
     if (!ddo.version) {
       res.status(400).send('Missing DDO version')
       return
     }
 
-    const node = req.oceanNode
     const result = await new ValidateDDOHandler(node).handle({
       ddo,
-      command: PROTOCOL_COMMANDS.VALIDATE_DDO
+      publisherAddress,
+      authorization,
+      nonce,
+      signature,
+      message: ddo.id + nonce,
+      command: PROTOCOL_COMMANDS.VALIDATE_DDO,
+      caller: req.caller
     })
+
     if (result.stream) {
       const validationResult = JSON.parse(await streamToString(result.stream as Readable))
       res.json(validationResult)

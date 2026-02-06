@@ -1,67 +1,110 @@
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' assert { type: 'json' }
+import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 import {
   ethers,
   Signer,
   Contract,
   JsonRpcApiProvider,
   JsonRpcProvider,
+  FallbackProvider,
   isAddress,
-  Network,
   parseUnits,
   Wallet,
   TransactionReceipt
 } from 'ethers'
 import { getConfiguration } from './config.js'
 import { CORE_LOGGER } from './logging/common.js'
-import { sleep } from './util.js'
 import { ConnectionStatus } from '../@types/blockchain.js'
 import { ValidateChainId } from '../@types/commands.js'
+import { KNOWN_CONFIDENTIAL_EVMS } from '../utils/address.js'
+import { OceanNodeConfig } from '../@types/OceanNode.js'
+import { KeyManager } from '../components/KeyManager/index.js'
+
+const MIN_GAS_FEE_POLYGON = 30000000000 // minimum recommended 30 gwei polygon main and mumbai fees
+const MIN_GAS_FEE_SEPOLIA = 4000000000 // minimum 4 gwei for eth sepolia testnet
+const MIN_GAS_FEE_SAPPHIRE = 10000000000 // recommended for mainnet and testnet 10 gwei
+const POLYGON_NETWORK_ID = 137
+const MUMBAI_NETWORK_ID = 80001
+const SEPOLIA_NETWORK_ID = 11155111
 
 export class Blockchain {
+  private config?: OceanNodeConfig // Optional for new constructor
+  private static signers: Map<string, Signer> = new Map()
+  private static providers: Map<string, JsonRpcApiProvider> = new Map()
+  private keyManager: KeyManager
   private signer: Signer
-  private provider: JsonRpcApiProvider
+  private provider: FallbackProvider
+  private providers: JsonRpcProvider[] = []
   private chainId: number
   private knownRPCs: string[] = []
-  private network: Network
-  private networkAvailable: boolean = false
 
+  /**
+   * Constructor overloads:
+   * 1. New pattern: (rpc, chainId, signer, fallbackRPCs?) - signer provided by KeyManager
+   * 2. Old pattern: (rpc, chainId, config, fallbackRPCs?) - for backward compatibility
+   */
   public constructor(
+    keyManager: KeyManager,
     rpc: string,
-    chainName: string,
     chainId: number,
     fallbackRPCs?: string[]
   ) {
     this.chainId = chainId
+    this.keyManager = keyManager
     this.knownRPCs.push(rpc)
     if (fallbackRPCs && fallbackRPCs.length > 0) {
       this.knownRPCs.push(...fallbackRPCs)
     }
-    this.network = new ethers.Network(chainName, chainId)
-    // this.provider = new ethers.JsonRpcProvider(rpc, this.network)
-    this.provider = new ethers.JsonRpcProvider(rpc, null, {
-      staticNetwork: ethers.Network.from(chainId)
-    })
-    this.registerForNetworkEvents()
-    // always use this signer, not simply provider.getSigner(0) for instance (as we do on many tests)
-    this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider)
-  }
-
-  public getSigner(): Signer {
-    return this.signer
-  }
-
-  public getProvider(): JsonRpcApiProvider {
-    return this.provider
+    this.provider = undefined as undefined as FallbackProvider
+    this.signer = undefined as unknown as Signer
   }
 
   public getSupportedChain(): number {
     return this.chainId
   }
 
-  public async isNetworkReady(): Promise<ConnectionStatus> {
-    if (this.networkAvailable && this.provider.ready) {
-      return { ready: true }
+  public getWallet(): Wallet {
+    return this.keyManager.getEthWallet()
+  }
+
+  public async getWalletAddress(): Promise<string> {
+    return await this.signer.getAddress()
+  }
+
+  public async getProvider(force: boolean = false): Promise<FallbackProvider> {
+    if (!this.provider) {
+      for (const rpc of this.knownRPCs) {
+        const rpcProvider = new JsonRpcProvider(rpc)
+        // filter wrong chains or broken RPCs
+        if (!force) {
+          try {
+            const { chainId } = await rpcProvider.getNetwork()
+            if (chainId.toString() === this.chainId.toString()) {
+              this.providers.push(rpcProvider)
+              break
+            }
+          } catch (error) {
+            CORE_LOGGER.error(`Error getting network for RPC ${rpc}: ${error}`)
+          }
+        } else {
+          this.providers.push(new JsonRpcProvider(rpc))
+        }
+      }
+      this.provider = new FallbackProvider(this.providers)
     }
+    return this.provider
+  }
+
+  public async getSigner(): Promise<Signer> {
+    if (!this.signer) {
+      if (!this.provider) {
+        await this.getProvider()
+      }
+      this.signer = await this.keyManager.getEvmSigner(this.provider, this.chainId)
+    }
+    return this.signer
+  }
+
+  public async isNetworkReady(): Promise<ConnectionStatus> {
     return await this.detectNetwork()
   }
 
@@ -70,7 +113,7 @@ export class Blockchain {
   }
 
   public async calculateGasCost(to: string, amount: bigint): Promise<bigint> {
-    const provider = this.getProvider()
+    const provider = await this.getProvider()
     const estimatedGas = await provider.estimateGas({
       to,
       value: amount
@@ -86,11 +129,11 @@ export class Blockchain {
   }
 
   public async sendTransaction(
-    wallet: Wallet,
+    signer: Signer,
     to: string,
     amount: bigint
   ): Promise<TransactionReceipt> {
-    const tx = await wallet.sendTransaction({
+    const tx = await signer.sendTransaction({
       to,
       value: amount
     })
@@ -99,15 +142,15 @@ export class Blockchain {
     return receipt
   }
 
-  private detectNetwork(): Promise<ConnectionStatus> {
+  private async detectNetwork(): Promise<ConnectionStatus> {
+    const provider = await this.getProvider()
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         // timeout, hanging or invalid connection
         CORE_LOGGER.error(`Unable to detect provider network: (TIMEOUT)`)
         resolve({ ready: false, error: 'TIMEOUT' })
       }, 3000)
-
-      this.provider
+      provider
         .getBlock('latest')
         .then((block) => {
           clearTimeout(timeout)
@@ -121,28 +164,7 @@ export class Blockchain {
     })
   }
 
-  // try other rpc options, if available
-  public async tryFallbackRPCs(): Promise<ConnectionStatus> {
-    let response: ConnectionStatus = { ready: false, error: '' }
-    // we also retry the original one again after all the fallbacks
-    for (let i = this.knownRPCs.length - 1; i >= 0; i--) {
-      this.provider.off('network')
-      CORE_LOGGER.warn(`Retrying new provider connection with RPC: ${this.knownRPCs[i]}`)
-      this.provider = new JsonRpcProvider(this.knownRPCs[i])
-      this.signer = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider)
-      // try them 1 by 1 and wait a couple of secs for network detection
-      this.registerForNetworkEvents()
-      await sleep(2000)
-      response = await this.isNetworkReady()
-      // return as soon as we have a valid one
-      if (response.ready) {
-        return response
-      }
-    }
-    return response
-  }
-
-  private registerForNetworkEvents() {
+  /* private registerForNetworkEvents() {
     this.provider.on('network', this.networkChanged)
   }
 
@@ -151,12 +173,77 @@ export class Blockchain {
     // event with a null oldNetwork along with the newNetwork. So, if the
     // oldNetwork exists, it represents a changing network
     this.networkAvailable = newNetwork instanceof Network
+  } */
+
+  public async getFairGasPrice(gasFeeMultiplier: number): Promise<string> {
+    const signer = await this.getSigner()
+    const price = (await signer.provider.getFeeData()).gasPrice
+    const x = BigInt(price.toString())
+    if (gasFeeMultiplier) {
+      const res = BigInt(price.toString()) * BigInt(gasFeeMultiplier)
+      return res.toString(10)
+    } else return x.toString()
+  }
+
+  public async getGasOptions(estGas: bigint, gasFeeMultiplier: number): Promise<{}> {
+    const { chainId } = await this.signer.provider.getNetwork()
+    const feeHistory = await this.signer.provider.getFeeData()
+    const gasLimit = estGas + BigInt(20000)
+
+    if (feeHistory.maxPriorityFeePerGas) {
+      let aggressiveFeePriorityFeePerGas = feeHistory.maxPriorityFeePerGas.toString()
+      let aggressiveFeePerGas = feeHistory.maxFeePerGas.toString()
+      if (gasFeeMultiplier > 1) {
+        aggressiveFeePriorityFeePerGas = (
+          (feeHistory.maxPriorityFeePerGas * BigInt(gasFeeMultiplier * 100)) /
+          BigInt(100)
+        ).toString()
+        aggressiveFeePerGas = (
+          (feeHistory.maxFeePerGas * BigInt(gasFeeMultiplier * 100)) /
+          BigInt(100)
+        ).toString()
+      }
+      const overrides = {
+        gasLimit,
+        maxPriorityFeePerGas:
+          (chainId === BigInt(MUMBAI_NETWORK_ID) ||
+            chainId === BigInt(POLYGON_NETWORK_ID)) &&
+          Number(aggressiveFeePriorityFeePerGas) < MIN_GAS_FEE_POLYGON
+            ? MIN_GAS_FEE_POLYGON
+            : chainId === BigInt(SEPOLIA_NETWORK_ID) &&
+                Number(aggressiveFeePriorityFeePerGas) < MIN_GAS_FEE_SEPOLIA
+              ? MIN_GAS_FEE_SEPOLIA
+              : KNOWN_CONFIDENTIAL_EVMS.includes(chainId) &&
+                  Number(aggressiveFeePriorityFeePerGas) < MIN_GAS_FEE_SAPPHIRE
+                ? MIN_GAS_FEE_SAPPHIRE
+                : Number(aggressiveFeePriorityFeePerGas),
+        maxFeePerGas:
+          (chainId === BigInt(MUMBAI_NETWORK_ID) ||
+            chainId === BigInt(POLYGON_NETWORK_ID)) &&
+          Number(aggressiveFeePerGas) < MIN_GAS_FEE_POLYGON
+            ? MIN_GAS_FEE_POLYGON
+            : chainId === BigInt(SEPOLIA_NETWORK_ID) &&
+                Number(aggressiveFeePerGas) < MIN_GAS_FEE_SEPOLIA
+              ? MIN_GAS_FEE_SEPOLIA
+              : KNOWN_CONFIDENTIAL_EVMS.includes(chainId) &&
+                  Number(aggressiveFeePerGas) < MIN_GAS_FEE_SAPPHIRE
+                ? MIN_GAS_FEE_SAPPHIRE
+                : Number(aggressiveFeePerGas)
+      }
+      return overrides
+    } else {
+      const overrides = {
+        gasLimit,
+        gasPrice: feeHistory.gasPrice
+      }
+      return overrides
+    }
   }
 }
 
 export async function getDatatokenDecimals(
   datatokenAddress: string,
-  provider: JsonRpcProvider
+  provider: ethers.Provider
 ): Promise<number> {
   const datatokenContract = new Contract(datatokenAddress, ERC20Template.abi, provider)
   try {
@@ -174,7 +261,7 @@ export async function getDatatokenDecimals(
  * @param signature to validate
  * @returns boolean
  */
-export async function verifyMessage(
+export function verifyMessage(
   message: string | Uint8Array,
   address: string,
   signature: string
@@ -184,7 +271,7 @@ export async function verifyMessage(
       CORE_LOGGER.error(`${address} is not a valid web3 address`)
       return false
     }
-    const signerAddr = await ethers.verifyMessage(message, signature)
+    const signerAddr = ethers.verifyMessage(message, signature)
     if (signerAddr?.toLowerCase() !== address?.toLowerCase()) {
       return false
     }
@@ -192,6 +279,15 @@ export async function verifyMessage(
   } catch (err) {
     return false
   }
+}
+
+export function getMessageHash(message: string): Uint8Array {
+  const messageHash = ethers.solidityPackedKeccak256(
+    ['bytes'],
+    [ethers.hexlify(ethers.toUtf8Bytes(message))]
+  )
+  const messageHashBytes = ethers.toBeArray(messageHash)
+  return messageHashBytes
 }
 
 export async function checkSupportedChainId(chainId: number): Promise<ValidateChainId> {

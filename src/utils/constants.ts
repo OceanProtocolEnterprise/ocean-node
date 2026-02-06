@@ -4,7 +4,6 @@ import { Hashes } from '../@types/blockchain'
 export const PROTOCOL_COMMANDS = {
   DOWNLOAD: 'download',
   DOWNLOAD_URL: 'downloadURL', // we still use this
-  ECHO: 'echo',
   ENCRYPT: 'encrypt',
   ENCRYPT_FILE: 'encryptFile',
   DECRYPT_DDO: 'decryptDDO',
@@ -19,8 +18,10 @@ export const PROTOCOL_COMMANDS = {
   VALIDATE_DDO: 'validateDDO',
   COMPUTE_GET_ENVIRONMENTS: 'getComputeEnvironments',
   COMPUTE_START: 'startCompute',
+  FREE_COMPUTE_START: 'freeStartCompute',
   COMPUTE_STOP: 'stopCompute',
   COMPUTE_GET_STATUS: 'getComputeStatus',
+  COMPUTE_GET_STREAMABLE_LOGS: 'getComputeStreamableLogs',
   COMPUTE_GET_RESULT: 'getComputeResult',
   COMPUTE_INITIALIZE: 'initializeCompute',
   STOP_NODE: 'stopNode',
@@ -28,12 +29,20 @@ export const PROTOCOL_COMMANDS = {
   REINDEX_CHAIN: 'reindexChain',
   HANDLE_INDEXING_THREAD: 'handleIndexingThread',
   COLLECT_FEES: 'collectFees',
-  POLICY_SERVER_PASSTHROUGH: 'PolicyServerPassthrough'
+  POLICY_SERVER_PASSTHROUGH: 'PolicyServerPassthrough',
+  GET_P2P_PEER: 'getP2PPeer',
+  GET_P2P_PEERS: 'getP2PPeers',
+  GET_P2P_NETWORK_STATS: 'getP2PNetworkStats',
+  FIND_PEER: 'findPeer',
+  CREATE_AUTH_TOKEN: 'createAuthToken',
+  INVALIDATE_AUTH_TOKEN: 'invalidateAuthToken',
+  FETCH_CONFIG: 'fetchConfig',
+  PUSH_CONFIG: 'pushConfig',
+  JOBS: 'jobs'
 }
 // more visible, keep then close to make sure we always update both
 export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
   PROTOCOL_COMMANDS.DOWNLOAD,
-  PROTOCOL_COMMANDS.ECHO,
   PROTOCOL_COMMANDS.ENCRYPT,
   PROTOCOL_COMMANDS.ENCRYPT_FILE,
   PROTOCOL_COMMANDS.NONCE,
@@ -48,16 +57,27 @@ export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
   PROTOCOL_COMMANDS.VALIDATE_DDO,
   PROTOCOL_COMMANDS.COMPUTE_GET_ENVIRONMENTS,
   PROTOCOL_COMMANDS.COMPUTE_START,
+  PROTOCOL_COMMANDS.FREE_COMPUTE_START,
   PROTOCOL_COMMANDS.COMPUTE_STOP,
   PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
   PROTOCOL_COMMANDS.COMPUTE_GET_RESULT,
+  PROTOCOL_COMMANDS.COMPUTE_GET_STREAMABLE_LOGS,
   PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
   PROTOCOL_COMMANDS.STOP_NODE,
   PROTOCOL_COMMANDS.REINDEX_TX,
   PROTOCOL_COMMANDS.REINDEX_CHAIN,
   PROTOCOL_COMMANDS.HANDLE_INDEXING_THREAD,
   PROTOCOL_COMMANDS.COLLECT_FEES,
-  PROTOCOL_COMMANDS.POLICY_SERVER_PASSTHROUGH
+  PROTOCOL_COMMANDS.POLICY_SERVER_PASSTHROUGH,
+  PROTOCOL_COMMANDS.GET_P2P_PEER,
+  PROTOCOL_COMMANDS.GET_P2P_PEERS,
+  PROTOCOL_COMMANDS.GET_P2P_NETWORK_STATS,
+  PROTOCOL_COMMANDS.FIND_PEER,
+  PROTOCOL_COMMANDS.CREATE_AUTH_TOKEN,
+  PROTOCOL_COMMANDS.INVALIDATE_AUTH_TOKEN,
+  PROTOCOL_COMMANDS.FETCH_CONFIG,
+  PROTOCOL_COMMANDS.PUSH_CONFIG,
+  PROTOCOL_COMMANDS.JOBS
 ]
 
 export const MetadataStates = {
@@ -78,7 +98,11 @@ export const EVENTS = {
   TOKEN_URI_UPDATE: 'TokenURIUpdate',
   EXCHANGE_CREATED: 'ExchangeCreated',
   EXCHANGE_RATE_CHANGED: 'ExchangeRateChanged',
-  DISPENSER_CREATED: 'DispenserCreated'
+  DISPENSER_CREATED: 'DispenserCreated',
+  DISPENSER_ACTIVATED: 'DispenserActivated',
+  DISPENSER_DEACTIVATED: 'DispenserDeactivated',
+  EXCHANGE_ACTIVATED: 'ExchangeActivated',
+  EXCHANGE_DEACTIVATED: 'ExchangeDeactivated'
 }
 
 export const INDEXER_CRAWLING_EVENTS = {
@@ -132,6 +156,22 @@ export const EVENT_HASHES: Hashes = {
   '0x7d0aa581e6eb87e15f58588ff20c39ff6622fc796ec9bb664df6ed3eb02442c9': {
     type: EVENTS.DISPENSER_CREATED,
     text: 'DispenserCreated(address,address,uint256,uint256,address)'
+  },
+  '0xe9372084cb52c5392afee4b9d79d131e04b1e65676088d50a8f39fffb16a8745': {
+    type: EVENTS.DISPENSER_ACTIVATED,
+    text: 'DispenserActivated(address)'
+  },
+  '0x393f01061139648745ea000bb047bbe1785bd3a19d3a9c90f6747e1d2357d2b8': {
+    type: EVENTS.DISPENSER_DEACTIVATED,
+    text: 'DispenserDeactivated(address)'
+  },
+  '0xc7344c45124818d1d3a4c24ccb9b86d8b88d3bd05209b2a42b494cb32a503529': {
+    type: EVENTS.EXCHANGE_ACTIVATED,
+    text: 'ExchangeActivated(bytes32,address)'
+  },
+  '0x03da9148e1de78fba22de63c573465562ebf6ef878a1d3ea83790a560229984c': {
+    type: EVENTS.EXCHANGE_DEACTIVATED,
+    text: 'ExchangeDeactivated(bytes32,address)'
   }
 }
 
@@ -156,7 +196,12 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.HTTP_API_PORT,
     required: false
   },
-  PRIVATE_KEY: { name: 'PRIVATE_KEY', value: process.env.PRIVATE_KEY, required: true },
+  CONFIG_PATH: {
+    name: 'CONFIG_PATH',
+    value: process.env.CONFIG_PATH,
+    required: false
+  },
+  PRIVATE_KEY: { name: 'PRIVATE_KEY', value: process.env.PRIVATE_KEY, required: true }, // required for now as we support only raw private keys
   // used on test environments (ci)
   NODE1_PRIVATE_KEY: {
     name: 'NODE1_PRIVATE_KEY',
@@ -221,6 +266,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.AUTHORIZED_DECRYPTERS,
     required: false
   },
+  AUTHORIZED_DECRYPTERS_LIST: {
+    name: 'AUTHORIZED_DECRYPTERS_LIST',
+    value: process.env.AUTHORIZED_DECRYPTERS_LIST,
+    required: false
+  },
   OPERATOR_SERVICE_URL: {
     name: 'OPERATOR_SERVICE_URL',
     value: process.env.OPERATOR_SERVICE_URL,
@@ -234,6 +284,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   ALLOWED_VALIDATORS: {
     name: 'ALLOWED_VALIDATORS',
     value: process.env.ALLOWED_VALIDATORS,
+    required: false
+  },
+  ALLOWED_VALIDATORS_LIST: {
+    name: 'ALLOWED_VALIDATORS_LIST',
+    value: process.env.ALLOWED_VALIDATORS_LIST,
     required: false
   },
   INDEXER_INTERVAL: {
@@ -251,6 +306,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.ALLOWED_ADMINS,
     required: false
   },
+  ALLOWED_ADMINS_LIST: {
+    name: 'ALLOWED_ADMINS_LIST',
+    value: process.env.ALLOWED_ADMINS_LIST,
+    required: false
+  },
   ASSET_PURGATORY_URL: {
     name: 'ASSET_PURGATORY_URL',
     value: process.env.ASSET_PURGATORY_URL,
@@ -261,15 +321,22 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.ACCOUNT_PURGATORY_URL,
     required: false
   },
-  DASHBOARD: {
-    name: 'DASHBOARD',
-    value: process.env.DASHBOARD,
+  CONTROL_PANEL: {
+    name: 'CONTROL_PANEL',
+    // keep this for backwards compatibility for now
+    value: process.env.CONTROL_PANEL || process.env.DASHBOARD,
     required: false
   },
-  MAX_REQ_PER_SECOND: {
-    // rate limit per second
-    name: 'MAX_REQ_PER_SECOND',
-    value: process.env.MAX_REQ_PER_SECOND,
+  MAX_REQ_PER_MINUTE: {
+    // rate limit per minute (MAX requests per minute for a given IP or peer ID)
+    name: 'MAX_REQ_PER_MINUTE',
+    value: process.env.MAX_REQ_PER_MINUTE,
+    required: false
+  },
+  MAX_CONNECTIONS_PER_MINUTE: {
+    // rate connections limit per minute (MAX requests per minute that the node will process)
+    name: 'MAX_CONNECTIONS_PER_MINUTE',
+    value: process.env.MAX_CONNECTIONS_PER_MINUTE,
     required: false
   },
   RATE_DENY_LIST: {
@@ -317,57 +384,143 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     name: 'DB_TYPE',
     value: process.env.DB_TYPE,
     required: false
+  },
+  CRON_DELETE_DB_LOGS: {
+    name: 'CRON_DELETE_DB_LOGS',
+    value: process.env.CRON_DELETE_DB_LOGS,
+    required: false
+  },
+  CRON_CLEANUP_C2D_STORAGE: {
+    name: 'CRON_CLEANUP_C2D_STORAGE',
+    value: process.env.CRON_CLEANUP_C2D_STORAGE,
+    required: false
+  },
+  DOCKER_COMPUTE_ENVIRONMENTS: {
+    name: 'DOCKER_COMPUTE_ENVIRONMENTS',
+    value: process.env.DOCKER_COMPUTE_ENVIRONMENTS,
+    required: false
+  },
+  DOCKER_SOCKET_PATH: {
+    name: 'DOCKER_SOCKET_PATH',
+    value: process.env.DOCKER_SOCKET_PATH,
+    required: false
+  },
+  DOCKER_PROTOCOL: {
+    name: 'DOCKER_PROTOCOL',
+    value: process.env.DOCKER_PROTOCOL,
+    required: false
+  },
+  DOCKER_HOST: {
+    name: 'DOCKER_HOST',
+    value: process.env.DOCKER_HOST,
+    required: false
+  },
+  DOCKER_PORT: {
+    name: 'DOCKER_PORT',
+    value: process.env.DOCKER_PORT,
+    required: false
+  },
+  DOCKER_CA_PATH: {
+    name: 'DOCKER_CA_PATH',
+    value: process.env.DOCKER_CA_PATH,
+    required: false
+  },
+  DOCKER_CERT_PATH: {
+    name: 'DOCKER_CERT_PATH',
+    value: process.env.DOCKER_CERT_PATH,
+    required: false
+  },
+  DOCKER_KEY_PATH: {
+    name: 'DOCKER_KEY_PATH',
+    value: process.env.DOCKER_KEY_PATH,
+    required: false
+  },
+  IS_BOOTSTRAP: {
+    name: 'IS_BOOTSTRAP',
+    value: process.env.IS_BOOTSTRAP,
+    required: false
+  },
+  AUTHORIZED_PUBLISHERS: {
+    name: 'AUTHORIZED_PUBLISHERS',
+    value: process.env.AUTHORIZED_PUBLISHERS,
+    required: false
+  },
+  AUTHORIZED_PUBLISHERS_LIST: {
+    name: 'AUTHORIZED_PUBLISHERS_LIST',
+    value: process.env.AUTHORIZED_PUBLISHERS_LIST,
+    required: false
+  },
+  POLICY_SERVER_URL: {
+    name: 'POLICY_SERVER_URL',
+    value: process.env.POLICY_SERVER_URL,
+    required: false
+  },
+  VALIDATE_UNSIGNED_DDO: {
+    name: 'VALIDATE_UNSIGNED_DDO',
+    value: process.env.VALIDATE_UNSIGNED_DDO,
+    required: false
+  },
+  P2P_ipV4BindAddress: {
+    name: 'P2P_ipV4BindAddress',
+    value: process.env.P2P_ipV4BindAddress,
+    required: false
+  },
+  P2P_ipV4BindTcpPort: {
+    name: 'P2P_ipV4BindTcpPort',
+    value: process.env.P2P_ipV4BindTcpPort,
+    required: false
+  },
+  P2P_ipV4BindWsPort: {
+    name: 'P2P_ipV4BindWsPort',
+    value: process.env.P2P_ipV4BindWsPort,
+    required: false
+  },
+  P2P_ipV4BindWssPort: {
+    name: 'P2P_ipV4BindWssPort',
+    value: process.env.P2P_ipV4BindWssPort,
+    required: false
+  },
+  P2P_ipV6BindAddress: {
+    name: 'P2P_ipV6BindAddress',
+    value: process.env.P2P_ipV6BindAddress,
+    required: false
+  },
+  P2P_ipV6BindTcpPort: {
+    name: 'P2P_ipV6BindTcpPort',
+    value: process.env.P2P_ipV6BindTcpPort,
+    required: false
+  },
+  P2P_ipV6BindWsPort: {
+    name: 'P2P_ipV6BindWsPort',
+    value: process.env.P2P_ipV6BindWsPort,
+    required: false
+  },
+  P2P_MIN_CONNECTIONS: {
+    name: 'P2P_MIN_CONNECTIONS',
+    value: process.env.P2P_MIN_CONNECTIONS,
+    required: false
+  },
+  P2P_MAX_CONNECTIONS: {
+    name: 'P2P_MAX_CONNECTIONS',
+    value: process.env.P2P_MAX_CONNECTIONS,
+    required: false
+  },
+  HTTP_CERT_PATH: {
+    name: 'HTTP_CERT_PATH',
+    value: process.env.HTTP_CERT_PATH,
+    required: false
+  },
+  HTTP_KEY_PATH: {
+    name: 'HTTP_KEY_PATH',
+    value: process.env.HTTP_KEY_PATH,
+    required: false
   }
 }
-
-// default to 3 requests per second (configurable)
-export const DEFAULT_RATE_LIMIT_PER_SECOND = 3
+export const CONNECTION_HISTORY_DELETE_THRESHOLD = 300
+// 1 minute
+export const CONNECTIONS_RATE_INTERVAL = 60 * 1000
 // Typesense's maximum limit to send 250 hits at a time
 export const TYPESENSE_HITS_CAP = 250
 export const DDO_IDENTIFIER_PREFIX = 'did:op:'
 // global ocean node API services path
 export const SERVICES_API_BASE_PATH = '/api/services'
-
-export const defaultBootstrapAddresses = [
-  // Public IPFS bootstraps
-  // '/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ',
-  // '/dnsaddr/bootstrap.libp2p.io/ipfs/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN',
-  // '/dnsaddr/bootstrap.libp2p.io/ipfs/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa',
-  // OPF nodes
-  //  node1
-  '/dns4/node1.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
-  '/dns4/node1.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
-  '/dns6/node1.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
-  '/dns6/node1.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmLhRDqfufZiQnxvQs2XHhd6hwkLSPfjAQg1gH8wgRixiP',
-  // node 2
-  '/dns4/node2.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
-  '/dns4/node2.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
-  '/dns6/node2.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
-  '/dns6/node2.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmHwzeVw7RpGopjZe6qNBJbzDDBdqtrSk7Gcx1emYsfgL4',
-  // node 3
-  '/dns4/node3.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
-  '/dns4/node3.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
-  '/dns6/node3.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
-  '/dns6/node3.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmBKSeEP3v4tYEPsZsZv9VELinyMCsrVTJW9BvQeFXx28U',
-  // node 4
-  '/dns4/node4.oceanprotocol.com/tcp/9000/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom',
-  '/dns4/node4.oceanprotocol.com/tcp/9001/ws/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom',
-  '/dns6/node4.oceanprotocol.com/tcp/9002/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom',
-  '/dns6/node4.oceanprotocol.com/tcp/9003/ws/p2p/16Uiu2HAmSTVTArioKm2wVcyeASHYEsnx2ZNq467Z4GMDU4ErEPom'
-]
-
-export const knownUnsafeURLs: string[] = [
-  // AWS and GCP
-  '^.*(169.254.169.254).*',
-  // GCP
-  '^.*(metadata.google.internal).*',
-  '^.*(http://metadata).*',
-  // Azure
-  '^.*(http://169.254.169.254).*',
-  // Oracle Cloud
-  '^.*(http://192.0.0.192).*',
-  // Alibaba Cloud
-  '^.*(http://100.100.100.200).*',
-  // k8s ETCD
-  '^.*(127.0.0.1).*'
-]
