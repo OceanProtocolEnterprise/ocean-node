@@ -177,7 +177,7 @@ describe('URL Storage tests', () => {
       type: 'url',
       url: 'https://stock-api.oceanprotocol.com/stock/stock.json',
       method: 'get',
-      headers: [{ 'X-Test-Header': 'test' }]
+      headers: { 'X-Test-Header': 'test' }
     }
     const storage = Storage.getStorageClass(file, config)
     const stream = await storage.getReadableStream()
