@@ -14,12 +14,11 @@ import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { fetchFileMetadata } from '../../utils/asset.js'
 import axios from 'axios'
 import urlJoin from 'url-join'
-import { encrypt as encryptData, decrypt as decryptData } from '../../utils/crypt.js'
-import { Readable } from 'stream'
 import AWS from 'aws-sdk'
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
-
+import { Readable } from 'stream'
+import { encrypt as encryptData, decrypt as decryptData } from '../../utils/crypt.js'
 export abstract class Storage {
   private file: UrlFileObject | IpfsFileObject | ArweaveFileObject | S3FileObject
   config: OceanNodeConfig
@@ -39,7 +38,6 @@ export abstract class Storage {
     forceChecksum: boolean
   ): Promise<FileInfoResponse>
 
-  abstract encryptContent(encryptionType: 'AES' | 'ECIES'): Promise<Buffer>
   abstract isFilePath(): boolean
 
   getFile(): any {
@@ -208,6 +206,27 @@ export class UrlStorage extends Storage {
     }
   }
 
+  async getReadableStream(): Promise<StorageReadable> {
+    const input = this.getDownloadUrl()
+    const file = this.getFile()
+    CORE_LOGGER.info(`Fetching the file from ${input}`)
+    CORE_LOGGER.debug(`Using headers: ${JSON.stringify(file.headers)}`)
+    const { headers } = file
+    const response = await axios({
+      method: 'get',
+      url: input,
+      headers,
+      responseType: 'stream',
+      timeout: 30000
+    })
+
+    return {
+      httpStatus: response.status,
+      stream: response.data,
+      headers: response.headers as any
+    }
+  }
+
   validate(): [boolean, string] {
     const file: UrlFileObject = this.getFile() as UrlFileObject
     if (!file.url || !file.method) {
@@ -254,11 +273,12 @@ export class UrlStorage extends Storage {
     fileObject: UrlFileObject,
     forceChecksum: boolean
   ): Promise<FileInfoResponse> {
-    const { url, method } = fileObject
+    const { url, method, headers } = fileObject
     const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
       url,
-      method,
-      forceChecksum
+      method || 'get',
+      forceChecksum,
+      headers
     )
     return {
       valid: true,
@@ -270,19 +290,6 @@ export class UrlStorage extends Storage {
       encryptedBy: fileObject.encryptedBy,
       encryptMethod: fileObject.encryptMethod
     }
-  }
-
-  async encryptContent(
-    encryptionType: EncryptMethod.AES | EncryptMethod.ECIES
-  ): Promise<Buffer> {
-    const file = this.getFile()
-    const response = await axios({
-      url: file.url,
-      method: file.method || 'get',
-      headers: file.headers,
-      timeout: 30000
-    })
-    return await encryptData(response.data, encryptionType)
   }
 }
 
@@ -351,17 +358,6 @@ export class ArweaveStorage extends Storage {
       encryptMethod: fileObject.encryptMethod
     }
   }
-
-  async encryptContent(
-    encryptionType: EncryptMethod.AES | EncryptMethod.ECIES
-  ): Promise<Buffer> {
-    const file = this.getFile()
-    const response = await axios({
-      url: urlJoin(this.config.arweaveGateway, file.transactionId),
-      method: 'get'
-    })
-    return await encryptData(response.data, encryptionType)
-  }
 }
 
 export class IpfsStorage extends Storage {
@@ -422,17 +418,6 @@ export class IpfsStorage extends Storage {
       encryptedBy: fileObject.encryptedBy,
       encryptMethod: fileObject.encryptMethod
     }
-  }
-
-  async encryptContent(
-    encryptionType: EncryptMethod.AES | EncryptMethod.ECIES
-  ): Promise<Buffer> {
-    const file = this.getFile()
-    const response = await axios({
-      url: file.hash,
-      method: 'get'
-    })
-    return await encryptData(response.data, encryptionType)
   }
 }
 

@@ -52,11 +52,9 @@ export const AccessListContractSchema = z.preprocess(
   z.record(z.string(), z.array(z.string())).nullable()
 )
 
-export const OceanNodeKeysSchema = z.object({
-  peerId: z.any().optional(),
-  publicKey: z.any().optional(),
-  privateKey: z.any().optional(),
-  ethAddress: z.string().optional()
+export const OceanNodeConfigKeysSchema = z.object({
+  privateKey: z.any().optional().nullable(),
+  type: z.string().optional().default('raw')
 })
 
 export const DenyListSchema = z.object({
@@ -141,7 +139,9 @@ export const C2DDockerConfigSchema = z.array(
         })
         .optional(),
       fees: z.record(z.string(), z.array(ComputeEnvFeesSchema)),
-      free: ComputeEnvironmentFreeOptionsSchema.optional()
+      free: ComputeEnvironmentFreeOptionsSchema.optional(),
+      imageRetentionDays: z.number().int().min(1).optional().default(7),
+      imageCleanupInterval: z.number().int().min(3600).optional().default(86400) // min 1 hour, default 24 hours
     })
     .refine((data) => data.fees !== undefined && Object.keys(data.fees).length > 0, {
       message: 'There is no fees configuration!'
@@ -265,7 +265,7 @@ export const OceanNodeConfigSchema = z
     authorizedPublishers: addressArrayFromString.optional().default([]),
     authorizedPublishersList: jsonFromString(AccessListContractSchema).optional(),
 
-    keys: OceanNodeKeysSchema.optional(),
+    keys: OceanNodeConfigKeysSchema.optional(),
 
     INTERFACES: z.string().optional(),
     hasP2P: booleanFromString.optional().default(true),

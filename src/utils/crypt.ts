@@ -1,7 +1,7 @@
 import eciesjs from 'eciesjs'
+import { EncryptMethod } from '../@types/fileObject.js'
 import crypto from 'crypto'
 import { getConfiguration } from './config.js'
-import { EncryptMethod } from '../@types/fileObject.js'
 
 /**
  * This method encrypts data according to a given algorithm using node keys
@@ -57,6 +57,7 @@ export async function decrypt(
   }
   return decryptedData
 }
+
 // this can be handy as we do this kind of hash in multiple places
 export function create256Hash(input: string): string {
   const result = crypto.createHash('sha256').update(input).digest('hex')
