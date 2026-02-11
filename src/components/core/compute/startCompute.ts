@@ -151,6 +151,22 @@ export class PaidComputeStartHandler extends CommandHandler {
           }
         }
       }
+      // validate encrypteddockerRegistryAuth
+      if (task.encryptedDockerRegistryAuth) {
+        const validation = await engine.checkEncryptedDockerRegistryAuth(
+          task.encryptedDockerRegistryAuth
+        )
+        if (!validation.valid) {
+          return {
+            stream: null,
+            status: {
+              httpStatus: validation.status,
+              error: `Invalid encryptedDockerRegistryAuth :${validation.reason}`
+            }
+          }
+        }
+      }
+
       const { algorithm } = task
       const config = await getConfiguration()
 
@@ -567,7 +583,8 @@ export class PaidComputeStartHandler extends CommandHandler {
           jobId,
           task.metadata,
           task.additionalViewers,
-          task.queueMaxWaitTime
+          task.queueMaxWaitTime,
+          task.encryptedDockerRegistryAuth
         )
         CORE_LOGGER.logMessage(
           'ComputeStartCommand Response: ' + JSON.stringify(response, null, 2),
@@ -584,7 +601,7 @@ export class PaidComputeStartHandler extends CommandHandler {
         const errMsg = e?.message || String(e)
         CORE_LOGGER.error(`Error starting compute job: ${errMsg}`)
         try {
-          await engine.escrow.cancelExpiredLocks(
+          await engine.escrow.cancelExpiredLock(
             task.payment.chainId,
             jobId,
             task.payment.token,
@@ -681,6 +698,22 @@ export class FreeComputeStartHandler extends CommandHandler {
           }
         }
       }
+      // validate encrypteddockerRegistryAuth
+      if (task.encryptedDockerRegistryAuth) {
+        const validation = await engine.checkEncryptedDockerRegistryAuth(
+          task.encryptedDockerRegistryAuth
+        )
+        if (!validation.valid) {
+          return {
+            stream: null,
+            status: {
+              httpStatus: validation.status,
+              error: `Invalid encryptedDockerRegistryAuth :${validation.reason}`
+            }
+          }
+        }
+      }
+
       const policyServer = new PolicyServer()
       for (const elem of [...[task.algorithm], ...task.datasets]) {
         if (!('documentId' in elem)) {
@@ -913,7 +946,8 @@ export class FreeComputeStartHandler extends CommandHandler {
         jobId,
         task.metadata,
         task.additionalViewers,
-        task.queueMaxWaitTime
+        task.queueMaxWaitTime,
+        task.encryptedDockerRegistryAuth
       )
 
       CORE_LOGGER.logMessage(

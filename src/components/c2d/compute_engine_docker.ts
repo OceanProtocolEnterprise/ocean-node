@@ -51,6 +51,9 @@ import { decryptFilesObject, omitDBComputeFieldsFromComputeJob } from './index.j
 import { ValidateParams } from '../httpRoutes/validateCommands.js'
 import { Service } from '@oceanprotocol/ddo-js'
 import { getOceanTokenAddressForChain } from '../../utils/address.js'
+import { dockerRegistrysAuth, dockerRegistryAuth } from '../../@types/OceanNode.js'
+import { EncryptMethod } from '../../@types/fileObject.js'
+import { ZeroAddress } from 'ethers'
 
 export class C2DEngineDocker extends C2DEngine {
   private envs: ComputeEnvironment[] = []
@@ -61,17 +64,19 @@ export class C2DEngineDocker extends C2DEngine {
   private jobImageSizes: Map<string, number> = new Map()
   private isInternalLoopRunning: boolean = false
   private imageCleanupTimer: NodeJS.Timeout | null = null
+  private paymentClaimTimer: NodeJS.Timeout | null = null
   private static DEFAULT_DOCKER_REGISTRY = 'https://registry-1.docker.io'
   private retentionDays: number
   private cleanupInterval: number
-
+  private paymentClaimInterval: number
   public constructor(
     clusterConfig: C2DClusterInfo,
     db: C2DDatabase,
     escrow: Escrow,
-    keyManager: KeyManager
+    keyManager: KeyManager,
+    dockerRegistryAuths: dockerRegistrysAuth
   ) {
-    super(clusterConfig, db, escrow, keyManager)
+    super(clusterConfig, db, escrow, keyManager, dockerRegistryAuths)
 
     this.docker = null
     if (clusterConfig.connection.socketPath) {
@@ -83,6 +88,7 @@ export class C2DEngineDocker extends C2DEngine {
     }
     this.retentionDays = clusterConfig.connection.imageRetentionDays || 7
     this.cleanupInterval = clusterConfig.connection.imageCleanupInterval || 86400 // 24 hours
+    this.paymentClaimInterval = clusterConfig.connection.paymentClaimInterval || 3600 // 1 hour
     if (
       clusterConfig.connection.protocol &&
       clusterConfig.connection.host &&
@@ -286,6 +292,8 @@ export class C2DEngineDocker extends C2DEngine {
     }
     // Start image cleanup timer
     this.startImageCleanupTimer()
+    // Start claim timer
+    this.startPaymentTimer()
   }
 
   public override stop(): Promise<void> {
@@ -301,6 +309,11 @@ export class C2DEngineDocker extends C2DEngine {
       this.imageCleanupTimer = null
       CORE_LOGGER.debug('Image cleanup timer stopped')
     }
+    if (this.paymentClaimTimer) {
+      clearInterval(this.paymentClaimTimer)
+      this.paymentClaimTimer = null
+      CORE_LOGGER.debug('Payment claim timer stopped')
+    }
     return Promise.resolve()
   }
 
@@ -309,6 +322,282 @@ export class C2DEngineDocker extends C2DEngine {
       await this.db.updateImage(image)
     } catch (e) {
       CORE_LOGGER.error(`Failed to update image usage for ${image}: ${e.message}`)
+    }
+  }
+
+  private async claimPayments(): Promise<void> {
+    const envs: string[] = []
+    for (const env of this.envs) {
+      envs.push(env.id)
+    }
+    // get all jobs that are in the settle status
+    const jobs = await this.db.getJobs(
+      envs,
+      undefined,
+      undefined,
+      C2DStatusNumber.JobSettle
+    )
+
+    if (jobs.length === 0) {
+      return
+    }
+
+    const providerAddress = this.getKeyManager().getEthAddress()
+    const chains: Set<number> = new Set()
+    // get all unique chains
+    for (const job of jobs) {
+      if (job.payment && job.payment.token) {
+        chains.add(job.payment.chainId)
+      }
+    }
+
+    // Get all locks for all chains
+    const locks: any[] = []
+    for (const chain of chains) {
+      try {
+        const contractLocks = await this.escrow.getLocks(
+          chain,
+          ZeroAddress,
+          ZeroAddress,
+          providerAddress
+        )
+        if (contractLocks) {
+          locks.push(...contractLocks)
+        }
+      } catch (e) {
+        CORE_LOGGER.error(`Failed to get locks for chain ${chain}: ${e.message}`)
+      }
+    }
+
+    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000))
+
+    // Group jobs by operation type and chain for batch processing
+    const jobsToClaim: Array<{
+      job: DBComputeJob
+      cost: number
+      proof: string
+    }> = []
+    const jobsToCancel: DBComputeJob[] = []
+    const jobsWithoutLock: DBComputeJob[] = []
+
+    // Process each job to determine what operation is needed
+    for (const job of jobs) {
+      // Calculate algo duration
+      const algoDuration =
+        parseFloat(job.algoStopTimestamp) - parseFloat(job.algoStartTimestamp)
+      job.algoDuration = algoDuration
+
+      // Free jobs or jobs without payment info - mark as finished
+      if (job.isFree || !job.payment) {
+        jobsWithoutLock.push(job)
+        continue
+      }
+
+      // Find matching lock
+      const lock = locks.find(
+        (lock) => BigInt(lock.jobId.toString()) === BigInt(create256Hash(job.jobId))
+      )
+
+      if (!lock) {
+        // No lock found, mark as finished
+        jobsWithoutLock.push(job)
+        continue
+      }
+
+      // Check if lock is expired
+      const lockExpiry = BigInt(lock.expiry.toString())
+      if (currentTimestamp > lockExpiry) {
+        // Lock expired, cancel it
+        jobsToCancel.push(job)
+        continue
+      }
+
+      // Get environment to calculate cost
+      const env = await this.getComputeEnvironment(job.payment.chainId, job.environment)
+
+      if (!env) {
+        CORE_LOGGER.warn(
+          `Environment not found for job ${job.jobId}, skipping payment claim`
+        )
+        continue
+      }
+
+      // Calculate minimum duration
+      let minDuration = 0
+      if (algoDuration < 0) minDuration += algoDuration * -1
+      else minDuration += algoDuration
+      if (
+        `minJobDuration` in env &&
+        env.minJobDuration &&
+        minDuration < env.minJobDuration
+      ) {
+        minDuration = env.minJobDuration
+      }
+
+      if (minDuration > 0) {
+        // We need to claim payment
+        const fee = env.fees[job.payment.chainId]?.find(
+          (fee) => fee.feeToken === job.payment.token
+        )
+
+        if (!fee) {
+          CORE_LOGGER.warn(
+            `Fee not found for job ${job.jobId}, token ${job.payment.token}, skipping`
+          )
+          continue
+        }
+
+        const cost = this.getTotalCostOfJob(job.resources, minDuration, fee)
+        const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
+
+        jobsToClaim.push({ job, cost, proof })
+      } else {
+        // No payment due, cancel the lock
+        jobsToCancel.push(job)
+      }
+    }
+
+    // Batch process claims by chain
+    const claimsByChain = new Map<
+      number,
+      Array<{ job: DBComputeJob; cost: number; proof: string }>
+    >()
+    for (const claim of jobsToClaim) {
+      const { chainId } = claim.job.payment!
+      if (!claimsByChain.has(chainId)) {
+        claimsByChain.set(chainId, [])
+      }
+      claimsByChain.get(chainId)!.push(claim)
+    }
+
+    // Process batch claims
+    for (const [chainId, claims] of claimsByChain.entries()) {
+      if (claims.length === 0) continue
+
+      try {
+        const jobs = claims.map((c) => c.job)
+        const tokens = jobs.map((j) => j.payment!.token)
+        const payers = jobs.map((j) => j.owner)
+        const amounts = claims.map((c) => c.cost)
+        const proofs = claims.map((c) => c.proof)
+
+        const txId = await this.escrow.claimLocks(
+          chainId,
+          jobs.map((j) => j.jobId),
+          tokens,
+          payers,
+          amounts,
+          proofs
+        )
+
+        if (txId) {
+          // Update all jobs with the transaction ID
+          for (const claim of claims) {
+            claim.job.payment!.claimTx = txId
+            claim.job.payment!.cost = claim.cost
+            claim.job.status = C2DStatusNumber.JobFinished
+            claim.job.statusText = C2DStatusText.JobFinished
+            await this.db.updateJob(claim.job)
+          }
+          CORE_LOGGER.info(
+            `Successfully claimed ${claims.length} locks in batch transaction ${txId}`
+          )
+        }
+      } catch (e) {
+        CORE_LOGGER.error(
+          `Failed to batch claim locks for chain ${chainId}: ${e.message}`
+        )
+        // Fallback to individual processing on batch failure
+        for (const claim of claims) {
+          try {
+            const txId = await this.escrow.claimLock(
+              chainId,
+              claim.job.jobId,
+              claim.job.payment!.token,
+              claim.job.owner,
+              claim.cost,
+              claim.proof
+            )
+            if (txId) {
+              claim.job.payment!.claimTx = txId
+              claim.job.payment!.cost = claim.cost
+              claim.job.status = C2DStatusNumber.JobFinished
+              claim.job.statusText = C2DStatusText.JobFinished
+              await this.db.updateJob(claim.job)
+            }
+          } catch (err) {
+            CORE_LOGGER.error(
+              `Failed to claim lock for job ${claim.job.jobId}: ${err.message}`
+            )
+          }
+        }
+      }
+    }
+
+    // Batch process cancellations by chain
+    const cancellationsByChain = new Map<number, DBComputeJob[]>()
+    for (const job of jobsToCancel) {
+      const { chainId } = job.payment!
+      if (!cancellationsByChain.has(chainId)) {
+        cancellationsByChain.set(chainId, [])
+      }
+      cancellationsByChain.get(chainId)!.push(job)
+    }
+
+    // Process batch cancellations
+    for (const [chainId, jobsToCancelBatch] of cancellationsByChain.entries()) {
+      if (jobsToCancelBatch.length === 0) continue
+
+      try {
+        const jobIds = jobsToCancelBatch.map((j) => j.jobId)
+        const tokens = jobsToCancelBatch.map((j) => j.payment!.token)
+        const payers = jobsToCancelBatch.map((j) => j.owner)
+
+        const txId = await this.escrow.cancelExpiredLocks(chainId, jobIds, tokens, payers)
+
+        if (txId) {
+          // Update all jobs
+          for (const job of jobsToCancelBatch) {
+            job.status = C2DStatusNumber.JobFinished
+            job.statusText = C2DStatusText.JobFinished
+            await this.db.updateJob(job)
+          }
+          CORE_LOGGER.info(
+            `Successfully cancelled ${jobsToCancelBatch.length} expired locks in batch transaction ${txId}`
+          )
+        }
+      } catch (e) {
+        CORE_LOGGER.error(
+          `Failed to batch cancel locks for chain ${chainId}: ${e.message}`
+        )
+        // Fallback to individual processing on batch failure
+        for (const job of jobsToCancelBatch) {
+          try {
+            const txId = await this.escrow.cancelExpiredLock(
+              chainId,
+              job.jobId,
+              job.payment!.token,
+              job.owner
+            )
+            if (txId) {
+              job.status = C2DStatusNumber.JobFinished
+              job.statusText = C2DStatusText.JobFinished
+              await this.db.updateJob(job)
+            }
+          } catch (err) {
+            CORE_LOGGER.error(
+              `Failed to cancel lock for job ${job.jobId}: ${err.message}`
+            )
+          }
+        }
+      }
+    }
+
+    // Mark jobs without locks as finished
+    for (const job of jobsWithoutLock) {
+      job.status = C2DStatusNumber.JobFinished
+      job.statusText = C2DStatusText.JobFinished
+      await this.db.updateJob(job)
     }
   }
 
@@ -376,6 +665,30 @@ export class C2DEngineDocker extends C2DEngine {
     )
   }
 
+  private startPaymentTimer(): void {
+    if (this.paymentClaimTimer) {
+      return // Already running
+    }
+
+    // Run initial cleanup after a short delay
+    setTimeout(() => {
+      this.claimPayments().catch((e) => {
+        CORE_LOGGER.error(`Initial payments claim failed: ${e.message}`)
+      })
+    }, 60000) // Wait 1 minute after start
+
+    // Set up periodic cleanup
+    this.paymentClaimTimer = setInterval(() => {
+      this.claimPayments().catch((e) => {
+        CORE_LOGGER.error(`Periodic payments claim failed: ${e.message}`)
+      })
+    }, this.paymentClaimInterval * 1000)
+
+    CORE_LOGGER.info(
+      `Payments claim timer started (interval: ${this.paymentClaimInterval / 60} minutes)`
+    )
+  }
+
   // eslint-disable-next-line require-await
   public override async getComputeEnvironments(
     chainId?: number
@@ -438,7 +751,7 @@ export class C2DEngineDocker extends C2DEngine {
     return filteredEnvs
   }
 
-  private static parseImage(image: string) {
+  private parseImage(image: string) {
     let registry = C2DEngineDocker.DEFAULT_DOCKER_REGISTRY
     let name = image
     let ref = 'latest'
@@ -472,13 +785,44 @@ export class C2DEngineDocker extends C2DEngine {
     return { registry, name, ref }
   }
 
-  public static async getDockerManifest(image: string): Promise<any> {
-    const { registry, name, ref } = C2DEngineDocker.parseImage(image)
+  public async getDockerManifest(
+    image: string,
+    encryptedDockerRegistryAuth?: string
+  ): Promise<any> {
+    const { registry, name, ref } = this.parseImage(image)
     const url = `${registry}/v2/${name}/manifests/${ref}`
+
+    // Use user provided registry auth or get it from the config
+    let dockerRegistryAuth: dockerRegistryAuth | null = null
+    if (encryptedDockerRegistryAuth) {
+      const decryptedDockerRegistryAuth = await this.keyManager.decrypt(
+        Uint8Array.from(Buffer.from(encryptedDockerRegistryAuth, 'hex')),
+        EncryptMethod.ECIES
+      )
+      dockerRegistryAuth = JSON.parse(decryptedDockerRegistryAuth.toString())
+    } else {
+      dockerRegistryAuth = this.getDockerRegistryAuth(registry)
+    }
+
     let headers: Record<string, string> = {
       Accept:
         'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json'
     }
+
+    // If we have auth credentials, add Basic auth header to initial request
+    if (dockerRegistryAuth) {
+      // Use auth string if available, otherwise encode username:password
+      const authString = dockerRegistryAuth.auth
+        ? dockerRegistryAuth.auth
+        : Buffer.from(
+            `${dockerRegistryAuth.username}:${dockerRegistryAuth.password}`
+          ).toString('base64')
+      headers.Authorization = `Basic ${authString}`
+      CORE_LOGGER.debug(
+        `Using docker registry auth for ${registry} to get manifest for image ${image}`
+      )
+    }
+
     let response = await fetch(url, { headers })
 
     if (response.status === 401) {
@@ -489,7 +833,22 @@ export class C2DEngineDocker extends C2DEngine {
         const tokenUrl = new URL(match[1])
         tokenUrl.searchParams.set('service', match[2])
         tokenUrl.searchParams.set('scope', `repository:${name}:pull`)
-        const { token } = (await fetch(tokenUrl.toString()).then((r) => r.json())) as {
+
+        // Add Basic auth to token request if we have credentials
+        const tokenHeaders: Record<string, string> = {}
+        if (dockerRegistryAuth) {
+          // Use auth string if available, otherwise encode username:password
+          const authString = dockerRegistryAuth.auth
+            ? dockerRegistryAuth.auth
+            : Buffer.from(
+                `${dockerRegistryAuth.username}:${dockerRegistryAuth.password}`
+              ).toString('base64')
+          tokenHeaders.Authorization = `Basic ${authString}`
+        }
+
+        const { token } = (await fetch(tokenUrl.toString(), {
+          headers: tokenHeaders
+        }).then((r) => r.json())) as {
           token: string
         }
         headers = { ...headers, Authorization: `Bearer ${token}` }
@@ -507,16 +866,67 @@ export class C2DEngineDocker extends C2DEngine {
   }
 
   /**
-   * Checks the docker image by looking at the manifest
+   * Checks the docker image by looking at local images first, then remote manifest
    * @param image name or tag
-   * @returns boolean
+   * @param encryptedDockerRegistryAuth optional encrypted auth for remote registry
+   * @param platform optional platform to validate against
+   * @returns ValidateParams with valid flag and platform validation result
    */
-  public static async checkDockerImage(
+  public async checkDockerImage(
     image: string,
+    encryptedDockerRegistryAuth?: string,
     platform?: RunningPlatform
   ): Promise<ValidateParams> {
+    // Step 1: Try to check local image first
+    if (this.docker) {
+      try {
+        const dockerImage = this.docker.getImage(image)
+        const imageInfo = await dockerImage.inspect()
+
+        // Extract platform information from local image
+        const localPlatform = {
+          architecture: imageInfo.Architecture || 'amd64',
+          os: imageInfo.Os || 'linux'
+        }
+
+        // Normalize architecture (amd64 -> x86_64 for compatibility)
+        if (localPlatform.architecture === 'amd64') {
+          localPlatform.architecture = 'x86_64'
+        }
+
+        // Validate platform if required
+        const isValidPlatform = platform
+          ? checkManifestPlatform(localPlatform, platform)
+          : true
+
+        if (isValidPlatform) {
+          CORE_LOGGER.debug(`Image ${image} found locally and platform is valid`)
+          return { valid: true }
+        } else {
+          CORE_LOGGER.warn(
+            `Image ${image} found locally but platform mismatch: ` +
+              `local=${localPlatform.architecture}/${localPlatform.os}, ` +
+              `required=${platform.architecture}/${platform.os}`
+          )
+          return {
+            valid: false,
+            status: 400,
+            reason:
+              `Platform mismatch: image is ${localPlatform.architecture}/${localPlatform.os}, ` +
+              `but environment requires ${platform.architecture}/${platform.os}`
+          }
+        }
+      } catch (localErr: any) {
+        // Image not found locally or error inspecting - fall through to remote check
+        CORE_LOGGER.debug(
+          `Image ${image} not found locally (${localErr.message}), checking remote registry`
+        )
+      }
+    }
+
+    // Step 2: Fall back to remote registry check (existing behavior)
     try {
-      const manifest = await C2DEngineDocker.getDockerManifest(image)
+      const manifest = await this.getDockerManifest(image, encryptedDockerRegistryAuth)
 
       const platforms = Array.isArray(manifest.manifests)
         ? manifest.manifests.map((entry: any) => entry.platform)
@@ -552,7 +962,8 @@ export class C2DEngineDocker extends C2DEngine {
     jobId: string,
     metadata?: DBComputeJobMetadata,
     additionalViewers?: string[],
-    queueMaxWaitTime?: number
+    queueMaxWaitTime?: number,
+    encryptedDockerRegistryAuth?: string
   ): Promise<ComputeJob[]> {
     if (!this.docker) return []
     // TO DO - iterate over resources and get default runtime
@@ -600,6 +1011,7 @@ export class C2DEngineDocker extends C2DEngine {
         throw new Error(`additionalDockerFiles cannot be used with queued jobs`)
       }
     }
+
     const job: DBComputeJob = {
       clusterHash: this.getC2DConfig().hash,
       containerImage: image,
@@ -636,7 +1048,8 @@ export class C2DEngineDocker extends C2DEngine {
       additionalViewers,
       terminationDetails: { exitCode: null, OOMKilled: null },
       algoDuration: 0,
-      queueMaxWaitTime: queueMaxWaitTime || 0
+      queueMaxWaitTime: queueMaxWaitTime || 0,
+      encryptedDockerRegistryAuth // we store the encrypted docker registry auth in the job
     }
 
     if (algorithm.meta.container && algorithm.meta.container.dockerfile) {
@@ -647,7 +1060,11 @@ export class C2DEngineDocker extends C2DEngine {
       }
     } else {
       // already built, we need to validate it
-      const validation = await C2DEngineDocker.checkDockerImage(image, env.platform)
+      const validation = await this.checkDockerImage(
+        image,
+        job.encryptedDockerRegistryAuth,
+        env.platform
+      )
       if (!validation.valid)
         throw new Error(
           `Cannot find image ${image} for ${env.platform.architecture}. Maybe it does not exist or it's build for other arhitectures.`
@@ -1319,8 +1736,8 @@ export class C2DEngineDocker extends C2DEngine {
     }
     if (job.status === C2DStatusNumber.PublishingResults) {
       // get output
-      job.status = C2DStatusNumber.JobFinished
-      job.statusText = C2DStatusText.JobFinished
+      job.status = C2DStatusNumber.JobSettle
+      job.statusText = C2DStatusText.JobSettle
       let container
       try {
         container = await this.docker.getContainer(job.jobId + '-algoritm')
@@ -1379,66 +1796,6 @@ export class C2DEngineDocker extends C2DEngine {
 
     this.jobImageSizes.delete(job.jobId)
 
-    // payments
-    const algoDuration =
-      parseFloat(job.algoStopTimestamp) - parseFloat(job.algoStartTimestamp)
-
-    job.algoDuration = algoDuration
-    await this.db.updateJob(job)
-    if (!job.isFree && job.payment) {
-      let txId = null
-      const env = await this.getComputeEnvironment(job.payment.chainId, job.environment)
-      let minDuration = 0
-
-      if (algoDuration < 0) minDuration += algoDuration * -1
-      else minDuration += algoDuration
-      if (
-        env &&
-        `minJobDuration` in env &&
-        env.minJobDuration &&
-        minDuration < env.minJobDuration
-      ) {
-        minDuration = env.minJobDuration
-      }
-      let cost = 0
-      if (minDuration > 0) {
-        // we need to claim
-        const fee = env.fees[job.payment.chainId].find(
-          (fee) => fee.feeToken === job.payment.token
-        )
-        cost = this.getTotalCostOfJob(job.resources, minDuration, fee)
-        const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
-        try {
-          txId = await this.escrow.claimLock(
-            job.payment.chainId,
-            job.jobId,
-            job.payment.token,
-            job.owner,
-            cost,
-            proof
-          )
-        } catch (e) {
-          CORE_LOGGER.error('Failed to claim lock: ' + e.message)
-        }
-      } else {
-        // release the lock, we are not getting paid
-        try {
-          txId = await this.escrow.cancelExpiredLocks(
-            job.payment.chainId,
-            job.jobId,
-            job.payment.token,
-            job.owner
-          )
-        } catch (e) {
-          CORE_LOGGER.error('Failed to release lock: ' + e.message)
-        }
-      }
-      if (txId) {
-        job.payment.claimTx = txId
-        job.payment.cost = cost
-        await this.db.updateJob(job)
-      }
-    }
     try {
       const container = await this.docker.getContainer(job.jobId + '-algoritm')
       if (container) {
@@ -1644,7 +2001,50 @@ export class C2DEngineDocker extends C2DEngine {
     const imageLogFile =
       this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/logs/image.log'
     try {
-      const pullStream = await this.docker.pull(job.containerImage)
+      // Get registry auth for the image
+      const { registry } = this.parseImage(job.containerImage)
+      // Use user provided registry auth or get it from the config
+      let dockerRegistryAuthForPull: any
+      if (originaljob.encryptedDockerRegistryAuth) {
+        const decryptedDockerRegistryAuth = await this.keyManager.decrypt(
+          Uint8Array.from(Buffer.from(originaljob.encryptedDockerRegistryAuth, 'hex')),
+          EncryptMethod.ECIES
+        )
+        dockerRegistryAuthForPull = JSON.parse(decryptedDockerRegistryAuth.toString())
+      } else {
+        dockerRegistryAuthForPull = this.getDockerRegistryAuth(registry)
+      }
+
+      // Prepare authconfig for Dockerode if credentials are available
+      const pullOptions: any = {}
+      if (dockerRegistryAuthForPull) {
+        // Extract hostname from registry URL (remove protocol)
+        const registryUrl = new URL(registry)
+        const serveraddress =
+          registryUrl.hostname + (registryUrl.port ? `:${registryUrl.port}` : '')
+
+        // Use auth string if available, otherwise encode username:password
+        const authString = dockerRegistryAuthForPull.auth
+          ? dockerRegistryAuthForPull.auth
+          : Buffer.from(
+              `${dockerRegistryAuthForPull.username}:${dockerRegistryAuthForPull.password}`
+            ).toString('base64')
+
+        pullOptions.authconfig = {
+          serveraddress,
+          ...(dockerRegistryAuthForPull.auth
+            ? { auth: authString }
+            : {
+                username: dockerRegistryAuthForPull.username,
+                password: dockerRegistryAuthForPull.password
+              })
+        }
+        CORE_LOGGER.debug(
+          `Using docker registry auth for ${registry} to pull image ${job.containerImage}`
+        )
+      }
+
+      const pullStream = await this.docker.pull(job.containerImage, pullOptions)
       await new Promise((resolve, reject) => {
         let wroteStatusBanner = false
         this.docker.modem.followProgress(
