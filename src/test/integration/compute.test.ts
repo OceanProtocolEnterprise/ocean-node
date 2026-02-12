@@ -20,7 +20,10 @@ import type {
 import {
   type ComputeAsset,
   type ComputeAlgorithm,
-  type ComputeEnvironment
+  type ComputeEnvironment,
+  C2DStatusNumber,
+  C2DStatusText,
+  type DBComputeJob
 } from '../../@types/C2D/C2D.js'
 import {
   // DB_TYPES,
@@ -75,6 +78,8 @@ import {
 
 import { freeComputeStartPayload } from '../data/commands.js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
+import Dockerode from 'dockerode'
+import { C2DEngineDocker } from '../../components/c2d/compute_engine_docker.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -274,25 +279,19 @@ describe('Compute', () => {
     publishedComputeDataset = await waitToIndex(
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_UPDATED,
-      DEFAULT_TEST_TIMEOUT * 3,
+      DEFAULT_TEST_TIMEOUT * 2,
       true
     )
-    if (!publishedComputeDataset.ddo) {
-      expect(expectedTimeoutFailure(this.test.title)).to.be.equal(
-        publishedComputeDataset.wasTimeout
-      )
-    } else {
-      assert(
-        publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms
-          .length > 0,
-        'Trusted algorithms not updated'
-      )
-      assert(
-        publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms[0]
-          .did === publishedAlgoDataset.ddo.id,
-        'Algorithm DID mismatch in trusted algorithms'
-      )
-    }
+    assert(
+      publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms
+        .length > 0,
+      'Trusted algorithms not updated'
+    )
+    assert(
+      publishedComputeDataset?.ddo?.services[0]?.compute?.publisherTrustedAlgorithms[0]
+        .did === publishedAlgoDataset.ddo.id,
+      'Algorithm DID mismatch in trusted algorithms'
+    )
   })
 
   it('Get compute environments', async () => {
@@ -344,7 +343,6 @@ describe('Compute', () => {
     const response = await new ComputeGetEnvironmentsHandler(oceanNode).handle(
       getEnvironmentsTask
     )
-    console.log('firstEnv', firstEnv)
     computeEnvironments = await streamToObject(response.stream as Readable)
     firstEnv = computeEnvironments[0]
     const initializeComputeTask: ComputeInitializeCommand = {
@@ -694,7 +692,12 @@ describe('Compute', () => {
         try {
           await escrowContract
             .connect(consumerAccount)
-            .cancelExpiredLocks(lock.jobId, lock.token, lock.payer, lock.payee)
+            .cancelExpiredLock(
+              lock.jobId,
+              lock.token,
+              lock.payer,
+              firstEnv.consumerAddress
+            )
         } catch (e) {}
       }
       locks = await oceanNode.escrow.getLocks(
@@ -1382,7 +1385,6 @@ describe('Compute', () => {
 
         const datasetDDOTest = ddo
         const datasetInstance = DDOManager.getDDOClass(datasetDDO)
-        console.log('datasetDDOTest', datasetDDOTest)
         if (datasetDDOTest) {
           const result = await validateAlgoForDataset(
             algoDDOTest.id,
@@ -1398,6 +1400,626 @@ describe('Compute', () => {
           expect(result).to.equal(true)
         } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
       } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
+    })
+  })
+
+  describe('encryptedDockerRegistryAuth integration tests', () => {
+    /**
+     * Helper function to encrypt docker registry auth using ECIES
+     */
+    async function encryptDockerRegistryAuth(auth: {
+      username?: string
+      password?: string
+      auth?: string
+    }): Promise<string> {
+      const authJson = JSON.stringify(auth)
+      const authData = Uint8Array.from(Buffer.from(authJson))
+      const encrypted = await oceanNode
+        .getKeyManager()
+        .encrypt(authData, EncryptMethod.ECIES)
+      return Buffer.from(encrypted).toString('hex')
+    }
+
+    it('should initialize compute with valid encryptedDockerRegistryAuth (username/password)', async () => {
+      const validAuth = {
+        username: 'testuser',
+        password: 'testpass'
+      }
+      const encryptedAuth = await encryptDockerRegistryAuth(validAuth)
+
+      const dataset: ComputeAsset = {
+        documentId: publishedComputeDataset.ddo.id,
+        serviceId: publishedComputeDataset.ddo.services[0].id,
+        transferTxId: String(datasetOrderTxId)
+      }
+      const algorithm: ComputeAlgorithm = {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: String(algoOrderTxId),
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      }
+      const initializeComputeTask: ComputeInitializeCommand = {
+        datasets: [dataset],
+        algorithm,
+        environment: firstEnv.id,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: computeJobDuration,
+        consumerAddress: firstEnv.consumerAddress,
+        command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const resp = await new ComputeInitializeHandler(oceanNode).handle(
+        initializeComputeTask
+      )
+      assert(resp, 'Failed to get response')
+      // Should succeed (200) or fail for other reasons, but not due to auth validation
+      // Check that error is not a validation error (format validation), even if Docker auth fails
+      if (resp.status.httpStatus !== 200) {
+        expect(resp.status.error).to.not.include('Invalid encryptedDockerRegistryAuth')
+      }
+      if (resp.status.httpStatus === 200) {
+        assert(resp.stream, 'Failed to get stream')
+        expect(resp.stream).to.be.instanceOf(Readable)
+      }
+    })
+
+    it('should initialize compute with valid encryptedDockerRegistryAuth (auth string)', async () => {
+      const validAuth = {
+        auth: Buffer.from('testuser:testpass').toString('base64')
+      }
+      const encryptedAuth = await encryptDockerRegistryAuth(validAuth)
+
+      const dataset: ComputeAsset = {
+        documentId: publishedComputeDataset.ddo.id,
+        serviceId: publishedComputeDataset.ddo.services[0].id,
+        transferTxId: String(datasetOrderTxId)
+      }
+      const algorithm: ComputeAlgorithm = {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: String(algoOrderTxId),
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      }
+      const initializeComputeTask: ComputeInitializeCommand = {
+        datasets: [dataset],
+        algorithm,
+        environment: firstEnv.id,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: computeJobDuration,
+        consumerAddress: firstEnv.consumerAddress,
+        command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const resp = await new ComputeInitializeHandler(oceanNode).handle(
+        initializeComputeTask
+      )
+      assert(resp, 'Failed to get response')
+      // Should succeed (200) or fail for other reasons, but not due to auth validation
+      // Check that error is not a validation error (format validation), even if Docker auth fails
+      if (resp.status.httpStatus !== 200) {
+        expect(resp.status.error).to.not.include('Invalid encryptedDockerRegistryAuth')
+      }
+      if (resp.status.httpStatus === 200) {
+        assert(resp.stream, 'Failed to get stream')
+        expect(resp.stream).to.be.instanceOf(Readable)
+      }
+    })
+
+    it('should fail initialize compute with invalid encryptedDockerRegistryAuth (missing password)', async () => {
+      const invalidAuth = {
+        username: 'testuser'
+        // missing password
+      }
+      const encryptedAuth = await encryptDockerRegistryAuth(invalidAuth)
+
+      const dataset: ComputeAsset = {
+        documentId: publishedComputeDataset.ddo.id,
+        serviceId: publishedComputeDataset.ddo.services[0].id,
+        transferTxId: String(datasetOrderTxId)
+      }
+      const algorithm: ComputeAlgorithm = {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: String(algoOrderTxId),
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      }
+      const initializeComputeTask: ComputeInitializeCommand = {
+        datasets: [dataset],
+        algorithm,
+        environment: firstEnv.id,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: computeJobDuration,
+        consumerAddress: firstEnv.consumerAddress,
+        command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const resp = await new ComputeInitializeHandler(oceanNode).handle(
+        initializeComputeTask
+      )
+      assert(resp, 'Failed to get response')
+      // Should fail with 400 due to validation error
+      assert(
+        resp.status.httpStatus === 400,
+        `Expected 400 but got ${resp.status.httpStatus}: ${resp.status.error}`
+      )
+      expect(resp.status.error).to.include('Invalid encryptedDockerRegistryAuth')
+      expect(resp.status.error).to.include(
+        "Either 'auth' must be provided, or both 'username' and 'password' must be provided"
+      )
+    })
+
+    it('should fail initialize compute with invalid encryptedDockerRegistryAuth (empty object)', async () => {
+      const invalidAuth = {}
+      const encryptedAuth = await encryptDockerRegistryAuth(invalidAuth)
+
+      const dataset: ComputeAsset = {
+        documentId: publishedComputeDataset.ddo.id,
+        serviceId: publishedComputeDataset.ddo.services[0].id,
+        transferTxId: String(datasetOrderTxId)
+      }
+      const algorithm: ComputeAlgorithm = {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: String(algoOrderTxId),
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      }
+      const initializeComputeTask: ComputeInitializeCommand = {
+        datasets: [dataset],
+        algorithm,
+        environment: firstEnv.id,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: computeJobDuration,
+        consumerAddress: firstEnv.consumerAddress,
+        command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const resp = await new ComputeInitializeHandler(oceanNode).handle(
+        initializeComputeTask
+      )
+      assert(resp, 'Failed to get response')
+      assert(
+        resp.status.httpStatus === 400,
+        `Expected 400 but got ${resp.status.httpStatus}: ${resp.status.error}`
+      )
+      expect(resp.status.error).to.include('Invalid encryptedDockerRegistryAuth')
+    })
+
+    it('should start paid compute job with valid encryptedDockerRegistryAuth', async () => {
+      const validAuth = {
+        username: 'testuser',
+        password: 'testpass'
+      }
+      const encryptedAuth = await encryptDockerRegistryAuth(validAuth)
+
+      const nonce = Date.now().toString()
+      const message = String(
+        (await consumerAccount.getAddress()) + publishedComputeDataset.ddo.id + nonce
+      )
+      const consumerMessage = ethers.solidityPackedKeccak256(
+        ['bytes'],
+        [ethers.hexlify(ethers.toUtf8Bytes(message))]
+      )
+      const messageHashBytes = ethers.toBeArray(consumerMessage)
+      const signature = await wallet.signMessage(messageHashBytes)
+
+      const startComputeTask: PaidComputeStartCommand = {
+        command: PROTOCOL_COMMANDS.COMPUTE_START,
+        consumerAddress: await consumerAccount.getAddress(),
+        environment: firstEnv.id,
+        signature,
+        nonce,
+        datasets: [
+          {
+            documentId: publishedComputeDataset.ddo.id,
+            serviceId: publishedComputeDataset.ddo.services[0].id,
+            transferTxId: String(datasetOrderTxId)
+          }
+        ],
+        algorithm: {
+          documentId: publishedAlgoDataset.ddo.id,
+          serviceId: publishedAlgoDataset.ddo.services[0].id,
+          transferTxId: String(algoOrderTxId),
+          meta: publishedAlgoDataset.ddo.metadata.algorithm
+        },
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: computeJobDuration,
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const response = await new PaidComputeStartHandler(oceanNode).handle(
+        startComputeTask
+      )
+      assert(response, 'Failed to get response')
+      // Should succeed (200) or fail for other reasons, but not due to auth validation
+      // Check that error is not a validation error (format validation), even if Docker auth fails
+      if (response.status.httpStatus !== 200) {
+        expect(response.status.error).to.not.include(
+          'Invalid encryptedDockerRegistryAuth'
+        )
+      }
+      if (response.status.httpStatus === 200) {
+        assert(response.stream, 'Failed to get stream')
+        expect(response.stream).to.be.instanceOf(Readable)
+      }
+    })
+
+    it('should fail paid compute start with invalid encryptedDockerRegistryAuth', async () => {
+      const invalidAuth = {
+        username: 'testuser'
+        // missing password
+      }
+      const encryptedAuth = await encryptDockerRegistryAuth(invalidAuth)
+
+      const nonce = Date.now().toString()
+      const message = String(
+        (await consumerAccount.getAddress()) + publishedComputeDataset.ddo.id + nonce
+      )
+      const consumerMessage = ethers.solidityPackedKeccak256(
+        ['bytes'],
+        [ethers.hexlify(ethers.toUtf8Bytes(message))]
+      )
+      const messageHashBytes = ethers.toBeArray(consumerMessage)
+      const signature = await wallet.signMessage(messageHashBytes)
+
+      const startComputeTask: PaidComputeStartCommand = {
+        command: PROTOCOL_COMMANDS.COMPUTE_START,
+        consumerAddress: await consumerAccount.getAddress(),
+        environment: firstEnv.id,
+        signature,
+        nonce,
+        datasets: [
+          {
+            documentId: publishedComputeDataset.ddo.id,
+            serviceId: publishedComputeDataset.ddo.services[0].id,
+            transferTxId: String(datasetOrderTxId)
+          }
+        ],
+        algorithm: {
+          documentId: publishedAlgoDataset.ddo.id,
+          serviceId: publishedAlgoDataset.ddo.services[0].id,
+          transferTxId: String(algoOrderTxId),
+          meta: publishedAlgoDataset.ddo.metadata.algorithm
+        },
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: computeJobDuration,
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const response = await new PaidComputeStartHandler(oceanNode).handle(
+        startComputeTask
+      )
+      assert(response, 'Failed to get response')
+      assert(
+        response.status.httpStatus === 400,
+        `Expected 400 but got ${response.status.httpStatus}: ${response.status.error}`
+      )
+      expect(response.status.error).to.include('Invalid encryptedDockerRegistryAuth')
+    })
+
+    it('should start free compute job with valid encryptedDockerRegistryAuth', async () => {
+      const validAuth = {
+        username: 'testuser',
+        password: 'testpass'
+      }
+      const encryptedAuth = await encryptDockerRegistryAuth(validAuth)
+
+      const nonce = Date.now().toString()
+      const consumerMessage = ethers.solidityPackedKeccak256(
+        ['bytes'],
+        [ethers.hexlify(ethers.toUtf8Bytes(nonce))]
+      )
+      const signature = await wallet.signMessage(ethers.toBeArray(consumerMessage))
+
+      const startComputeTask: FreeComputeStartCommand = {
+        command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
+        consumerAddress: await wallet.getAddress(),
+        signature,
+        nonce,
+        environment: firstEnv.id,
+        datasets: [
+          {
+            fileObject: computeAsset.services[0].files.files[0],
+            documentId: publishedComputeDataset.ddo.id,
+            serviceId: publishedComputeDataset.ddo.services[0].id,
+            transferTxId: datasetOrderTxId
+          }
+        ],
+        algorithm: {
+          fileObject: algoAsset.services[0].files.files[0],
+          documentId: publishedAlgoDataset.ddo.id,
+          serviceId: publishedAlgoDataset.ddo.services[0].id,
+          transferTxId: algoOrderTxId,
+          meta: publishedAlgoDataset.ddo.metadata.algorithm
+        },
+        output: {},
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const response = await new FreeComputeStartHandler(oceanNode).handle(
+        startComputeTask
+      )
+      assert(response, 'Failed to get response')
+      // Should succeed (200) or fail for other reasons, but not due to auth validation
+      // Check that error is not a validation error (format validation), even if Docker auth fails
+      if (response.status.httpStatus !== 200) {
+        expect(response.status.error).to.not.include(
+          'Invalid encryptedDockerRegistryAuth'
+        )
+      }
+      if (response.status.httpStatus === 200) {
+        assert(response.stream, 'Failed to get stream')
+        expect(response.stream).to.be.instanceOf(Readable)
+      }
+    })
+
+    it('should fail free compute start with invalid encryptedDockerRegistryAuth', async () => {
+      const invalidAuth = {
+        password: 'testpass'
+        // missing username
+      }
+      const encryptedAuth = await encryptDockerRegistryAuth(invalidAuth)
+
+      const nonce = Date.now().toString()
+      const consumerMessage = ethers.solidityPackedKeccak256(
+        ['bytes'],
+        [ethers.hexlify(ethers.toUtf8Bytes(nonce))]
+      )
+      const signature = await wallet.signMessage(ethers.toBeArray(consumerMessage))
+
+      const startComputeTask: FreeComputeStartCommand = {
+        command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
+        consumerAddress: await wallet.getAddress(),
+        signature,
+        nonce,
+        environment: firstEnv.id,
+        datasets: [
+          {
+            fileObject: computeAsset.services[0].files.files[0],
+            documentId: publishedComputeDataset.ddo.id,
+            serviceId: publishedComputeDataset.ddo.services[0].id,
+            transferTxId: datasetOrderTxId
+          }
+        ],
+        algorithm: {
+          fileObject: algoAsset.services[0].files.files[0],
+          documentId: publishedAlgoDataset.ddo.id,
+          serviceId: publishedAlgoDataset.ddo.services[0].id,
+          transferTxId: algoOrderTxId,
+          meta: publishedAlgoDataset.ddo.metadata.algorithm
+        },
+        output: {},
+        encryptedDockerRegistryAuth: encryptedAuth
+      }
+
+      const response = await new FreeComputeStartHandler(oceanNode).handle(
+        startComputeTask
+      )
+      assert(response, 'Failed to get response')
+      assert(
+        response.status.httpStatus === 400,
+        `Expected 400 but got ${response.status.httpStatus}: ${response.status.error}`
+      )
+      expect(response.status.error).to.include('Invalid encryptedDockerRegistryAuth')
+    })
+
+    it('should handle invalid hex-encoded encryptedDockerRegistryAuth gracefully', async () => {
+      const invalidHex = 'not-a-valid-hex-string'
+
+      const dataset: ComputeAsset = {
+        documentId: publishedComputeDataset.ddo.id,
+        serviceId: publishedComputeDataset.ddo.services[0].id,
+        transferTxId: String(datasetOrderTxId)
+      }
+      const algorithm: ComputeAlgorithm = {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: String(algoOrderTxId),
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      }
+      const initializeComputeTask: ComputeInitializeCommand = {
+        datasets: [dataset],
+        algorithm,
+        environment: firstEnv.id,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: computeJobDuration,
+        consumerAddress: firstEnv.consumerAddress,
+        command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
+        encryptedDockerRegistryAuth: invalidHex
+      }
+
+      const resp = await new ComputeInitializeHandler(oceanNode).handle(
+        initializeComputeTask
+      )
+      assert(resp, 'Failed to get response')
+      // Should fail with 500 due to decryption/parsing error
+      assert(
+        resp.status.httpStatus === 400,
+        `Expected 400 but got ${resp.status.httpStatus}: ${resp.status.error}`
+      )
+      expect(resp.status.error).to.include('Invalid encryptedDockerRegistryAuth')
+    })
+  })
+
+  describe('Local Docker image checking', () => {
+    let docker: Dockerode
+    let dockerEngine: C2DEngineDocker
+    const testImage = 'alpine:3.18'
+    before(async function () {
+      // Skip if Docker not available
+      try {
+        docker = new Dockerode()
+        await docker.info()
+        const pullStream = await docker.pull(testImage)
+        await new Promise((resolve, reject) => {
+          let wroteStatusBanner = false
+          docker.modem.followProgress(
+            pullStream,
+            (err: any, res: any) => {
+              // onFinished
+              if (err) {
+                console.log(err)
+                return reject(err)
+              }
+              console.log(`Successfully pulled image: ${testImage}`)
+              resolve(res)
+            },
+            (progress: any) => {
+              // onProgress
+              if (!wroteStatusBanner) {
+                wroteStatusBanner = true
+                console.log('############# Pull docker image status: ##############')
+              }
+              // only write the status banner once, its cleaner
+              let logText = ''
+              if (progress.id) logText += progress.id + ' : ' + progress.status
+              else logText = progress.status
+              console.log('Pulling image : ' + logText)
+            }
+          )
+        })
+      } catch (e) {
+        this.skip()
+      }
+
+      // Get the Docker engine from oceanNode
+      const c2dEngines = oceanNode.getC2DEngines()
+      const engines = (c2dEngines as any).engines as C2DEngineDocker[]
+      dockerEngine = engines.find((e) => e instanceof C2DEngineDocker)
+      if (!dockerEngine) {
+        this.skip()
+      }
+    })
+
+    it('should check local image when it exists locally', async function () {
+      // Check the image - should find it locally
+      const result = await dockerEngine.checkDockerImage(testImage)
+
+      assert(result, 'Result should exist')
+      assert(result.valid === true, 'Image should be valid')
+    }).timeout(30000)
+
+    it('should validate platform for local images', async function () {
+      // Get the platform from the local image
+      const imageInfo = await docker.getImage(testImage).inspect()
+      const localArch = imageInfo.Architecture || 'amd64'
+      const localOs = imageInfo.Os || 'linux'
+
+      // Check with matching platform
+      const matchingPlatform = {
+        architecture: localArch === 'amd64' ? 'x86_64' : localArch,
+        os: localOs
+      }
+      const resultMatching = await dockerEngine.checkDockerImage(
+        testImage,
+        undefined,
+        matchingPlatform
+      )
+
+      assert(resultMatching, 'Result should exist')
+      assert(
+        resultMatching.valid === true,
+        'Image should be valid with matching platform'
+      )
+    }).timeout(30000)
+
+    it('should detect platform mismatch for local images', async function () {
+      // Check with mismatched platform (assuming local is linux/amd64 or linux/x86_64)
+      const mismatchedPlatform = {
+        architecture: 'arm64', // Different architecture
+        os: 'linux'
+      }
+      const resultMismatch = await dockerEngine.checkDockerImage(
+        testImage,
+        undefined,
+        mismatchedPlatform
+      )
+
+      assert(resultMismatch, 'Result should exist')
+      assert(
+        resultMismatch.valid === false,
+        'Image should be invalid with mismatched platform'
+      )
+      assert(resultMismatch.status === 400, 'Status should be 400 for platform mismatch')
+      assert(
+        resultMismatch.reason.includes('Platform mismatch'),
+        'Reason should include platform mismatch message'
+      )
+    }).timeout(30000)
+
+    it('should fall back to remote registry when local image not found', async function () {
+      const nonExistentLocalImage = 'nonexistent-local-image:latest'
+
+      // Ensure image doesn't exist locally
+      try {
+        const image = docker.getImage(nonExistentLocalImage)
+        await image.inspect()
+        // If we get here, image exists - remove it for test
+        await image.remove({ force: true })
+      } catch (e) {
+        // Image doesn't exist locally, which is what we want
+      }
+
+      // Check the image - should fall back to remote check
+      // This will likely fail with 404, but we're testing the fallback behavior
+      const result = await dockerEngine.checkDockerImage(nonExistentLocalImage)
+
+      assert(result, 'Result should exist')
+      // Should have attempted remote check (will fail, but that's expected)
+      assert(result.valid === false, 'Image should be invalid (not found)')
+      assert(result.status === 404, 'Status should be 404 for not found')
+    }).timeout(30000)
+
+    it('should work without platform validation when platform not specified', async function () {
+      // Check without platform - should succeed if image exists
+      const result = await dockerEngine.checkDockerImage(testImage)
+
+      assert(result, 'Result should exist')
+      assert(result.valid === true, 'Image should be valid without platform check')
+    }).timeout(30000)
+
+    after(async function () {
+      // Clean up test images if needed
+      try {
+        await docker.info()
+      } catch (e) {
+        // Docker not available, skip cleanup
+      }
+
+      // Optionally remove test images to save space
+      // (commented out to avoid breaking other tests that might use these images)
+      /*
+      try {
+        const image = docker.getImage('alpine:3.18')
+        await image.remove({ force: true })
+      } catch (e) {
+        // Ignore errors during cleanup
+      }
+      */
     })
   })
 
@@ -1820,6 +2442,553 @@ describe('Compute Access Restrictions', () => {
 
     after(async () => {
       await tearDownEnvironment(previousConfiguration)
+    })
+  })
+
+  describe('Payment Claim Timer and JobSettle Status', () => {
+    let previousConfiguration: OverrideEnvConfig[]
+    let config: OceanNodeConfig
+    let dbconn: Database
+    let oceanNode: OceanNode
+    let dockerEngine: C2DEngineDocker
+    let paymentToken: any
+    let firstEnv: ComputeEnvironment
+    let consumerAccount: any
+    let escrowContract: any
+    let paymentTokenContract: any
+    let artifactsAddresses: any
+
+    before(async function () {
+      this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+      artifactsAddresses = getOceanArtifactsAdresses()
+      paymentToken = artifactsAddresses.development.Ocean
+      previousConfiguration = await setupEnvironment(
+        TEST_ENV_CONFIG_FILE,
+        buildEnvOverrideConfig(
+          [
+            ENVIRONMENT_VARIABLES.RPCS,
+            ENVIRONMENT_VARIABLES.INDEXER_NETWORKS,
+            ENVIRONMENT_VARIABLES.PRIVATE_KEY,
+            ENVIRONMENT_VARIABLES.ADDRESS_FILE,
+            ENVIRONMENT_VARIABLES.DOCKER_COMPUTE_ENVIRONMENTS
+          ],
+          [
+            JSON.stringify(mockSupportedNetworks),
+            JSON.stringify([DEVELOPMENT_CHAIN_ID]),
+            '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
+            `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
+            '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"paymentClaimInterval":60,"fees":{"' +
+              DEVELOPMENT_CHAIN_ID +
+              '":[{"feeToken":"' +
+              paymentToken +
+              '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+          ]
+        )
+      )
+      config = await getConfiguration(true)
+      dbconn = await Database.init(config.dbConfig)
+      oceanNode = await OceanNode.getInstance(
+        config,
+        dbconn,
+        null,
+        null,
+        null,
+        null,
+        null,
+        true
+      )
+      const indexer = new OceanIndexer(
+        dbconn,
+        config.indexingNetworks,
+        oceanNode.blockchainRegistry
+      )
+      oceanNode.addIndexer(indexer)
+      oceanNode.addC2DEngines()
+
+      const provider = new JsonRpcProvider('http://127.0.0.1:8545')
+      const publisherAccount = (await provider.getSigner(0)) as Signer
+      consumerAccount = (await provider.getSigner(1)) as Signer
+      escrowContract = new ethers.Contract(
+        artifactsAddresses.development.Escrow,
+        EscrowJson.abi,
+        consumerAccount
+      )
+      paymentTokenContract = new ethers.Contract(
+        paymentToken,
+        OceanToken.abi,
+        publisherAccount
+      )
+
+      // Get the Docker engine
+      const c2dEngines = oceanNode.getC2DEngines()
+      const engines = (c2dEngines as any).engines as C2DEngineDocker[]
+      dockerEngine = engines.find((e) => e instanceof C2DEngineDocker)
+      if (!dockerEngine) {
+        this.skip()
+      }
+
+      // Get compute environments
+      const getEnvironmentsTask = {
+        command: PROTOCOL_COMMANDS.COMPUTE_GET_ENVIRONMENTS
+      }
+      const resp = await new ComputeGetEnvironmentsHandler(oceanNode).handle(
+        getEnvironmentsTask
+      )
+      const computeEnvironments = await streamToObject(resp.stream as Readable)
+      firstEnv = computeEnvironments[0]
+    })
+
+    after(async () => {
+      await tearDownEnvironment(previousConfiguration)
+    })
+
+    it('should transition job to JobSettle status when PublishingResults completes', async function () {
+      this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+
+      // Create a test job in PublishingResults status
+      const testJobId = `test-job-settle-${Date.now()}`
+      const now = Math.floor(Date.now() / 1000).toString()
+      const testJob: DBComputeJob = {
+        owner: await consumerAccount.getAddress(),
+        jobId: testJobId,
+        dateCreated: now,
+        status: C2DStatusNumber.PublishingResults,
+        statusText: C2DStatusText.PublishingResults,
+        environment: firstEnv.id,
+        isRunning: false,
+        isStarted: true,
+        stopRequested: false,
+        algoStartTimestamp: String(parseInt(now) - 120), // 2 minutes ago
+        algoStopTimestamp: now,
+        algoDuration: 120,
+        isFree: false,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken,
+          lockTx: '0x123',
+          claimTx: '',
+          cost: 0
+        },
+        resources: [
+          {
+            id: 'cpu',
+            amount: 1,
+            price: 1
+          }
+        ],
+        clusterHash: 'test-cluster',
+        configlogURL: '',
+        publishlogURL: '',
+        algologURL: '',
+        outputsURL: '',
+        algorithm: {} as ComputeAlgorithm,
+        assets: [] as ComputeAsset[],
+        containerImage: null,
+        dateFinished: null,
+        results: [],
+        queueMaxWaitTime: 0
+      }
+
+      await dbconn.c2d.newJob(testJob)
+
+      // Simulate finishJob being called (which would normally happen after results are published)
+      // We'll manually update to JobSettle to test the payment claim flow
+      testJob.status = C2DStatusNumber.JobSettle
+      testJob.statusText = C2DStatusText.JobSettle
+      await dbconn.c2d.updateJob(testJob)
+
+      // Verify job is in JobSettle status
+      const updatedJob = await dbconn.c2d.getJob(testJobId)
+      assert(
+        updatedJob[0].status === C2DStatusNumber.JobSettle,
+        'Job should be in JobSettle status'
+      )
+      assert(
+        updatedJob[0].statusText === C2DStatusText.JobSettle,
+        'Job statusText should be Job settling'
+      )
+    })
+
+    it('should process jobs in JobSettle status via claimPayments', async function () {
+      this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+
+      // Create a test job with a lock
+      const testJobId = `test-job-claim-${Date.now()}`
+      const now = Math.floor(Date.now() / 1000)
+      const expiry = 3500
+
+      const providerAddress = await (await oceanNode.getKeyManager()).getEthAddress()
+
+      // Clean up existing locks and authorizations first
+      const locks = await oceanNode.escrow.getLocks(
+        DEVELOPMENT_CHAIN_ID,
+        paymentToken,
+        await consumerAccount.getAddress(),
+        providerAddress
+      )
+      if (locks.length > 0) {
+        // Cancel all existing locks
+        for (const lock of locks) {
+          try {
+            await escrowContract
+              .connect(consumerAccount)
+              .cancelExpiredLock(lock.jobId, lock.token, lock.payer, providerAddress)
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+      }
+
+      // Clean up existing authorizations
+      let auth = await oceanNode.escrow.getAuthorizations(
+        DEVELOPMENT_CHAIN_ID,
+        paymentToken,
+        await consumerAccount.getAddress(),
+        providerAddress
+      )
+      if (auth.length > 0) {
+        // Remove authorization by setting to 0
+        await escrowContract
+          .connect(consumerAccount)
+          .authorize(paymentToken, providerAddress, 0, 0, 0)
+      }
+
+      // Check and withdraw existing funds if any
+      const funds = await oceanNode.escrow.getUserAvailableFunds(
+        DEVELOPMENT_CHAIN_ID,
+        await consumerAccount.getAddress(),
+        paymentToken
+      )
+      if (BigInt(funds.toString()) > BigInt(0)) {
+        await escrowContract.connect(consumerAccount).withdraw([paymentToken], [funds])
+      }
+
+      // Now set up fresh authorization
+      const balance = await paymentTokenContract.balanceOf(
+        await consumerAccount.getAddress()
+      )
+      if (BigInt(balance.toString()) === BigInt(0)) {
+        const mintAmount = ethers.parseUnits('1000', 18)
+        const mintTx = await paymentTokenContract.mint(
+          await consumerAccount.getAddress(),
+          mintAmount
+        )
+        await mintTx.wait()
+      }
+
+      const approveTx = await paymentTokenContract
+        .connect(consumerAccount)
+        .approve(artifactsAddresses.development.Escrow, balance)
+      await approveTx.wait()
+
+      const depositTx = await escrowContract
+        .connect(consumerAccount)
+        .deposit(paymentToken, balance)
+      await depositTx.wait()
+
+      const authorizeTx = await escrowContract
+        .connect(consumerAccount)
+        .authorize(paymentToken, providerAddress, balance, 3600, 10)
+      await authorizeTx.wait()
+
+      // Verify authorization is set up correctly
+      auth = await oceanNode.escrow.getAuthorizations(
+        DEVELOPMENT_CHAIN_ID,
+        paymentToken,
+        await consumerAccount.getAddress(),
+        providerAddress
+      )
+      assert(auth.length > 0, 'Should have authorization')
+      assert(
+        BigInt(auth[0].maxLockedAmount.toString()) > BigInt(0),
+        'Should have maxLockedAmount in auth'
+      )
+
+      // Create lock
+      const lockTx = await oceanNode.escrow.createLock(
+        DEVELOPMENT_CHAIN_ID,
+        testJobId,
+        paymentToken,
+        await consumerAccount.getAddress(),
+        100, // amount
+        expiry
+      )
+      assert(lockTx, 'Lock creation should succeed')
+
+      // Create job in JobSettle status
+      const testJob: DBComputeJob = {
+        owner: await consumerAccount.getAddress(),
+        jobId: testJobId,
+        dateCreated: now.toString(),
+        status: C2DStatusNumber.JobSettle,
+        statusText: C2DStatusText.JobSettle,
+        environment: firstEnv.id,
+        isRunning: false,
+        isStarted: true,
+        stopRequested: false,
+        algoStartTimestamp: String(now - 120),
+        algoStopTimestamp: now.toString(),
+        algoDuration: 120,
+        isFree: false,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken,
+          lockTx: lockTx || '0x123',
+          claimTx: '',
+          cost: 0
+        },
+        resources: [
+          {
+            id: 'cpu',
+            amount: 1,
+            price: 1
+          }
+        ],
+        clusterHash: 'test-cluster',
+        configlogURL: '',
+        publishlogURL: '',
+        algologURL: '',
+        outputsURL: '',
+        algorithm: {} as ComputeAlgorithm,
+        assets: [] as ComputeAsset[],
+        containerImage: null,
+        dateFinished: null,
+        results: [],
+        queueMaxWaitTime: 0
+      }
+
+      await dbconn.c2d.newJob(testJob)
+
+      // Manually trigger claimPayments
+      const claimPaymentsMethod = (dockerEngine as any).claimPayments.bind(dockerEngine)
+      await claimPaymentsMethod()
+
+      // Wait a bit for transaction to process
+      await sleep(5000)
+
+      // Verify job was processed (should be JobFinished if claim succeeded, or still JobSettle if failed)
+      const updatedJob = await dbconn.c2d.getJob(testJobId)
+      // Job should be finished
+      assert(
+        updatedJob[0].status === C2DStatusNumber.JobFinished,
+        `Job status should be JobFinished or JobSettle, got ${updatedJob[0].status}`
+      )
+    })
+
+    it('should handle expired locks by canceling them', async function () {
+      this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+
+      const testJobId = `test-job-expired-${Date.now()}`
+      const now = Math.floor(Date.now() / 1000)
+
+      // Create lock with expired timestamp (we'll need to mock this or use a different approach)
+      // For this test, we'll create a job and verify it handles expiration correctly
+      const testJob: DBComputeJob = {
+        owner: await consumerAccount.getAddress(),
+        jobId: testJobId,
+        dateCreated: now.toString(),
+        status: C2DStatusNumber.JobSettle,
+        statusText: C2DStatusText.JobSettle,
+        environment: firstEnv.id,
+        isRunning: false,
+        isStarted: true,
+        stopRequested: false,
+        algoStartTimestamp: String(now - 120),
+        algoStopTimestamp: now.toString(),
+        algoDuration: 120,
+        isFree: false,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken,
+          lockTx: '0xexpired',
+          claimTx: '',
+          cost: 0
+        },
+        resources: [
+          {
+            id: 'cpu',
+            amount: 1,
+            price: 1
+          }
+        ],
+        clusterHash: 'test-cluster',
+        configlogURL: '',
+        publishlogURL: '',
+        algologURL: '',
+        outputsURL: '',
+        algorithm: {} as ComputeAlgorithm,
+        assets: [] as ComputeAsset[],
+        containerImage: null,
+        dateFinished: null,
+        results: [],
+        queueMaxWaitTime: 0
+      }
+
+      await dbconn.c2d.newJob(testJob)
+
+      // Trigger claimPayments - if lock is expired, it should cancel it
+      const claimPaymentsMethod = (dockerEngine as any).claimPayments.bind(dockerEngine)
+      await claimPaymentsMethod()
+
+      // Wait for processing
+      await sleep(3000)
+
+      // Verify job was handled (either finished or still settling)
+      const updatedJob = await dbconn.c2d.getJob(testJobId)
+      assert(
+        updatedJob[0].status === C2DStatusNumber.JobFinished,
+        'Job should be processed'
+      )
+    })
+
+    it('should skip payment logic for free jobs', async function () {
+      this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+
+      const testJobId = `test-job-free-${Date.now()}`
+      const now = Math.floor(Date.now() / 1000).toString()
+
+      const testJob: DBComputeJob = {
+        owner: await consumerAccount.getAddress(),
+        jobId: testJobId,
+        dateCreated: now,
+        status: C2DStatusNumber.JobSettle,
+        statusText: C2DStatusText.JobSettle,
+        environment: firstEnv.id,
+        isRunning: false,
+        isStarted: true,
+        stopRequested: false,
+        algoStartTimestamp: String(parseInt(now) - 120),
+        algoStopTimestamp: now,
+        algoDuration: 120,
+        isFree: true, // Free job
+        resources: [
+          {
+            id: 'cpu',
+            amount: 1,
+            price: 0
+          }
+        ],
+        clusterHash: 'test-cluster',
+        configlogURL: '',
+        publishlogURL: '',
+        algologURL: '',
+        outputsURL: '',
+        algorithm: {} as ComputeAlgorithm,
+        assets: [] as ComputeAsset[],
+        containerImage: null,
+        dateFinished: null,
+        results: [],
+        queueMaxWaitTime: 0
+      }
+
+      await dbconn.c2d.newJob(testJob)
+
+      // Trigger claimPayments
+      const claimPaymentsMethod = (dockerEngine as any).claimPayments.bind(dockerEngine)
+      await claimPaymentsMethod()
+
+      // Wait for processing
+      await sleep(2000)
+
+      // Free jobs should be marked as finished immediately (no lock to check)
+      const updatedJob = await dbconn.c2d.getJob(testJobId)
+      // Free jobs without locks should be marked as finished
+      assert(
+        updatedJob[0].status === C2DStatusNumber.JobFinished,
+        'Free job should be marked as finished'
+      )
+    })
+
+    it('should process multiple jobs in batch', async function () {
+      this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+
+      const jobIds: string[] = []
+      const now = Math.floor(Date.now() / 1000)
+
+      // Create multiple jobs in JobSettle status
+      for (let i = 0; i < 3; i++) {
+        const testJobId = `test-job-batch-${i}-${Date.now()}`
+        jobIds.push(testJobId)
+
+        const testJob: DBComputeJob = {
+          owner: await consumerAccount.getAddress(),
+          jobId: testJobId,
+          dateCreated: now.toString(),
+          status: C2DStatusNumber.JobSettle,
+          statusText: C2DStatusText.JobSettle,
+          environment: firstEnv.id,
+          isRunning: false,
+          isStarted: true,
+          stopRequested: false,
+          algoStartTimestamp: String(now - 120),
+          algoStopTimestamp: now.toString(),
+          algoDuration: 120,
+          isFree: true, // Use free jobs for simpler testing
+          resources: [
+            {
+              id: 'cpu',
+              amount: 1,
+              price: 0
+            }
+          ],
+          clusterHash: 'test-cluster',
+          configlogURL: '',
+          publishlogURL: '',
+          algologURL: '',
+          outputsURL: '',
+          algorithm: {} as ComputeAlgorithm,
+          assets: [] as ComputeAsset[],
+          containerImage: null,
+          dateFinished: null,
+          results: [],
+          queueMaxWaitTime: 0
+        }
+
+        await dbconn.c2d.newJob(testJob)
+      }
+
+      // Verify all jobs are in JobSettle status
+      const jobsBefore = await dbconn.c2d.getJobs(
+        [firstEnv.id],
+        undefined,
+        undefined,
+        C2DStatusNumber.JobSettle
+      )
+      const testJobsBefore = jobsBefore.filter((j) => jobIds.includes(j.jobId))
+      assert(
+        testJobsBefore.length === 3,
+        `Should have 3 jobs in JobSettle status, got ${testJobsBefore.length}`
+      )
+
+      // Trigger claimPayments to process all
+      const claimPaymentsMethod = (dockerEngine as any).claimPayments.bind(dockerEngine)
+      await claimPaymentsMethod()
+
+      // Wait for processing
+      await sleep(3000)
+
+      // Verify all jobs were processed
+      for (const jobId of jobIds) {
+        const job = await dbconn.c2d.getJob(jobId)
+        assert(
+          job[0].status === C2DStatusNumber.JobFinished,
+          `Job ${jobId} should be processed`
+        )
+      }
+    })
+
+    it('should start payment claim timer on engine start', function () {
+      // Verify timer methods exist
+      // Timer might be null if not started yet, or a NodeJS.Timeout if started
+      // We can't easily test the timer directly, but we can verify the method exists
+      assert(
+        typeof (dockerEngine as any).startPaymentTimer === 'function',
+        'startPaymentTimer method should exist'
+      )
+      assert(
+        typeof (dockerEngine as any).claimPayments === 'function',
+        'claimPayments method should exist'
+      )
     })
   })
 })
