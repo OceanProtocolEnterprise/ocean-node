@@ -279,6 +279,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
     assert(result, 'Failed to get result from stream')
 
     let ddoState
+    console.log('result', result)
     if (Array.isArray(result)) {
       assert(result.length > 0, 'No ddo state found in results array')
       ddoState = result[0]

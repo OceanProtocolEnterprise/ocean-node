@@ -239,6 +239,11 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
       CORE_LOGGER.info(
         `Searching in index ${this.index} with query: ${JSON.stringify(query)}`
       )
+      const result2 = await this.client.search({
+        index: this.index,
+        query
+      })
+      console.log('Query result2: ', result2)
       const result = await this.client.search({
         index: this.index,
         body: {
