@@ -9,7 +9,7 @@ import {
 import { createElasticsearchClientWithRetry } from './ElasticsearchConfigHelper.js'
 import { OceanNodeDBConfig } from '../../@types'
 import { ElasticsearchSchema } from './ElasticSchemas.js'
-import { CORE_LOGGER, DATABASE_LOGGER } from '../../utils/logging/common.js'
+import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 
 import { DDOManager } from '@oceanprotocol/ddo-js'
@@ -236,14 +236,6 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
 
   async search(query: Record<string, any>) {
     try {
-      CORE_LOGGER.info(
-        `Searching in index ${this.index} with query: ${JSON.stringify(query)}`
-      )
-      const result2 = await this.client.search({
-        index: this.index,
-        query
-      })
-      console.log('Query result2: ', result2)
       const result = await this.client.search({
         index: this.index,
         body: {
