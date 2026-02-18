@@ -37,6 +37,7 @@ describe('Should validate files structure for download', () => {
     envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
 
     config = await getConfiguration(true)
+    console.log('config', config)
     db = await Database.init(config.dbConfig)
     oceanNode = OceanNode.getInstance(config, db)
     consumerAccount = new Wallet(process.env.PRIVATE_KEY)
