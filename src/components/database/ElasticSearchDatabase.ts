@@ -57,7 +57,8 @@ export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
         index: this.index,
         id: network.toString(),
         body: { lastIndexedBlock },
-        refresh: 'wait_for'
+        // refresh: 'wait_for'
+        refresh: true
       })
       return { id: network.toString(), lastIndexedBlock }
     } catch (error) {
@@ -237,7 +238,10 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
     try {
       const result = await this.client.search({
         index: this.index,
-        query
+        body: {
+          query
+        },
+        preference: '_primary_first'
       })
       console.log('Query result: ', result)
       return result.hits.hits.map((hit: any) => {
@@ -278,7 +282,8 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
           body: {
             doc: { chainId, did, nft: nftAddress, txId, valid, error: errorMsg }
           },
-          refresh: 'wait_for'
+          // refresh: 'wait_for'
+          refresh: true
         })
       } else {
         return await this.create(chainId, did, nftAddress, txId, valid, errorMsg)
@@ -302,7 +307,8 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
       await this.client.delete({
         index: this.index,
         id: did,
-        refresh: 'wait_for'
+        // refresh: 'wait_for'
+        refresh: true
       })
       return { id: did }
     } catch (error) {
@@ -388,7 +394,6 @@ export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
         did,
         startOrderId
       }
-
       await this.provider.index({
         index: this.getSchema().index,
         id: orderId,
@@ -823,7 +828,8 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
       const result = await this.client.index({
         index: this.index,
         body: { ...logEntry, timestamp },
-        refresh: 'wait_for'
+        // refresh: 'wait_for'
+        refresh: true
       })
       // uniformize result response (we need an id for the retrieveLog API)
       if (result._id) {
@@ -883,33 +889,49 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
         filterConditions.bool.must.push({ match: { level } })
       }
 
-      const numLogs = await this.getLogsCount()
-      const from = (page || 0) * Math.min(maxLogs, 250)
-      const size = Math.min(maxLogs, 250)
-      // not checking this limits will throw:
-      // illegal_argument_exception: Result window is too large, from + size must be less than or equal to: [10000] but was [XYZ]
-      if (from > 10000 || size > 10000 || size > numLogs) {
-        DATABASE_LOGGER.logMessageWithEmoji(
-          `Result window is too large, from + size must be less than or equal to: [10000]. "from": ${from}", "size": ${size}, "num": ${numLogs}`,
-          true,
-          GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-          LOG_LEVELS_STR.LEVEL_ERROR
-        )
-        return []
+      if (page !== undefined && page !== null) {
+        return await this.fetchLogPage(filterConditions, page, Math.min(maxLogs, 250))
       }
-      const result = await this.client.search({
-        index: this.index,
-        body: {
-          query: filterConditions,
-          sort: [{ timestamp: { order: 'desc' } }]
-        },
-        size,
-        from
-      })
 
-      return result.hits.hits.map((hit: any) => {
-        return normalizeDocumentId(hit._source, hit._id)
-      })
+      const allLogs: Record<string, any>[] = []
+      let currentPage = 0
+      const pageSize = 250
+
+      while (allLogs.length < maxLogs) {
+        const from = currentPage * pageSize
+        const size = Math.min(pageSize, maxLogs - allLogs.length)
+
+        // Elasticsearch result window limit
+        if (from + size > 10000) {
+          DATABASE_LOGGER.logMessageWithEmoji(
+            `Reached Elasticsearch result window limit (10000). Returning ${allLogs.length} logs.`,
+            true,
+            GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
+            LOG_LEVELS_STR.LEVEL_INFO
+          )
+          break
+        }
+
+        const result = await this.client.search({
+          index: this.index,
+          body: {
+            query: filterConditions,
+            sort: [{ timestamp: { order: 'desc' } }]
+          },
+          size,
+          from
+        })
+
+        const hits = result.hits.hits.map((hit: any) =>
+          normalizeDocumentId(hit._source, hit._id)
+        )
+        allLogs.push(...hits)
+
+        if (hits.length < size) break
+        currentPage++
+      }
+
+      return allLogs.slice(0, maxLogs)
     } catch (error) {
       const errorMsg = `Error when retrieving multiple log entries: ${error.message}`
       DATABASE_LOGGER.logMessageWithEmoji(
@@ -922,6 +944,33 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
     }
   }
 
+  private async fetchLogPage(
+    filterConditions: any,
+    page: number,
+    size: number
+  ): Promise<Record<string, any>[]> {
+    const from = page * size
+    if (from + size > 10000) {
+      DATABASE_LOGGER.logMessageWithEmoji(
+        `Result window is too large, from + size must be less than or equal to: [10000]. "from": ${from}, "size": ${size}`,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return []
+    }
+    const result = await this.client.search({
+      index: this.index,
+      body: {
+        query: filterConditions,
+        sort: [{ timestamp: { order: 'desc' } }]
+      },
+      size,
+      from
+    })
+    return result.hits.hits.map((hit: any) => normalizeDocumentId(hit._source, hit._id))
+  }
+
   async delete(logId: string): Promise<void> {
     if (!logId) {
       throw new Error('Log ID is required for deletion.')
@@ -930,7 +979,8 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
       await this.client.delete({
         index: this.index,
         id: logId,
-        refresh: 'wait_for'
+        // refresh: 'wait_for'
+        refresh: true
       })
       DATABASE_LOGGER.logMessageWithEmoji(
         `Deleted log with ID: ${logId}`,
