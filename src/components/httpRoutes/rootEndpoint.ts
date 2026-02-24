@@ -2,7 +2,7 @@ import express from 'express'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
 import { getConfiguration } from '../../utils/index.js'
 import { getAllServiceEndpoints } from './index.js'
-import { getProviderIdentityAndTC } from './utils.js'
+import { getNodeOwnerInfo } from './utils.js'
 export const rootEndpointRoutes = express.Router()
 
 rootEndpointRoutes.get('/', async (req, res) => {
@@ -20,16 +20,13 @@ rootEndpointRoutes.get('/', async (req, res) => {
     version: '0.0.1'
   }
 
-  const { license, proofOfIdentity } = getProviderIdentityAndTC()
-  if (license) {
-    rootResponse.license = license
+  const ownerInfo = getNodeOwnerInfo()
+  if (ownerInfo) {
+    rootResponse.ownerInfo = ownerInfo
   } else {
-    HTTP_LOGGER.warn('LICENSE not present or invalid JSON object')
-  }
-  if (proofOfIdentity) {
-    rootResponse.proofOfIdentity = proofOfIdentity
-  } else {
-    HTTP_LOGGER.warn('PROOF_OF_IDENTITY not present or invalid JSON object')
+    HTTP_LOGGER.warn(
+      'NODE_OWNER_INFO not present or invalid. Expected JSON object with optional NODE_IMPRINT, NODE_TC, NODE_PRIVACY_POLICY, NODE_PROOF_OF_IDENTITY entries.'
+    )
   }
 
   res.json(rootResponse)
