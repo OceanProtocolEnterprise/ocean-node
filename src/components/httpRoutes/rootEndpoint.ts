@@ -24,9 +24,7 @@ rootEndpointRoutes.get('/', async (req, res) => {
   if (ownerInfo) {
     rootResponse.ownerInfo = ownerInfo
   } else {
-    HTTP_LOGGER.warn(
-      'NODE_OWNER_INFO not present or invalid. Expected JSON object with optional imprint, termsAndConditions, privacyPolicy entries.'
-    )
+    HTTP_LOGGER.warn('NODE_OWNER_INFO not present or invalid')
   }
 
   res.json(rootResponse)
