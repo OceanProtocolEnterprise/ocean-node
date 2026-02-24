@@ -1,26 +1,21 @@
-export type NodeInfoType = 'text' | 'url'
-
-export type NodeInfoEntry = {
-  type: NodeInfoType
-  value: string
+export type NodeOwnerInfoSection = {
+  url: string
+  [key: string]: any
 }
 
 export type NodeOwnerInfo = {
-  NODE_IMPRINT?: NodeInfoEntry
-  NODE_TC?: NodeInfoEntry
-  NODE_PRIVACY_POLICY?: NodeInfoEntry
-  NODE_PROOF_OF_IDENTITY?: NodeInfoEntry
+  imprint?: NodeOwnerInfoSection & {
+    legalName: string
+    email: string
+  }
+  termsAndConditions?: NodeOwnerInfoSection
+  privacyPolicy?: NodeOwnerInfoSection
+  [key: string]: NodeOwnerInfoSection | undefined
 }
 
 const OWNER_INFO_ENV_KEY = 'NODE_OWNER_INFO'
-const OWNER_INFO_KEYS: (keyof NodeOwnerInfo)[] = [
-  'NODE_IMPRINT',
-  'NODE_TC',
-  'NODE_PRIVACY_POLICY',
-  'NODE_PROOF_OF_IDENTITY'
-]
 
-function parseObj(envValue: string): Record<string, unknown> | null {
+function parseObj(envValue: string): Record<string, any> | null {
   if (!envValue) {
     return null
   }
@@ -32,7 +27,7 @@ function parseObj(envValue: string): Record<string, unknown> | null {
       parsedValue !== null &&
       !Array.isArray(parsedValue)
     ) {
-      return parsedValue as Record<string, unknown>
+      return parsedValue as Record<string, any>
     }
   } catch {
     return null
@@ -41,16 +36,26 @@ function parseObj(envValue: string): Record<string, unknown> | null {
   return null
 }
 
-function isNodeInfoEntry(value: unknown): value is NodeInfoEntry {
+function isObjectRecord(value: any): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isImprint(value: any): value is NonNullable<NodeOwnerInfo['imprint']> {
+  if (!isObjectRecord(value)) {
+    return false
+  }
+  return (
+    typeof value.legalName === 'string' &&
+    typeof value.email === 'string' &&
+    typeof value.url === 'string'
+  )
+}
+
+function isUrlContainer(value: any): value is NodeOwnerInfoSection {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false
   }
-
-  const candidate = value as Record<string, unknown>
-  return (
-    (candidate.type === 'text' || candidate.type === 'url') &&
-    typeof candidate.value === 'string'
-  )
+  return typeof (value as Record<string, any>).url === 'string'
 }
 
 export function getNodeOwnerInfo(): NodeOwnerInfo | null {
@@ -65,9 +70,20 @@ export function getNodeOwnerInfo(): NodeOwnerInfo | null {
   }
 
   const result: NodeOwnerInfo = {}
-  OWNER_INFO_KEYS.forEach((key) => {
-    const value = parsedOwnerInfo[key]
-    if (isNodeInfoEntry(value)) {
+  if (isImprint(parsedOwnerInfo.imprint)) {
+    result.imprint = parsedOwnerInfo.imprint
+  }
+  if (isUrlContainer(parsedOwnerInfo.termsAndConditions)) {
+    result.termsAndConditions = parsedOwnerInfo.termsAndConditions
+  }
+  if (isUrlContainer(parsedOwnerInfo.privacyPolicy)) {
+    result.privacyPolicy = parsedOwnerInfo.privacyPolicy
+  }
+  Object.entries(parsedOwnerInfo).forEach(([key, value]) => {
+    if (
+      !['imprint', 'termsAndConditions', 'privacyPolicy'].includes(key) &&
+      isUrlContainer(value)
+    ) {
       result[key] = value
     }
   })
