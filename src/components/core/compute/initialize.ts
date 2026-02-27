@@ -29,6 +29,7 @@ import { FindDdoHandler } from '../handler/ddoHandler.js'
 import { isOrderingAllowedForAsset } from '../handler/downloadHandler.js'
 import { getNonceAsNumber } from '../utils/nonceHandler.js'
 import { getAlgorithmImage } from '../../c2d/compute_engine_docker.js'
+
 import { Credentials, DDOManager } from '@oceanprotocol/ddo-js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { PolicyServer } from '../../policyServer/index.js'
@@ -139,7 +140,7 @@ export class ComputeInitializeHandler extends CommandHandler {
           task.maxJobDuration = env.maxJobDuration
         }
         resourcesNeeded = await engine.checkAndFillMissingResources(
-          task.payment.resources,
+          task.payment.resources ?? [],
           env,
           false
         )

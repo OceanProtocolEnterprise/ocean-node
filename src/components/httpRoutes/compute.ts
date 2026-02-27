@@ -83,7 +83,9 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
       authorization: req.headers?.authorization,
       additionalViewers: (req.body.additionalViewers as unknown as string[]) || null,
       queueMaxWaitTime: req.body.queueMaxWaitTime || 0,
-      caller: req.caller
+      caller: req.caller,
+      encryptedDockerRegistryAuth:
+        (req.body.encryptedDockerRegistryAuth as string) || null
     }
     if (req.body.output) {
       startComputeTask.output = req.body.output as ComputeOutput
@@ -130,7 +132,9 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/freeCompute`, async (req, res) => 
       authorization: req.headers?.authorization,
       additionalViewers: (req.body.additionalViewers as unknown as string[]) || null,
       queueMaxWaitTime: req.body.queueMaxWaitTime || 0,
-      caller: req.caller
+      caller: req.caller,
+      encryptedDockerRegistryAuth:
+        (req.body.encryptedDockerRegistryAuth as string) || null
     }
     if (req.body.output) {
       startComputeTask.output = req.body.output as ComputeOutput
@@ -272,7 +276,10 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeStreamableLogs`, async (req,
       res.set(response.status.headers)
       response.stream.pipe(res)
     } else {
-      res.status(response.status.httpStatus).send(response.status.error)
+      const body =
+        response.status.error ??
+        (response.status.httpStatus === 404 ? 'Job not found or not running' : 'Error')
+      res.status(response.status.httpStatus).send(body)
     }
   } catch (error) {
     HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)

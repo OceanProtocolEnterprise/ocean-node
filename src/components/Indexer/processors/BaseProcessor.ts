@@ -275,7 +275,7 @@ export abstract class BaseEventProcessor {
   ): Promise<any> {
     let ddo
     // Log the flag value
-    INDEXER_LOGGER.logMessage(`decryptDDO: flag=${flag}`)
+    INDEXER_LOGGER.debug(`decryptDDO: flag=${flag}`)
     if ((parseInt(flag) & 2) !== 0) {
       INDEXER_LOGGER.logMessage(
         `Decrypting DDO  from network: ${this.networkId} created by: ${eventCreator} encrypted by: ${decryptorURL}`
@@ -287,8 +287,6 @@ export abstract class BaseEventProcessor {
       const wallet = keyManager.getEthWallet()
       const ethAddress = wallet.address
 
-      const useTxIdOrContractAddress = txId || contractAddress
-
       if (URLUtils.isValidUrl(decryptorURL)) {
         try {
           const response = await withRetrial(async () => {
@@ -298,7 +296,7 @@ export abstract class BaseEventProcessor {
             )
 
             const message = String(
-              useTxIdOrContractAddress + ethAddress + chainId.toString() + nonce
+              String(ethAddress) + String(nonce) + String(PROTOCOL_COMMANDS.DECRYPT_DDO)
             )
             const signature = await keyManager.signMessage(message)
 
@@ -407,7 +405,7 @@ export abstract class BaseEventProcessor {
           )
 
           const message = String(
-            useTxIdOrContractAddress + ethAddress + chainId.toString() + nonceP2p
+            String(ethAddress) + String(nonceP2p) + String(PROTOCOL_COMMANDS.DECRYPT_DDO)
           )
           const signature = await keyManager.signMessage(message)
 
@@ -465,7 +463,9 @@ export abstract class BaseEventProcessor {
             )
 
             const messageToSign = String(
-              useTxIdOrContractAddress + ethAddress + chainId.toString() + remoteNonce
+              String(ethAddress) +
+                String(remoteNonce) +
+                String(PROTOCOL_COMMANDS.DECRYPT_DDO)
             )
             const signature = await keyManager.signMessage(messageToSign)
 

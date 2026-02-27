@@ -188,20 +188,20 @@ export class DownloadHandler extends CommandHandler {
 
   async handle(task: DownloadCommand): Promise<P2PCommandResponse> {
     const validationResponse = await this.verifyParamsAndRateLimits(task)
+    if (this.shouldDenyTaskHandling(validationResponse)) {
+      return validationResponse
+    }
     const isAuthRequestValid = await this.validateTokenOrSignature(
       task.authorization,
       task.consumerAddress,
       task.nonce,
       task.signature,
-      String(task.documentId + task.nonce)
+      task.command
     )
     if (isAuthRequestValid.status.httpStatus !== 200) {
       return isAuthRequestValid
     }
 
-    if (this.shouldDenyTaskHandling(validationResponse)) {
-      return validationResponse
-    }
     const node = this.getOceanNode()
     // 1. Get the DDO
     const handler: FindDdoHandler = node
@@ -520,6 +520,17 @@ export class DownloadHandler extends CommandHandler {
         CORE_LOGGER.info('Appended userData to file url: ' + decriptedFileObject.url)
       }
 
+      if (decriptedFileObject?.url && task.userData) {
+        const url = new URL(decriptedFileObject.url)
+        const userDataObj =
+          typeof task.userData === 'string' ? JSON.parse(task.userData) : task.userData
+        for (const [key, value] of Object.entries(userDataObj)) {
+          url.searchParams.append(key, String(value))
+        }
+        decriptedFileObject.url = url.toString()
+        CORE_LOGGER.info('Appended userData to file url: ' + decriptedFileObject.url)
+      }
+
       if (!validateFilesStructure(ddo, service, decryptedFileData)) {
         CORE_LOGGER.error(
           'Unauthorized download operation. Decrypted "nftAddress" and "datatokenAddress" do not match the original DDO'
@@ -537,7 +548,7 @@ export class DownloadHandler extends CommandHandler {
       return await handleDownloadUrlCommand(node, {
         fileObject: decriptedFileObject,
         aes_encrypted_key: task.aes_encrypted_key,
-        command: PROTOCOL_COMMANDS.DOWNLOAD_URL
+        command: PROTOCOL_COMMANDS.DOWNLOAD
       })
     } catch (e) {
       CORE_LOGGER.logMessage('Decryption error: ' + e, true)

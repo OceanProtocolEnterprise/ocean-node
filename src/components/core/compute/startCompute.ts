@@ -73,7 +73,7 @@ export class PaidComputeStartHandler extends CommandHandler {
       task.consumerAddress,
       task.nonce,
       task.signature,
-      String(task.consumerAddress + task.datasets[0]?.documentId + task.nonce)
+      task.command
     )
 
     if (authValidationResponse.status.httpStatus !== 200) {
@@ -665,7 +665,7 @@ export class FreeComputeStartHandler extends CommandHandler {
       task.consumerAddress,
       task.nonce,
       task.signature,
-      String(task.nonce)
+      task.command
     )
     if (authValidationResponse.status.httpStatus !== 200) {
       return authValidationResponse
@@ -713,7 +713,6 @@ export class FreeComputeStartHandler extends CommandHandler {
           }
         }
       }
-
       const policyServer = new PolicyServer()
       for (const elem of [...[task.algorithm], ...task.datasets]) {
         if (!('documentId' in elem)) {
