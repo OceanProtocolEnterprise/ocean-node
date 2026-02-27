@@ -1,0 +1,56 @@
+services:
+  oe-node:
+    image: oceanprotocolenterprise/oe-node:latest
+    container_name: oe-node
+    restart: unless-stopped
+    pull_policy: always
+
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+      - '9002:9002'
+      - '9003:9003'
+      - '9005:9005'
+      - '8000:8000'
+
+    depends_on:
+      - elasticsearch
+
+    networks:
+      - backend
+
+    volumes:
+      - ./oe-node-logs:/usr/src/app/logs
+      - ./oe-node-c2d-storage:/usr/src/app/c2d_storage
+      - ./oe-node-databases:/usr/src/app/databases
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    env_file: .env.node
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.3
+    container_name: elasticsearch
+    restart: unless-stopped
+
+    env_file: .env.elasticsearch
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+    ports:
+      - '9200:9200'
+
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  esdata:
