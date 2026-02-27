@@ -139,7 +139,7 @@ export class ComputeInitializeHandler extends CommandHandler {
           task.maxJobDuration = env.maxJobDuration
         }
         resourcesNeeded = await engine.checkAndFillMissingResources(
-          task.payment.resources,
+          task.payment.resources ?? [],
           env,
           false
         )
