@@ -130,7 +130,7 @@ export class PolicyServer {
 
   async checkStartCompute(
     documentId: string,
-    ddo: DDO,
+    ddo: DDO | Record<string, any>,
     serviceId: string,
     consumerAddress: string,
     policyServer: any
@@ -138,6 +138,7 @@ export class PolicyServer {
     const command = {
       action: 'startCompute',
       documentId,
+      ddo,
       serviceId,
       consumerAddress,
       policyServer
