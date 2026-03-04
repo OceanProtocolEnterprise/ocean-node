@@ -1,6 +1,6 @@
 services:
   oe-node:
-    image: oceanprotocolenterprise/oe-node:latest
+    image: oceanenterprise/oe-node:latest
     container_name: oe-node
     restart: unless-stopped
     pull_policy: always
