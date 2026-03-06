@@ -19,7 +19,12 @@ import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templat
 // import lzma from 'lzma-native'
 import lzmajs from 'lzma-purejs-requirejs'
 import { getValidationSignature, isRemoteDDO } from '../utils/validateDdoHandler.js'
-import { getConfiguration, hasP2PInterface } from '../../../utils/config.js'
+import {
+  getConfiguration,
+  hasP2PInterface,
+  isPolicyServerConfigured
+} from '../../../utils/config.js'
+import { PolicyServer } from '../../policyServer/index.js'
 import {
   GetDdoCommand,
   FindDDOCommand,
@@ -87,11 +92,38 @@ export class DecryptDdoHandler extends CommandHandler {
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
+    const chainId = String(task.chainId)
+    const config = await getConfiguration()
+    const supportedNetwork = config.supportedNetworks[chainId]
+
+    // check if supported chainId
+    if (!supportedNetwork) {
+      CORE_LOGGER.logMessage(`Decrypt DDO: Unsupported chain id ${chainId}`, true)
+      return {
+        stream: null,
+        status: {
+          httpStatus: 400,
+          error: `Decrypt DDO: Unsupported chain id`
+        }
+      }
+    }
+    const isAuthRequestValid = await this.validateTokenOrSignature(
+      task.authorization,
+      task.decrypterAddress,
+      task.nonce,
+      task.signature,
+      task.command
+    )
+    if (isAuthRequestValid.status.httpStatus !== 200) {
+      return isAuthRequestValid
+    }
+
     try {
       let decrypterAddress: string
       try {
         decrypterAddress = ethers.getAddress(task.decrypterAddress)
       } catch (error) {
+        CORE_LOGGER.logMessage(`Decrypt DDO: error ${error}`, true)
         return {
           stream: null,
           status: {
@@ -101,45 +133,6 @@ export class DecryptDdoHandler extends CommandHandler {
         }
       }
 
-      const nonce = Number(task.nonce)
-      if (isNaN(nonce)) {
-        return {
-          stream: null,
-          status: {
-            httpStatus: 400,
-            error: `Decrypt DDO: nonce value is not a number`
-          }
-        }
-      }
-
-      const node = this.getOceanNode()
-      const dbNonce = node.getDatabase().nonce
-      const existingNonce = await dbNonce.retrieve(decrypterAddress)
-
-      if (existingNonce && existingNonce.nonce === nonce) {
-        return {
-          stream: null,
-          status: {
-            httpStatus: 400,
-            error: `Decrypt DDO: duplicate nonce`
-          }
-        }
-      }
-
-      await dbNonce.update(decrypterAddress, nonce)
-      const chainId = String(task.chainId)
-      const config = await getConfiguration()
-      const supportedNetwork = config.supportedNetworks[chainId]
-      // check if supported chainId
-      if (!supportedNetwork) {
-        return {
-          stream: null,
-          status: {
-            httpStatus: 400,
-            error: `Decrypt DDO: Unsupported chain id`
-          }
-        }
-      }
       const ourEthAddress = this.getOceanNode().getKeyManager().getEthAddress()
       if (config.authorizedDecrypters.length > 0) {
         // allow if on authorized list or it is own node
@@ -158,7 +151,6 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       }
-
       const oceanNode = this.getOceanNode()
       const blockchain = oceanNode.getBlockchain(supportedNetwork.chainId)
       if (!blockchain) {
@@ -376,40 +368,6 @@ export class DecryptDdoHandler extends CommandHandler {
               httpStatus: 400,
               error: 'Decrypt DDO: checksum does not match'
             }
-          }
-        }
-      }
-
-      // check signature
-      try {
-        const useTxIdOrContractAddress = transactionId || dataNftAddress
-
-        const message = String(
-          useTxIdOrContractAddress + decrypterAddress + chainId + nonce
-        )
-        const messageHash = ethers.solidityPackedKeccak256(
-          ['bytes'],
-          [ethers.hexlify(ethers.toUtf8Bytes(message))]
-        )
-        const messageHashBytes = ethers.getBytes(messageHash)
-        const addressFromHashSignature = ethers.verifyMessage(messageHash, task.signature)
-        const addressFromBytesSignature = ethers.verifyMessage(
-          messageHashBytes,
-          task.signature
-        )
-
-        if (
-          addressFromHashSignature?.toLowerCase() !== decrypterAddress?.toLowerCase() &&
-          addressFromBytesSignature?.toLowerCase() !== decrypterAddress?.toLowerCase()
-        ) {
-          throw new Error('address does not match')
-        }
-      } catch (error) {
-        return {
-          stream: null,
-          status: {
-            httpStatus: 400,
-            error: 'Decrypt DDO: invalid signature or does not match'
           }
         }
       }
@@ -795,6 +753,12 @@ export class ValidateDDOHandler extends CommandHandler {
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
+    if (!task.ddo || !task.ddo.version) {
+      return {
+        stream: null,
+        status: { httpStatus: 400, error: 'Missing DDO version' }
+      }
+    }
     let shouldSign = false
     const configuration = await getConfiguration()
     if (configuration.validateUnsignedDDO) {
@@ -806,7 +770,7 @@ export class ValidateDDOHandler extends CommandHandler {
         task.publisherAddress,
         task.nonce,
         task.signature,
-        String(task.publisherAddress + task.nonce)
+        task.command
       )
       if (validationResponse.status.httpStatus !== 200) {
         return validationResponse
@@ -827,6 +791,27 @@ export class ValidateDDOHandler extends CommandHandler {
         return {
           stream: null,
           status: { httpStatus: 400, error: `Validation error: ${validation[1]}` }
+        }
+      }
+      if (isPolicyServerConfigured()) {
+        const policyServer = new PolicyServer()
+        const response = await policyServer.validateDDO(
+          task.ddo,
+          task.publisherAddress,
+          task.policyServer
+        )
+        if (!response) {
+          CORE_LOGGER.logMessage(
+            `Error: Validation for ${task.publisherAddress} was denied`,
+            true
+          )
+          return {
+            stream: null,
+            status: {
+              httpStatus: 403,
+              error: `Error: Validation for ${task.publisherAddress} was denied`
+            }
+          }
         }
       }
       return {

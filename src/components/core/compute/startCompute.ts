@@ -73,7 +73,7 @@ export class PaidComputeStartHandler extends CommandHandler {
       task.consumerAddress,
       task.nonce,
       task.signature,
-      String(task.consumerAddress + task.datasets[0]?.documentId + task.nonce)
+      task.command
     )
 
     if (authValidationResponse.status.httpStatus !== 200) {
@@ -665,7 +665,7 @@ export class FreeComputeStartHandler extends CommandHandler {
       task.consumerAddress,
       task.nonce,
       task.signature,
-      String(task.nonce)
+      task.command
     )
     if (authValidationResponse.status.httpStatus !== 200) {
       return authValidationResponse
@@ -713,7 +713,6 @@ export class FreeComputeStartHandler extends CommandHandler {
           }
         }
       }
-
       const policyServer = new PolicyServer()
       for (const elem of [...[task.algorithm], ...task.datasets]) {
         if (!('documentId' in elem)) {
@@ -985,7 +984,7 @@ async function validateAccess(
 
   if (
     !access.accessLists ||
-    (Object.keys(access.accessLists).length === 0 && access.addresses.length === 0)
+    (access.accessLists.length === 0 && access.addresses.length === 0)
   ) {
     return true
   }
@@ -996,33 +995,36 @@ async function validateAccess(
 
   const config = await getConfiguration()
   const { supportedNetworks } = config
-  for (const chain of Object.keys(access.accessLists)) {
-    const { chainId } = supportedNetworks[chain]
-    try {
-      const blockchain = oceanNode.getBlockchain(chainId)
-      if (!blockchain) {
+  for (const accessListMap of access.accessLists) {
+    if (!accessListMap) continue
+    for (const chain of Object.keys(accessListMap)) {
+      const { chainId } = supportedNetworks[chain]
+      try {
+        const blockchain = oceanNode.getBlockchain(chainId)
+        if (!blockchain) {
+          CORE_LOGGER.logMessage(
+            `Blockchain instance not available for chain ${chainId}, skipping access list check`,
+            true
+          )
+          continue
+        }
+        const signer = await blockchain.getSigner()
+        for (const accessListAddress of accessListMap[chain]) {
+          const hasAccess = await checkAddressOnAccessList(
+            accessListAddress,
+            consumerAddress,
+            signer
+          )
+          if (hasAccess) {
+            return true
+          }
+        }
+      } catch (error) {
         CORE_LOGGER.logMessage(
-          `Blockchain instance not available for chain ${chainId}, skipping access list check`,
+          `Failed to check access lists on chain ${chain}: ${error.message}`,
           true
         )
-        continue
       }
-      const signer = await blockchain.getSigner()
-      for (const accessListAddress of access.accessLists[chain]) {
-        const hasAccess = await checkAddressOnAccessList(
-          accessListAddress,
-          consumerAddress,
-          signer
-        )
-        if (hasAccess) {
-          return true
-        }
-      }
-    } catch (error) {
-      CORE_LOGGER.logMessage(
-        `Failed to check access lists on chain ${chain}: ${error.message}`,
-        true
-      )
     }
   }
 

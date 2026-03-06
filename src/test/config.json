@@ -59,7 +59,6 @@
     "autoDialInterval": 5000,
     "enableNetworkStats": false
   },
-  "hasControlPanel": true,
   "httpPort": 8001,
   "dbConfig": {
     "url": "http://localhost:9200",

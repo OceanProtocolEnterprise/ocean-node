@@ -25,7 +25,6 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 - `INDEXER_NETWORKS`: Specifies the networks the Indexer will crawl. If not set, the Indexer will index all networks defined in the RPCS environment variable. If set to an empty string, indexing will be disabled. Example: `[1, 137]`
 - `ALLOWED_ADMINS`: Sets the public address of accounts which have access to admin endpoints e.g. shutting down the node. Example: `"[\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"]"`
 - `ALLOWED_ADMINS_LIST`: Array of access list addresses (per chain) for accounts that have access to admin endpoints. Example: `"{ \"8996\": [\"0x123\",\"0x456\"]"`
-- `CONTROL_PANEL`: If `false` the control panel will not run. If not set or `true` the control panel will start with the node. Example: `false`
 - `RATE_DENY_LIST`: Blocked list of IPs and peer IDs. Example: `"{ \"peers\": [\"16Uiu2HAkuYfgjXoGcSSLSpRPD6XtUgV71t5RqmTmcqdbmrWY9MJo\"], \"ips\": [\"127.0.0.1\"] }"`
 - `MAX_REQ_PER_MINUTE`: Number of requests per minute allowed by the same client (IP or Peer id). Example: `30`
 - `MAX_CONNECTIONS_PER_MINUTE`: Max number of requests allowed per minute (all clients). Example: `120`
@@ -36,6 +35,20 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 - `VALIDATE_UNSIGNED_DDO`: If set to `false`, the node will not validate unsigned DDOs and will request a signed message with the publisher address, nonce and signature. Default is `true`. Example: `false`
 - `JWT_SECRET`: Secret used to sign JWT tokens. Default is `ocean-node-secret`. Example: `"my-secret-jwt-token"`
 - `NODE_OWNER_INFO`: Optional JSON object returned by the root endpoint as `ownerInfo`. Example: `"{\"imprint\":{\"legalName\":\"Example Ocean Services GmbH\"},\"termsAndConditions\":{\"url\":\"https://example.com/terms\"},\"anyCustomSection\":{\"foo\":\"bar\"}}"`
+
+## Database
+
+- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
+- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
+- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
+- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
+- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
+- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
+- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
+- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
+- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
+- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
+- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
 
 ## Database
 

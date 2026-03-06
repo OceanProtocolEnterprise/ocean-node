@@ -135,39 +135,41 @@ export class C2DEngineDocker extends C2DEngine {
         supportedChains.push(parseInt(chain))
       }
     }
-    for (const feeChain of Object.keys(envConfig.fees)) {
-      // for (const feeConfig of envConfig.fees) {
-      if (supportedChains.includes(parseInt(feeChain))) {
-        if (fees === null) fees = {}
-        if (!(feeChain in fees)) fees[feeChain] = []
-        const tmpFees: ComputeEnvFees[] = []
-        for (let i = 0; i < envConfig.fees[feeChain].length; i++) {
-          if (
-            envConfig.fees[feeChain][i].prices &&
-            envConfig.fees[feeChain][i].prices.length > 0
-          ) {
-            if (!envConfig.fees[feeChain][i].feeToken) {
-              const tokenAddress = getOceanTokenAddressForChain(parseInt(feeChain))
-              if (tokenAddress) {
-                envConfig.fees[feeChain][i].feeToken = tokenAddress
-                tmpFees.push(envConfig.fees[feeChain][i])
+    if (envConfig.fees && Object.keys(envConfig.fees).length > 0) {
+      for (const feeChain of Object.keys(envConfig.fees)) {
+        // for (const feeConfig of envConfig.fees) {
+        if (supportedChains.includes(parseInt(feeChain))) {
+          if (fees === null) fees = {}
+          if (!(feeChain in fees)) fees[feeChain] = []
+          const tmpFees: ComputeEnvFees[] = []
+          for (let i = 0; i < envConfig.fees[feeChain].length; i++) {
+            if (
+              envConfig.fees[feeChain][i].prices &&
+              envConfig.fees[feeChain][i].prices.length > 0
+            ) {
+              if (!envConfig.fees[feeChain][i].feeToken) {
+                const tokenAddress = getOceanTokenAddressForChain(parseInt(feeChain))
+                if (tokenAddress) {
+                  envConfig.fees[feeChain][i].feeToken = tokenAddress
+                  tmpFees.push(envConfig.fees[feeChain][i])
+                } else {
+                  CORE_LOGGER.error(
+                    `Unable to find Ocean token address for chain ${feeChain} and no custom token provided`
+                  )
+                }
               } else {
-                CORE_LOGGER.error(
-                  `Unable to find Ocean token address for chain ${feeChain} and no custom token provided`
-                )
+                tmpFees.push(envConfig.fees[feeChain][i])
               }
             } else {
-              tmpFees.push(envConfig.fees[feeChain][i])
+              CORE_LOGGER.error(
+                `Unable to find prices for fee ${JSON.stringify(
+                  envConfig.fees[feeChain][i]
+                )} on chain ${feeChain}`
+              )
             }
-          } else {
-            CORE_LOGGER.error(
-              `Unable to find prices for fee ${JSON.stringify(
-                envConfig.fees[feeChain][i]
-              )} on chain ${feeChain}`
-            )
           }
+          fees[feeChain] = tmpFees
         }
-        fees[feeChain] = tmpFees
       }
 
       /* for (const chain of Object.keys(config.supportedNetworks)) {
@@ -206,25 +208,36 @@ export class C2DEngineDocker extends C2DEngine {
     if (`maxJobs` in envConfig) this.envs[0].maxJobs = envConfig.maxJobs
     // let's add resources
     this.envs[0].resources = []
-    this.envs[0].resources.push({
+    const cpuResources = {
       id: 'cpu',
       type: 'cpu',
       total: sysinfo.NCPU,
       max: sysinfo.NCPU,
       min: 1,
       description: os.cpus()[0].model
-    })
-    this.envs[0].resources.push({
+    }
+    const ramResources = {
       id: 'ram',
       type: 'ram',
       total: Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024),
       max: Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024),
       min: 1
-    })
+    }
 
     if (envConfig.resources) {
       for (const res of envConfig.resources) {
         // allow user to add other resources
+        if (res.id === 'cpu') {
+          if (res.total) cpuResources.total = res.total
+          if (res.max) cpuResources.max = res.max
+          if (res.min) cpuResources.min = res.min
+        }
+        if (res.id === 'ram') {
+          if (res.total) ramResources.total = res.total
+          if (res.max) ramResources.max = res.max
+          if (res.min) ramResources.min = res.min
+        }
+
         if (res.id !== 'cpu' && res.id !== 'ram') {
           if (!res.max) res.max = res.total
           if (!res.min) res.min = 0
@@ -232,6 +245,8 @@ export class C2DEngineDocker extends C2DEngine {
         }
       }
     }
+    this.envs[0].resources.push(cpuResources)
+    this.envs[0].resources.push(ramResources)
     /* TODO  - get namedresources & discreete one 
     if (sysinfo.GenericResources) {
       for (const [key, value] of Object.entries(sysinfo.GenericResources)) {
@@ -284,7 +299,7 @@ export class C2DEngineDocker extends C2DEngine {
       }
     }
     this.envs[0].id =
-      this.getC2DConfig().hash + '-' + create256Hash(JSON.stringify(this.envs[0]))
+      this.getC2DConfig().hash + '-' + create256Hash(JSON.stringify(this.envs[0].fees))
 
     // only now set the timer
     if (!this.cronTimer) {
@@ -436,7 +451,7 @@ export class C2DEngineDocker extends C2DEngine {
 
       if (minDuration > 0) {
         // We need to claim payment
-        const fee = env.fees[job.payment.chainId]?.find(
+        const fee = env.fees?.[job.payment.chainId]?.find(
           (fee) => fee.feeToken === job.payment.token
         )
 
@@ -619,6 +634,7 @@ export class C2DEngineDocker extends C2DEngine {
         try {
           const dockerImage = this.docker.getImage(image)
           await dockerImage.remove({ force: true })
+          await this.db.deleteImage(image)
           cleaned++
           CORE_LOGGER.info(`Successfully removed old image: ${image}`)
         } catch (e) {
@@ -699,11 +715,10 @@ export class C2DEngineDocker extends C2DEngine {
     if (!this.docker) return []
     const filteredEnvs = []
     // const systemInfo = this.docker ? await this.docker.info() : null
-    for (const computeEnv of this.envs) {
-      if (
-        !chainId ||
-        (computeEnv.fees && Object.hasOwn(computeEnv.fees, String(chainId)))
-      ) {
+    for (const env of this.envs) {
+      if (!chainId || (env.fees && Object.hasOwn(env.fees, String(chainId)))) {
+        const computeEnv = JSON.parse(JSON.stringify(env))
+
         // TO DO - At some point in time we need to handle multiple runtimes
         // console.log('********************************')
         // console.log(systemInfo.GenericResources)
@@ -731,10 +746,12 @@ export class C2DEngineDocker extends C2DEngine {
         computeEnv.queMaxWaitTimeFree = maxWaitTimeFree
         computeEnv.runMaxWaitTime = maxRunningTime
         computeEnv.runMaxWaitTimeFree = maxRunningTimeFree
-        for (let i = 0; i < computeEnv.resources.length; i++) {
-          if (computeEnv.resources[i].id in usedResources)
-            computeEnv.resources[i].inUse = usedResources[computeEnv.resources[i].id]
-          else computeEnv.resources[i].inUse = 0
+        if (computeEnv.resources) {
+          for (let i = 0; i < computeEnv.resources.length; i++) {
+            if (computeEnv.resources[i].id in usedResources)
+              computeEnv.resources[i].inUse = usedResources[computeEnv.resources[i].id]
+            else computeEnv.resources[i].inUse = 0
+          }
         }
         if (computeEnv.free && computeEnv.free.resources) {
           for (let i = 0; i < computeEnv.free.resources.length; i++) {
@@ -1075,7 +1092,9 @@ export class C2DEngineDocker extends C2DEngine {
       }
     }
 
-    await this.makeJobFolders(job)
+    if (!this.makeJobFolders(job)) {
+      throw new Error('Storage failure')
+    }
     // make sure we actually were able to insert on DB
     const addedId = await this.db.newJob(job)
     if (!addedId) {
@@ -1314,6 +1333,7 @@ export class C2DEngineDocker extends C2DEngine {
         follow: true
       })
     } catch (e) {
+      CORE_LOGGER.error(`getStreamableLogs failed for job ${jobId}: ${e?.message ?? e}`)
       return null
     }
   }
@@ -1826,16 +1846,6 @@ export class C2DEngineDocker extends C2DEngine {
     } catch (e) {
       CORE_LOGGER.error('Container volume not found! ' + e.message)
     }
-    if (job.algorithm?.meta.container && job.algorithm?.meta.container.dockerfile) {
-      const image = getAlgorithmImage(job.algorithm, job.jobId)
-      if (image) {
-        try {
-          await this.docker.getImage(image).remove({ force: true })
-        } catch (e) {
-          CORE_LOGGER.error('Could not delete image: ' + image + ' : ' + e.message)
-        }
-      }
-    }
     try {
       // remove folders
       rmSync(this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/inputs', {
@@ -2136,6 +2146,9 @@ export class C2DEngineDocker extends C2DEngine {
       await new Promise<void>((resolve, reject) => {
         buildStream.on('end', () => {
           CORE_LOGGER.debug(`Image '${job.containerImage}' built successfully.`)
+          this.updateImageUsage(job.containerImage).catch((e) => {
+            CORE_LOGGER.debug(`Failed to track image usage: ${e.message}`)
+          })
           resolve()
         })
         buildStream.on('error', (err) => {
@@ -2497,24 +2510,29 @@ export class C2DEngineDocker extends C2DEngine {
     return ret
   }
 
-  // eslint-disable-next-line require-await
-  private async makeJobFolders(job: DBComputeJob) {
+  private makeJobFolders(job: DBComputeJob): boolean {
     try {
       const baseFolder = this.getC2DConfig().tempFolder + '/' + job.jobId
-      if (!existsSync(baseFolder)) mkdirSync(baseFolder)
-      if (!existsSync(baseFolder + '/data')) mkdirSync(baseFolder + '/data')
-      if (!existsSync(baseFolder + '/data/inputs')) mkdirSync(baseFolder + '/data/inputs')
-      if (!existsSync(baseFolder + '/data/transformations'))
-        mkdirSync(baseFolder + '/data/transformations')
-      // ddo directory
-      if (!existsSync(baseFolder + '/data/ddos')) {
-        mkdirSync(baseFolder + '/data/ddos')
+      const dirs = [
+        baseFolder,
+        baseFolder + '/data',
+        baseFolder + '/data/inputs',
+        baseFolder + '/data/transformations',
+        baseFolder + '/data/ddos',
+        baseFolder + '/data/outputs',
+        baseFolder + '/data/logs',
+        baseFolder + '/tarData'
+      ]
+      for (const dir of dirs) {
+        if (!existsSync(dir)) {
+          mkdirSync(dir, { recursive: true })
+        }
       }
-      if (!existsSync(baseFolder + '/data/outputs'))
-        mkdirSync(baseFolder + '/data/outputs')
-      if (!existsSync(baseFolder + '/data/logs')) mkdirSync(baseFolder + '/data/logs')
-      if (!existsSync(baseFolder + '/tarData')) mkdirSync(baseFolder + '/tarData') // used to upload and download data
-    } catch (e) {}
+      return true
+    } catch (e) {
+      CORE_LOGGER.error('Failed to create folders needed for the job: ' + e.message)
+      return false
+    }
   }
 
   // clean up temporary files
