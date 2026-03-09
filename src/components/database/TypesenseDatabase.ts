@@ -372,6 +372,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
   getDDOSchema(ddo: Record<string, any>): TypesenseSchema {
     // Find the schema based on the DDO version OR use the short DDO schema when state !== 0
     let schemaName: string
+
     const ddoInstance = DDOManager.getDDOClass(ddo)
     const ddoData = ddoInstance.getDDOData()
     if ('indexedMetadata' in ddoData && ddoData?.indexedMetadata?.nft.state !== 0) {
