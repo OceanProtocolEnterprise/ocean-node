@@ -161,7 +161,7 @@ export abstract class CommandHandler
       return buildRateLimitReachedResponse()
     }
     // then validate the command arguments
-    const validation = await this.validate(task)
+    const validation = this.validate(task)
     if (!validation.valid) {
       return buildInvalidParametersResponse(validation)
     }
@@ -180,13 +180,9 @@ export abstract class CommandHandler
     signature: string,
     command: string
   ): Promise<P2PCommandResponse> {
-    CORE_LOGGER.info(
-      `validateTokenOrSignature start for command ${command} and address ${address}`
-    )
     const oceanNode = this.getOceanNode()
     const auth = oceanNode.getAuth()
     if (!auth) {
-      CORE_LOGGER.info('validateTokenOrSignature failed because auth is not configured')
       return {
         stream: null,
         status: { httpStatus: 401, error: 'Auth not configured' }
@@ -199,20 +195,13 @@ export abstract class CommandHandler
       signature,
       command
     })
-    CORE_LOGGER.info(
-      `validateTokenOrSignature validation result for command ${command}: ${isAuthRequestValid.valid}`
-    )
     if (!isAuthRequestValid.valid) {
-      CORE_LOGGER.info(
-        `validateTokenOrSignature rejected command ${command} with error ${isAuthRequestValid.error}`
-      )
       return {
         stream: null,
         status: { httpStatus: 401, error: isAuthRequestValid.error }
       }
     }
 
-    CORE_LOGGER.info(`validateTokenOrSignature succeeded for command ${command}`)
     return {
       stream: null,
       status: { httpStatus: 200 }

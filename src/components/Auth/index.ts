@@ -4,7 +4,6 @@ import { checkNonce, NonceResponse } from '../core/utils/nonceHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { getConfiguration } from '../../utils/index.js'
 import { CommonValidation } from '../../utils/validators.js'
-import { CORE_LOGGER } from '../../utils/logging/common.js'
 
 export interface AuthValidation {
   token?: string
@@ -81,14 +80,8 @@ export class Auth {
     authValidation: AuthValidation
   ): Promise<CommonValidation> {
     const { token, address, nonce, signature, command, chainId } = authValidation
-    CORE_LOGGER.info(
-      `validateAuthenticationOrToken start for command ${command || 'unknown'}`
-    )
     try {
       if (signature && address && nonce) {
-        CORE_LOGGER.info(
-          `validateAuthenticationOrToken using signature flow for address ${address}`
-        )
         const oceanNode = OceanNode.getInstance()
         const nonceCheckResult: NonceResponse = await checkNonce(
           oceanNode.getDatabase().nonce,
@@ -98,49 +91,31 @@ export class Auth {
           command,
           chainId
         )
-        CORE_LOGGER.info(
-          `validateAuthenticationOrToken nonce validation result for ${address}: ${nonceCheckResult.valid}`
-        )
 
         if (!nonceCheckResult.valid) {
-          CORE_LOGGER.info(
-            `validateAuthenticationOrToken rejected signature flow for ${address} with error ${nonceCheckResult.error}`
-          )
           return { valid: false, error: nonceCheckResult.error }
         }
 
         if (nonceCheckResult.valid) {
-          CORE_LOGGER.info(
-            `validateAuthenticationOrToken accepted signature flow for ${address}`
-          )
           return { valid: true, error: '' }
         }
       }
 
       if (token) {
-        CORE_LOGGER.info('validateAuthenticationOrToken using token flow')
         const authToken = await this.validateToken(token)
         if (authToken) {
-          CORE_LOGGER.info('validateAuthenticationOrToken accepted token flow')
           return { valid: true, error: '' }
         }
 
-        CORE_LOGGER.info(
-          'validateAuthenticationOrToken rejected token flow: invalid token'
-        )
         return { valid: false, error: 'Invalid token' }
       }
 
-      CORE_LOGGER.info(
-        'validateAuthenticationOrToken rejected request because no valid auth inputs were provided'
-      )
       return {
         valid: false,
         error:
           'Invalid authentication, you need to provide either a token or an address, signature, message and nonce'
       }
     } catch (e) {
-      CORE_LOGGER.info(`validateAuthenticationOrToken threw error: ${e}`)
       return { valid: false, error: `Error during authentication validation: ${e}` }
     }
   }
