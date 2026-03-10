@@ -76,6 +76,10 @@ routesNames.set('getDDO', {
   path: `${AQUARIUS_API_BASE_PATH}/assets/ddo/:did/:force?`,
   method: 'get'
 })
+routesNames.set('getDcat', {
+  path: `${AQUARIUS_API_BASE_PATH}/assets/dcat/:did/:force?`,
+  method: 'get'
+})
 
 routesNames.set('getDDOMetadata', {
   path: `${AQUARIUS_API_BASE_PATH}/assets/metadata/:did/:force?`,
