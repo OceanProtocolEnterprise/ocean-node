@@ -6,8 +6,10 @@ export interface DCATContext {
     foaf: string
     geo: string
     oc: string
+    prov: string
     rdfs: string
     skos: string
+    spdx: string
     xsd: string
   }
 }
@@ -27,7 +29,66 @@ export interface DCATSpatial {
     '@type': 'geo:wktLiteral'
     '@value': string
   }
+  'dcat:centroid'?: {
+    '@type': 'geo:wktLiteral'
+    '@value': string
+  }
   'skos:prefLabel'?: string
+}
+
+export interface DCATTemporal {
+  '@type': 'dct:PeriodOfTime'
+  'dcat:startDate'?: {
+    '@type': 'xsd:dateTime'
+    '@value': string
+  }
+  'dcat:endDate'?: {
+    '@type': 'xsd:dateTime'
+    '@value': string
+  }
+}
+
+export interface DCATCompute {
+  'oc:allowNetworkAccess': boolean
+  'oc:allowRawAlgorithm': boolean
+  'oc:publisherTrustedAlgorithms'?: Array<{
+    'oc:did': string
+    'oc:filesChecksum': string
+    'oc:containerSectionChecksum': string
+    'oc:serviceId'?: string
+  }>
+  'oc:publisherTrustedAlgorithmPublishers'?: string[]
+}
+
+export interface DCATDistribution {
+  '@type': 'dcat:Distribution'
+  'dcat:accessURL': {
+    '@id': string
+  }
+  'dct:title'?: string
+  'dcat:mediaType'?: string
+  'dcat:format'?: string
+  'dcat:byteSize'?: number
+  'dcat:checksum'?: {
+    '@type': 'spdx:Checksum'
+    'spdx:algorithm': string
+    'spdx:checksumValue': string
+  }
+  'oc:compute'?: DCATCompute
+}
+
+export interface DCATQualifiedAttribution {
+  '@type': 'prov:Attribution'
+  'prov:agent': {
+    '@type': 'foaf:Agent'
+    'foaf:name': string
+    'foaf:mbox'?: string
+    'foaf:homepage'?: string
+  }
+  'prov:hadRole': {
+    '@id': string
+    '@type': 'dct:AgentRole'
+  }
 }
 
 export interface DCATEvent {
@@ -74,6 +135,7 @@ export interface DCATAccessDetails {
     'dct:title'?: string
     'oc:address'?: string
     'oc:symbol'?: string
+    'oc:decimals'?: number
   }
   'oc:isOwned'?: boolean
   'oc:isPurchasable'?: boolean
@@ -81,6 +143,7 @@ export interface DCATAccessDetails {
   'oc:publisherMarketOrderFee'?: string
   'oc:templateId'?: number
   'oc:validOrderTx'?: string
+  'oc:paymentCollector'?: string
 }
 
 export interface DCATDataset {
@@ -90,9 +153,22 @@ export interface DCATDataset {
   'dcat:keyword'?: string[]
   'dcat:theme'?: DCATThemeConcept[]
   'dcat:version'?: string
+  'dcat:distribution'?: DCATDistribution[]
+  'dcat:bbox'?: {
+    '@type': 'geo:wktLiteral'
+    '@value': string
+  }
+  'dcat:centroid'?: {
+    '@type': 'geo:wktLiteral'
+    '@value': string
+  }
+  'dcat:spatialResolutionInMeters'?: number
+  'dcat:temporalResolution'?: string
   'dct:creator'?: {
     '@type': 'foaf:Agent'
     'foaf:name': string
+    'foaf:mbox'?: string
+    'foaf:homepage'?: string
   }
   'dct:description'?: string
   'dct:issued'?: {
@@ -105,7 +181,18 @@ export interface DCATDataset {
     '@value': string
   }
   'dct:spatial'?: DCATSpatial
+  'dct:temporal'?: DCATTemporal
+  'dct:accrualPeriodicity'?: {
+    '@type': 'dct:Frequency'
+    '@id': string
+  }
   'dct:title'?: string
+  'dct:identifier'?: string[]
+  'dct:language'?: string[]
+  'dct:conformsTo'?: string[]
+  'dct:rights'?: string
+  'dct:accessRights'?: string
+  'prov:qualifiedAttribution'?: DCATQualifiedAttribution[]
   'oc:accessDetails'?: DCATAccessDetails
   'oc:chainId'?: number
   'oc:datatokens'?: any[]
