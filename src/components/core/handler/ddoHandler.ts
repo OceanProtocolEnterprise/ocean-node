@@ -88,18 +88,13 @@ export class DecryptDdoHandler extends CommandHandler {
   }
 
   async handle(task: DecryptDDOCommand): Promise<P2PCommandResponse> {
-    CORE_LOGGER.info(
-      `Decrypt DDO handle start for chain ${task.chainId} and asset ${task.dataNftAddress}`
-    )
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
-      CORE_LOGGER.info('Decrypt DDO denied during validation or rate limiting')
       return validationResponse
     }
     const chainId = String(task.chainId)
     const config = await getConfiguration()
     const supportedNetwork = config.supportedNetworks[chainId]
-    CORE_LOGGER.info(`Decrypt DDO loaded configuration for chain ${chainId}`)
 
     // check if supported chainId
     if (!supportedNetwork) {
@@ -119,9 +114,6 @@ export class DecryptDdoHandler extends CommandHandler {
       task.signature,
       task.command
     )
-    CORE_LOGGER.info(
-      `Decrypt DDO authorization validation returned ${isAuthRequestValid.status.httpStatus}`
-    )
     if (isAuthRequestValid.status.httpStatus !== 200) {
       return isAuthRequestValid
     }
@@ -140,13 +132,9 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       }
-      CORE_LOGGER.info(`Decrypt DDO normalized decrypter ${decrypterAddress}`)
 
       const ourEthAddress = this.getOceanNode().getKeyManager().getEthAddress()
       if (config.authorizedDecrypters.length > 0) {
-        CORE_LOGGER.info(
-          `Decrypt DDO checking static authorized decrypters for ${decrypterAddress}`
-        )
         // allow if on authorized list or it is own node
         if (
           !config.authorizedDecrypters
@@ -154,9 +142,6 @@ export class DecryptDdoHandler extends CommandHandler {
             .includes(decrypterAddress?.toLowerCase()) &&
           decrypterAddress?.toLowerCase() !== ourEthAddress.toLowerCase()
         ) {
-          CORE_LOGGER.info(
-            `Decrypt DDO rejected unauthorized decrypter ${decrypterAddress}`
-          )
           return {
             stream: null,
             status: {
@@ -168,9 +153,6 @@ export class DecryptDdoHandler extends CommandHandler {
       }
       const oceanNode = this.getOceanNode()
       const blockchain = oceanNode.getBlockchain(supportedNetwork.chainId)
-      CORE_LOGGER.info(
-        `Decrypt DDO resolved blockchain instance for chain ${supportedNetwork.chainId}: ${Boolean(blockchain)}`
-      )
       if (!blockchain) {
         return {
           stream: null,
@@ -181,7 +163,6 @@ export class DecryptDdoHandler extends CommandHandler {
         }
       }
       const { ready, error } = await blockchain.isNetworkReady()
-      CORE_LOGGER.info(`Decrypt DDO network readiness for chain ${chainId}: ${ready}`)
       if (!ready) {
         return {
           stream: null,
@@ -194,7 +175,6 @@ export class DecryptDdoHandler extends CommandHandler {
 
       const provider = await blockchain.getProvider()
       const signer = await blockchain.getSigner()
-      CORE_LOGGER.info(`Decrypt DDO acquired provider and signer for chain ${chainId}`)
       // note: "getOceanArtifactsAdresses()"" is broken for at least optimism sepolia
       // if we do: artifactsAddresses[supportedNetwork.network]
       // because on the contracts we have "optimism_sepolia" instead of "optimism-sepolia"
@@ -205,9 +185,6 @@ export class DecryptDdoHandler extends CommandHandler {
         supportedNetwork.chainId,
         signer,
         dataNftAddress
-      )
-      CORE_LOGGER.info(
-        `Decrypt DDO factory validation for ${dataNftAddress}: ${wasDeployedByUs}`
       )
       if (!wasDeployedByUs) {
         return {
@@ -228,9 +205,6 @@ export class DecryptDdoHandler extends CommandHandler {
         decrypterAddress,
         signer
       )
-      CORE_LOGGER.info(
-        `Decrypt DDO access list authorization for ${decrypterAddress}: ${isAllowed}`
-      )
       if (!isAllowed) {
         return {
           stream: null,
@@ -246,9 +220,6 @@ export class DecryptDdoHandler extends CommandHandler {
       let flags: number
       let documentHash: string
       if (transactionId) {
-        CORE_LOGGER.info(
-          `Decrypt DDO loading encrypted document from tx ${transactionId}`
-        )
         try {
           const receipt = await provider.getTransactionReceipt(transactionId)
           if (!receipt.logs.length) {
@@ -269,13 +240,7 @@ export class DecryptDdoHandler extends CommandHandler {
           flags = parseInt(eventData.args[3], 16)
           encryptedDocument = ethers.getBytes(eventData.args[4])
           documentHash = eventData.args[5]
-          CORE_LOGGER.info(
-            `Decrypt DDO extracted metadata event ${eventData.name} from tx ${transactionId}`
-          )
         } catch (error) {
-          CORE_LOGGER.info(
-            `Decrypt DDO failed to process transaction id ${transactionId}`
-          )
           return {
             stream: null,
             status: {
@@ -285,17 +250,12 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       } else {
-        CORE_LOGGER.info(
-          'Decrypt DDO loading encrypted document from direct request payload'
-        )
         try {
           encryptedDocument = ethers.getBytes(task.encryptedDocument)
           flags = Number(task.flags)
           // eslint-disable-next-line prefer-destructuring
           documentHash = task.documentHash
-          CORE_LOGGER.info('Decrypt DDO converted direct request payload to bytes')
         } catch (error) {
-          CORE_LOGGER.info('Decrypt DDO failed to convert direct request payload')
           return {
             stream: null,
             status: {
@@ -312,9 +272,6 @@ export class DecryptDdoHandler extends CommandHandler {
       )
       const metaData = await templateContract.getMetaData()
       const metaDataState = Number(metaData[2])
-      CORE_LOGGER.info(
-        `Decrypt DDO fetched metadata state ${metaDataState} for ${dataNftAddress}`
-      )
       if ([MetadataStates.DEPRECATED, MetadataStates.REVOKED].includes(metaDataState)) {
         CORE_LOGGER.logMessage(`Decrypt DDO: error metadata state ${metaDataState}`, true)
         return {
@@ -346,14 +303,11 @@ export class DecryptDdoHandler extends CommandHandler {
       let decryptedDocument: Buffer
       // check if DDO is ECIES encrypted
       if ((flags & 2) !== 0) {
-        CORE_LOGGER.info('Decrypt DDO using ECIES decryption path')
         try {
           decryptedDocument = await oceanNode
             .getKeyManager()
             .decrypt(encryptedDocument, EncryptMethod.ECIES)
-          CORE_LOGGER.info('Decrypt DDO ECIES decryption succeeded')
         } catch (error) {
-          CORE_LOGGER.info('Decrypt DDO ECIES decryption failed')
           return {
             stream: null,
             status: {
@@ -363,10 +317,8 @@ export class DecryptDdoHandler extends CommandHandler {
           }
         }
       } else {
-        CORE_LOGGER.info('Decrypt DDO using LZMA decompression path')
         try {
           decryptedDocument = lzmajs.decompressFile(decryptedDocument)
-          CORE_LOGGER.info('Decrypt DDO LZMA decompression succeeded')
           /*
           lzma.decompress(
             decryptedDocument,
@@ -377,7 +329,6 @@ export class DecryptDdoHandler extends CommandHandler {
           )
           */
         } catch (error) {
-          CORE_LOGGER.info('Decrypt DDO LZMA decompression failed')
           return {
             stream: null,
             status: {
@@ -391,7 +342,6 @@ export class DecryptDdoHandler extends CommandHandler {
       // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
       if (ddo.id && !this.checkId(ddo.id, dataNftAddress, chainId)) {
-        CORE_LOGGER.info(`Decrypt DDO DID validation failed for ${ddo.id}`)
         return {
           stream: null,
           status: {
@@ -402,20 +352,16 @@ export class DecryptDdoHandler extends CommandHandler {
       }
       const decryptedDocumentString = decryptedDocument.toString()
       const ddoObject = JSON.parse(decryptedDocumentString)
-      CORE_LOGGER.info('Decrypt DDO parsed decrypted document successfully')
 
       let stream = Readable.from(decryptedDocumentString)
       if (isRemoteDDO(ddoObject)) {
-        CORE_LOGGER.info('Decrypt DDO detected remote DDO payload')
         const storage = Storage.getStorageClass(ddoObject.remote, config)
         const result = await storage.getReadableStream()
         stream = result.stream as Readable
-        CORE_LOGGER.info('Decrypt DDO loaded remote DDO stream')
       } else {
         // checksum matches
         const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
         if (decryptedDocumentHash !== documentHash) {
-          CORE_LOGGER.info('Decrypt DDO checksum validation failed')
           return {
             stream: null,
             status: {
@@ -424,10 +370,8 @@ export class DecryptDdoHandler extends CommandHandler {
             }
           }
         }
-        CORE_LOGGER.info('Decrypt DDO checksum validation succeeded')
       }
 
-      CORE_LOGGER.info(`Decrypt DDO completed successfully for ${dataNftAddress}`)
       return {
         stream,
         status: { httpStatus: 200 }
