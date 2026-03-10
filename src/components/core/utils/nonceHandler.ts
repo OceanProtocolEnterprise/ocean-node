@@ -227,6 +227,9 @@ async function validateNonceAndSignature(
     CORE_LOGGER.info(`validateNonceAndSignature trying EOA signature validation`)
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
+    CORE_LOGGER.info(
+      `validateNonceAndSignature EOA signature validation result for ${consumer} AND ${addressFromBytesSignature} AND ${addressFromHashSignature}: ${addressFromHashSignature === consumer || addressFromBytesSignature === consumer}`
+    )
     if (
       ethers.getAddress(addressFromHashSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase() ||
