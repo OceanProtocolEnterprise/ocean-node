@@ -47,6 +47,7 @@ import { Asset, DDO, DDOManager } from '@oceanprotocol/ddo-js'
 import { checkCredentialOnAccessList } from '../../../utils/credentials.js'
 import { createHash } from 'crypto'
 import { Storage } from '../../../components/storage/index.js'
+import { DCATDataset } from '../../../@types/dcat.js'
 
 const MAX_NUM_PROVIDERS = 5
 // after 60 seconds it returns whatever info we have available
@@ -735,6 +736,239 @@ export class FindDdoHandler extends CommandHandler {
       )
       return null
     }
+  }
+  // Add this method inside your FindDdoHandler class
+
+  /**
+   * Transform DDO v5 to DCAT format
+   */
+  transformToDCAT(ddo: any): DCATDataset {
+    CORE_LOGGER.debug(`[DCAT] Original DDO v5: ${JSON.stringify(ddo, null, 2)}`)
+    // Create a deep copy to avoid modifying the original
+    const ddoCopy = JSON.parse(JSON.stringify(ddo))
+
+    // Extract data from credentialSubject (V5 structure)
+    const credentialSubject = ddoCopy.credentialSubject || {}
+    const metadata = credentialSubject.metadata || {}
+    const indexedMetadata = ddoCopy.indexedMetadata || {}
+    const nft = indexedMetadata.nft || {}
+    const stats = indexedMetadata.stats || []
+    const purgatory = indexedMetadata.purgatory || { state: false }
+    const event = indexedMetadata.event || {}
+
+    // Build DCAT output with oc: namespace
+    const dcat: DCATDataset = {
+      '@context': {
+        dcat: 'http://www.w3.org/ns/dcat#',
+        dct: 'http://purl.org/dc/terms/',
+        foaf: 'http://xmlns.com/foaf/0.1/',
+        geo: 'http://www.opengis.net/ont/geosparql#',
+        oc: 'https://oceanprotocol.com/vocab/', // Changed to oc namespace
+        rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
+        skos: 'http://www.w3.org/2004/02/skos/core#',
+        xsd: 'http://www.w3.org/2001/XMLSchema#'
+      },
+      '@id': ddoCopy.id ? `urn:${ddoCopy.id}` : '',
+      '@type': 'dcat:Dataset',
+      'dcat:version': ddoCopy.version || '5.0.0',
+      'dct:title': metadata.name || ''
+    }
+
+    // Add description
+    if (metadata.description) {
+      if (typeof metadata.description === 'object' && metadata.description['@value']) {
+        dcat['dct:description'] = metadata.description['@value']
+      } else if (typeof metadata.description === 'string') {
+        dcat['dct:description'] = metadata.description
+      }
+    }
+
+    // Add keywords
+    if (metadata.tags && Array.isArray(metadata.tags)) {
+      dcat['dcat:keyword'] = metadata.tags
+    }
+
+    // Add creator (author)
+    if (metadata.author) {
+      if (typeof metadata.author === 'string') {
+        dcat['dct:creator'] = {
+          '@type': 'foaf:Agent',
+          'foaf:name': metadata.author
+        }
+      } else if (typeof metadata.author === 'object') {
+        dcat['dct:creator'] = metadata.author
+      }
+    }
+
+    // Add license
+    if (metadata.license) {
+      if (typeof metadata.license === 'object') {
+        dcat['dct:license'] = metadata.license.name || JSON.stringify(metadata.license)
+      } else {
+        dcat['dct:license'] = metadata.license
+      }
+    }
+
+    // Add dates
+    if (metadata.created) {
+      dcat['dct:issued'] = {
+        '@type': 'xsd:dateTime',
+        '@value': metadata.created
+      }
+    }
+
+    if (metadata.updated) {
+      dcat['dct:modified'] = {
+        '@type': 'xsd:dateTime',
+        '@value': metadata.updated
+      }
+    }
+
+    // Add spatial data from additionalInformation
+    if (metadata.additionalInformation?.['dct:spatial']) {
+      dcat['dct:spatial'] = metadata.additionalInformation['dct:spatial']
+    }
+
+    // Add themes from additionalInformation
+    if (metadata.additionalInformation?.['dcat:theme']) {
+      dcat['dcat:theme'] = metadata.additionalInformation['dcat:theme']
+    }
+
+    // Add Ocean Protocol specific fields (using oc: namespace)
+    dcat['oc:chainId'] = credentialSubject.chainId
+    dcat['oc:nftAddress'] = credentialSubject.nftAddress
+    dcat['oc:datatokens'] = credentialSubject.datatokens || []
+    dcat['oc:services'] = this.formatServicesForDCAT(credentialSubject.services || [])
+
+    // Add purgatory state
+    dcat['oc:purgatory'] = {
+      'oc:state': purgatory.state
+    }
+
+    // Add stats
+    if (stats.length > 0) {
+      const totalOrders = stats.reduce(
+        (sum: number, stat: any) => sum + (stat.orders || 0),
+        0
+      )
+      dcat['oc:stats'] = {
+        'oc:allocated': totalOrders,
+        'oc:orders': totalOrders
+      }
+
+      // Add price if available
+      const firstPrice = stats[0]?.prices?.[0]
+      if (firstPrice) {
+        dcat['oc:stats']['oc:price'] = {
+          'oc:tokenAddress': firstPrice.token,
+          'oc:tokenSymbol': firstPrice.tokenSymbol || 'EURC',
+          'oc:value': firstPrice.price
+        }
+      }
+    }
+
+    // Add NFT info
+    if (Object.keys(nft).length > 0) {
+      dcat['oc:nft'] = {
+        'dct:title': nft.name,
+        'oc:address': nft.address,
+        'oc:owner': nft.owner,
+        'oc:state': nft.state,
+        'oc:symbol': nft.symbol,
+        'oc:tokenURI': nft.tokenURI
+      }
+
+      if (nft.created) {
+        dcat['oc:nft']['dct:issued'] = {
+          '@type': 'xsd:dateTime',
+          '@value': nft.created
+        }
+      }
+    }
+
+    // Add event info
+    if (event.txid || event.tx) {
+      dcat['oc:event'] = {
+        'oc:block': event.block,
+        'oc:contract': event.contract,
+        'oc:datetime': event.datetime,
+        'oc:from': event.from,
+        'oc:tx': event.txid || event.tx
+      }
+    }
+
+    // Add access details
+    if (ddoCopy.accessDetails) {
+      dcat['oc:accessDetails'] = this.formatAccessDetails(ddoCopy.accessDetails)
+    }
+
+    CORE_LOGGER.debug(`[DCAT] Original DDO v5: ${JSON.stringify(ddo)}`)
+    return dcat
+  }
+
+  /**
+   * Format services for DCAT
+   */
+  private formatServicesForDCAT(services: any[]): any[] {
+    if (!services || !Array.isArray(services)) {
+      return []
+    }
+
+    return services.map((service) => {
+      const formattedService: any = { ...service }
+
+      // Format service endpoint
+      if (service.serviceEndpoint && typeof service.serviceEndpoint === 'string') {
+        formattedService['dct:title'] = service.serviceEndpoint
+        formattedService.serviceEndpoint = {
+          '@id': service.serviceEndpoint,
+          '@type': 'rdfs:Resource'
+        }
+      }
+
+      return formattedService
+    })
+  }
+
+  /**
+   * Format access details for DCAT using oc: namespace
+   */
+  private formatAccessDetails(accessDetails: any): any {
+    if (!accessDetails) {
+      return undefined
+    }
+
+    const formatted: any = {
+      '@type': 'oc:Fixed', // Changed to oc:Fixed
+      'oc:addressOrId': accessDetails.addressOrId,
+      'oc:isOwned': accessDetails.isOwned,
+      'oc:isPurchasable': accessDetails.isPurchasable,
+      'oc:price': accessDetails.price,
+      'oc:publisherMarketOrderFee': accessDetails.publisherMarketOrderFee,
+      'oc:templateId': accessDetails.templateId,
+      'oc:validOrderTx': accessDetails.validOrderTx
+    }
+
+    // Format base token
+    if (accessDetails.baseToken) {
+      formatted['oc:baseToken'] = {
+        'dct:title': accessDetails.baseToken.name,
+        'oc:address': accessDetails.baseToken.address,
+        'oc:decimals': accessDetails.baseToken.decimals,
+        'oc:symbol': accessDetails.baseToken.symbol
+      }
+    }
+
+    // Format datatoken
+    if (accessDetails.datatoken) {
+      formatted['oc:datatoken'] = {
+        'dct:title': accessDetails.datatoken.name,
+        'oc:address': accessDetails.datatoken.address,
+        'oc:symbol': accessDetails.datatoken.symbol
+      }
+    }
+
+    return formatted
   }
 }
 

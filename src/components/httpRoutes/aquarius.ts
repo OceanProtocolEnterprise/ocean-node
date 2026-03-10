@@ -37,6 +37,7 @@ aquariusRoutes.get(
     }
   }
 )
+
 aquariusRoutes.get(
   `${AQUARIUS_API_BASE_PATH}/assets/dcat/:did/:force?`,
   async (req, res) => {
@@ -46,10 +47,15 @@ aquariusRoutes.get(
         res.status(400).send('Missing or invalid required parameter: "did"')
         return
       }
+
       const forceFlag = force === 'true'
       const ddo = await new FindDdoHandler(req.oceanNode).findAndFormatDdo(did, forceFlag)
+
       if (ddo) {
-        res.json(ddo)
+        const findDdoHandler = new FindDdoHandler(req.oceanNode)
+        const dcatDDO = findDdoHandler.transformToDCAT(ddo)
+        res.setHeader('Content-Type', 'application/ld+json')
+        res.json(dcatDDO)
       } else {
         res.status(404).send('DDO not found')
       }
