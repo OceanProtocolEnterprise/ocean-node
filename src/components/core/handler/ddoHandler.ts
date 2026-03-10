@@ -742,7 +742,6 @@ export class FindDdoHandler extends CommandHandler {
       return null
     }
   }
-  // Add these methods inside your FindDdoHandler class
 
   private formatDistributions(ddo: any): DCATDistribution[] {
     const distributions: DCATDistribution[] = []
