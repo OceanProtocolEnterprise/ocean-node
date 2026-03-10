@@ -123,9 +123,6 @@ export async function checkNonce(
   command: string,
   chainId?: string | null
 ): Promise<NonceResponse> {
-  CORE_LOGGER.info(
-    `checkNonce start for consumer ${consumer}, nonce ${nonce}, command ${command}`
-  )
   try {
     // get nonce from db
     let previousNonce = 0 // if none exists
@@ -133,9 +130,6 @@ export async function checkNonce(
     if (existingNonce && existingNonce.nonce !== null) {
       previousNonce = existingNonce.nonce
     }
-    CORE_LOGGER.info(
-      `checkNonce loaded previous nonce ${previousNonce} for consumer ${consumer}`
-    )
     // check if bigger than previous stored one and validate signature
     const validate = await validateNonceAndSignature(
       nonce,
@@ -145,20 +139,11 @@ export async function checkNonce(
       command,
       chainId
     )
-    CORE_LOGGER.info(
-      `checkNonce validation result for consumer ${consumer}: ${validate.valid}`
-    )
     if (validate.valid) {
       const updateStatus = await updateNonce(db, consumer, nonce)
-      CORE_LOGGER.info(
-        `checkNonce update result for consumer ${consumer} and nonce ${nonce}: ${updateStatus.valid}`
-      )
       return updateStatus
     } else {
       // log error level when validation failed
-      CORE_LOGGER.info(
-        `checkNonce rejected consumer ${consumer} with error ${validate.error}`
-      )
       CORE_LOGGER.logMessageWithEmoji(
         'Failure when validating nonce and signature: ' + validate.error,
         true,
@@ -172,7 +157,6 @@ export async function checkNonce(
     }
     // return validation status and possible error msg
   } catch (err) {
-    CORE_LOGGER.info(`checkNonce threw error for consumer ${consumer}: ${err.message}`)
     DATABASE_LOGGER.logMessageWithEmoji(
       'Failure executing nonce task: ' + err.message,
       true,
@@ -203,13 +187,7 @@ async function validateNonceAndSignature(
   command: string = null,
   chainId?: string | null
 ): Promise<NonceResponse> {
-  CORE_LOGGER.info(
-    `validateNonceAndSignature start for consumer ${consumer}, nonce ${nonce}, existingNonce ${existingNonce}, command ${command}`
-  )
   if (nonce <= existingNonce) {
-    CORE_LOGGER.info(
-      `validateNonceAndSignature rejected stale nonce ${nonce} for consumer ${consumer}`
-    )
     return {
       valid: false,
       error: 'nonce: ' + nonce + ' is not a valid nonce'
@@ -224,7 +202,6 @@ async function validateNonceAndSignature(
 
   // Try EOA signature validation
   try {
-    CORE_LOGGER.info(`validateNonceAndSignature trying EOA signature validation`)
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
     if (
@@ -233,60 +210,36 @@ async function validateNonceAndSignature(
       ethers.getAddress(addressFromBytesSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase()
     ) {
-      CORE_LOGGER.info(`validateNonceAndSignature accepted EOA signature for ${consumer}`)
       return { valid: true }
     }
-    CORE_LOGGER.info(
-      `validateNonceAndSignature EOA signature did not match consumer ${consumer}`
-    )
   } catch (error) {
-    CORE_LOGGER.info(`validateNonceAndSignature EOA signature validation threw ${error}`)
     // Continue to smart account check
   }
 
   // Try ERC-1271 (smart account) validation
   try {
-    CORE_LOGGER.info(`validateNonceAndSignature trying ERC-1271 validation`)
     const config = await getConfiguration()
     const targetChainId = chainId || Object.keys(config?.supportedNetworks || {})[0]
     if (targetChainId && config?.supportedNetworks?.[targetChainId]) {
-      CORE_LOGGER.info(
-        `validateNonceAndSignature using ERC-1271 chain ${targetChainId} for consumer ${consumer}`
-      )
       const provider = new ethers.JsonRpcProvider(
         config.supportedNetworks[targetChainId].rpc
       )
 
       // Try custom hash format (for backward compatibility)
       if (await isERC1271Valid(consumer, consumerMessage, signature, provider)) {
-        CORE_LOGGER.info(
-          `validateNonceAndSignature accepted ERC-1271 custom hash for ${consumer}`
-        )
         return { valid: true }
       }
 
       // Try EIP-191 prefixed hash (standard for smart wallets)
       const eip191Hash = ethers.hashMessage(message)
       if (await isERC1271Valid(consumer, eip191Hash, signature, provider)) {
-        CORE_LOGGER.info(
-          `validateNonceAndSignature accepted ERC-1271 EIP-191 hash for ${consumer}`
-        )
         return { valid: true }
       }
-      CORE_LOGGER.info(
-        `validateNonceAndSignature ERC-1271 validation did not match consumer ${consumer}`
-      )
-    } else {
-      CORE_LOGGER.info(
-        `validateNonceAndSignature could not resolve supported network for ERC-1271 validation`
-      )
     }
   } catch (error) {
-    CORE_LOGGER.info(`validateNonceAndSignature ERC-1271 validation threw ${error}`)
     // Smart account validation failed
   }
 
-  CORE_LOGGER.info(`validateNonceAndSignature failed for consumer ${consumer}`)
   return {
     valid: false,
     error: 'consumer address and nonce signature mismatch'
