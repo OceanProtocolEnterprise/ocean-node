@@ -30,12 +30,23 @@ export class MetadataEventProcessor extends BaseEventProcessor {
     eventName: string
   ): Promise<any> {
     let did = 'did:op'
+    let processingStage = 'start'
     try {
+      INDEXER_LOGGER.logMessage(
+        `MetadataEventProcessor started for tx ${event.transactionHash} on contract ${event.address}`,
+        true
+      )
+
+      processingStage = 'load-database-and-validate-factory'
       const { ddo: ddoDatabase, ddoState } = await getDatabase()
       const wasDeployedByUs = await wasNFTDeployedByOurFactory(
         chainId,
         signer,
         getAddress(event.address)
+      )
+      INDEXER_LOGGER.logMessage(
+        `Factory validation for ${event.address} returned ${wasDeployedByUs}`,
+        true
       )
 
       if (!wasDeployedByUs) {
@@ -46,11 +57,16 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         )
         return
       }
+      processingStage = 'decode-event'
       const decodedEventData = await this.getEventData(
         provider,
         event.transactionHash,
         ERC721Template.abi,
         eventName
+      )
+      INDEXER_LOGGER.logMessage(
+        `Decoded ${eventName} for tx ${event.transactionHash}`,
+        true
       )
 
       const metadata = decodedEventData.args[4]
@@ -62,6 +78,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
       did = getDid(event.address, chainId)
 
+      processingStage = 'load-template-metadata'
       const templateContract = new ethers.Contract(
         dataNftAddress,
         ERC721Template.abi,
@@ -69,6 +86,10 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       )
       const metaData = await templateContract.getMetaData()
       const metadataState = Number(metaData[2])
+      INDEXER_LOGGER.logMessage(
+        `Fetched on-chain metadata state ${metadataState} for ${did}`,
+        true
+      )
 
       if ([MetadataStates.DEPRECATED, MetadataStates.REVOKED].includes(metadataState)) {
         INDEXER_LOGGER.logMessage(
@@ -108,9 +129,15 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           shortDdoInstance,
           EVENTS.METADATA_STATE
         )
+        INDEXER_LOGGER.logMessage(
+          `Saved metadata state transition for ${did} with state ${metadataState}`,
+          true
+        )
         return savedDDO
       }
 
+      processingStage = 'decrypt-and-process-ddo'
+      INDEXER_LOGGER.logMessage(`Decrypting DDO payload for ${did}`, true)
       const decryptedDDO = await this.decryptDDO(
         decodedEventData.args[2],
         flag,
@@ -121,15 +148,22 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadataHash,
         metadata
       )
+      INDEXER_LOGGER.logMessage(`Decrypt finished for ${did}`, true)
       let ddo = await this.processDDO(decryptedDDO)
+      INDEXER_LOGGER.logMessage(`DDO processing finished for ${did}`, true)
       if (
         !isRemoteDDO(decryptedDDO) &&
         parseInt(flag) !== 2 &&
         !this.checkDdoHash(ddo, metadataHash)
       ) {
+        INDEXER_LOGGER.logMessage(
+          `Aborting ${did} because processed DDO hash check failed`,
+          true
+        )
         return
       }
       if (ddo.encryptedData) {
+        INDEXER_LOGGER.logMessage(`Encrypted data proof found for ${did}`, true)
         const proof = await this.decryptDDOIPFS(
           decodedEventData.args[2],
           owner,
@@ -140,11 +174,13 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         ddo = ddoInstance.updateFields({
           proof: { signature: data.signature, header: data.header }
         })
+        INDEXER_LOGGER.logMessage(`Updated proof fields for ${did}`, true)
       }
       const clonedDdo = structuredClone(ddo)
       const updatedDdo = deleteIndexedMetadataIfExists(clonedDdo)
       const ddoInstance = DDOManager.getDDOClass(updatedDdo)
       if (updatedDdo.id !== ddoInstance.makeDid(event.address, chainId.toString(10))) {
+        INDEXER_LOGGER.logMessage(`Generated DID mismatch detected for ${did}`, true)
         INDEXER_LOGGER.error(
           `Decrypted DDO ID is not matching the generated hash for DID.`
         )
@@ -160,6 +196,10 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       }
       // for unencrypted DDOs
       if ((parseInt(flag) & 2) === 0 && !this.checkDdoHash(updatedDdo, metadataHash)) {
+        INDEXER_LOGGER.logMessage(
+          `Unencrypted metadata hash mismatch detected for ${did}`,
+          true
+        )
         INDEXER_LOGGER.error('Unencrypted DDO hash does not match metadata hash.')
         await ddoState.update(
           this.networkId,
@@ -173,12 +213,18 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       }
 
       // check authorized publishers
+      processingStage = 'validate-authorized-publishers'
       const { authorizedPublishers, authorizedPublishersList } = await getConfiguration()
+      INDEXER_LOGGER.logMessage(`Loaded publisher authorization config for ${did}`, true)
       if (authorizedPublishers.length > 0) {
         // if is not there, do not index
         const authorized: string[] = authorizedPublishers.filter((address) =>
           // do a case insensitive search
           address.toLowerCase().includes(owner.toLowerCase())
+        )
+        INDEXER_LOGGER.logMessage(
+          `Authorized publisher list match count for ${owner}: ${authorized.length}`,
+          true
         )
         if (!authorized.length) {
           INDEXER_LOGGER.error(
@@ -203,6 +249,10 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           owner,
           signer
         )
+        INDEXER_LOGGER.logMessage(
+          `Access list authorization for ${owner}: ${isAuthorized}`,
+          true
+        )
         if (!isAuthorized) {
           INDEXER_LOGGER.error(
             `DDO owner ${owner} is NOT part of the ${ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS_LIST.name} access group.`
@@ -222,6 +272,10 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       // stuff that we overwrite
       did = ddoInstance.getDid()
       const { services } = ddoInstance.getDDOFields()
+      INDEXER_LOGGER.logMessage(
+        `Updating datatokens for ${did} with ${services?.length || 0} services`,
+        true
+      )
       ddoInstance.updateFields({
         chainId,
         nftAddress: event.address,
@@ -237,6 +291,10 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
       let previousDdoInstance
       const previousDdo = await ddoDatabase.retrieve(ddoInstance.getDid())
+      INDEXER_LOGGER.logMessage(
+        `Previous DDO lookup for ${ddoInstance.getDid()} returned ${Boolean(previousDdo)}`,
+        true
+      )
       if (previousDdo) {
         previousDdoInstance = DDOManager.getDDOClass(previousDdo)
       }
@@ -295,6 +353,10 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           event.transactionHash,
           event.blockNumber
         )
+        INDEXER_LOGGER.logMessage(
+          `Update eligibility for ${ddoInstance.getDid()}: ${isUpdateable}`,
+          true
+        )
         if (!isUpdateable) {
           INDEXER_LOGGER.error(
             `Error encountered when checking if the asset is eligiable for update: ${error}`
@@ -317,6 +379,11 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         [EVENTS.METADATA_CREATED, EVENTS.METADATA_UPDATED].includes(eventName) &&
         this.isValidDtAddressFromServices(ddoInstance.getDDOFields().services)
       ) {
+        processingStage = 'enrich-ddo-with-pricing-and-policy'
+        INDEXER_LOGGER.logMessage(
+          `Starting pricing and policy enrichment for ${ddoInstance.getDid()}`,
+          true
+        )
         const ddoWithPricing = await getPricingStatsForDddo(ddoInstance, signer)
         const nft = await this.getNFTInfo(
           ddoWithPricing.getDDOFields().nftAddress,
@@ -327,6 +394,8 @@ export class MetadataEventProcessor extends BaseEventProcessor {
 
         let block
         let datetime
+        INDEXER_LOGGER.logMessage(`DDO ${ddoWithPricing.getDid()} is being indexed`)
+        INDEXER_LOGGER.logMessage(`BLOCK ${event.blockNumber}`)
         if (event.blockNumber) {
           block = event.blockNumber
           // try get block & timestamp from block (only wait 2.5 secs maximum)
@@ -334,6 +403,15 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           const result = await asyncCallWithTimeout(promiseFn, 2500)
           if (result.data !== null && !result.timeout) {
             datetime = new Date(result.data.timestamp * 1000).toJSON()
+            INDEXER_LOGGER.logMessage(
+              `Resolved block ${block} timestamp ${datetime} for ${ddoWithPricing.getDid()}`,
+              true
+            )
+          } else {
+            INDEXER_LOGGER.logMessage(
+              `Block timestamp lookup timed out or returned empty for ${ddoWithPricing.getDid()}`,
+              true
+            )
           }
         }
 
@@ -368,7 +446,13 @@ export class MetadataEventProcessor extends BaseEventProcessor {
             event.transactionHash,
             event
           )
+        INDEXER_LOGGER.logMessage(`policyStatus: ${JSON.stringify(policyStatus)}`)
+
         if (!policyStatus.success) {
+          INDEXER_LOGGER.logMessage(
+            `Policy check failed for ${did}: ${policyStatus.message}`,
+            true
+          )
           await ddoState.update(
             this.networkId,
             did,
@@ -380,23 +464,38 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           return
         }
         ddoUpdatedWithPricing = ddoWithPricing
+      } else {
+        INDEXER_LOGGER.logMessage(
+          `Skipping pricing enrichment for ${did} because event or datatoken services are not indexable`,
+          true
+        )
       }
       // always call, but only create instance once
+      processingStage = 'check-purgatory-and-save'
       const purgatory = await Purgatory.getInstance()
       // if purgatory is disabled just return false
       const state = await this.getPurgatoryState(ddo, from, purgatory)
+      INDEXER_LOGGER.logMessage(`Purgatory state for ${did}: ${state}`, true)
 
       ddoUpdatedWithPricing.updateFields({
         indexedMetadata: { purgatory: { state } }
       })
       if (state === false) {
         // TODO: insert in a different collection for purgatory DDOs
+        INDEXER_LOGGER.logMessage(`saving DDO: ${JSON.stringify(ddoUpdatedWithPricing)}`)
         const saveDDO = await this.createOrUpdateDDO(ddoUpdatedWithPricing, eventName)
         INDEXER_LOGGER.logMessage(`saved DDO: ${JSON.stringify(saveDDO)}`)
         return saveDDO
       }
+      INDEXER_LOGGER.logMessage(
+        `Skipping save for ${did} because asset is in purgatory`,
+        true
+      )
     } catch (error) {
       const { ddoState } = await getDatabase()
+      INDEXER_LOGGER.logMessage(
+        `error processing DDO at stage ${processingStage}: ${did} and error: ${error}`
+      )
       await ddoState.update(
         this.networkId,
         did,
@@ -407,7 +506,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       )
       INDEXER_LOGGER.log(
         LOG_LEVELS_STR.LEVEL_ERROR,
-        `Error processMetadataEvents for did: ${did} and txHash: ${event.transactionHash} and error: ${error}`,
+        `Error processMetadataEvents for did: ${did}, txHash: ${event.transactionHash}, stage: ${processingStage} and error: ${error}`,
         true
       )
     }
