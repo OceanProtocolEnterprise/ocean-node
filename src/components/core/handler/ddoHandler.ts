@@ -765,17 +765,17 @@ export class FindDdoHandler extends CommandHandler {
           distribution['dcat:format'] = 'compute-service'
 
           if (service.compute) {
-            distribution['oc:compute'] = {
-              'oc:allowNetworkAccess': service.compute.allowNetworkAccess || false,
-              'oc:allowRawAlgorithm': service.compute.allowRawAlgorithm || false,
-              'oc:publisherTrustedAlgorithms':
+            distribution['oec:compute'] = {
+              'oec:allowNetworkAccess': service.compute.allowNetworkAccess || false,
+              'oec:allowRawAlgorithm': service.compute.allowRawAlgorithm || false,
+              'oec:publisherTrustedAlgorithms':
                 service.compute.publisherTrustedAlgorithms?.map((algo: any) => ({
-                  'oc:did': algo.did,
-                  'oc:filesChecksum': algo.filesChecksum,
-                  'oc:containerSectionChecksum': algo.containerSectionChecksum,
-                  'oc:serviceId': algo.serviceId
+                  'oec:did': algo.did,
+                  'oec:filesChecksum': algo.filesChecksum,
+                  'oec:containerSectionChecksum': algo.containerSectionChecksum,
+                  'oec:serviceId': algo.serviceId
                 })),
-              'oc:publisherTrustedAlgorithmPublishers':
+              'oec:publisherTrustedAlgorithmPublishers':
                 service.compute.publisherTrustedAlgorithmPublishers || []
             }
           }
@@ -899,7 +899,7 @@ export class FindDdoHandler extends CommandHandler {
         dct: 'http://purl.org/dc/terms/',
         foaf: 'http://xmlns.com/foaf/0.1/',
         geo: 'http://www.opengis.net/ont/geosparql#',
-        oc: 'https://oceanprotocol.com/vocab/',
+        oec: 'https://oceanenterprise.io/vocab/',
         prov: 'http://www.w3.org/ns/prov#',
         rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
         skos: 'http://www.w3.org/2004/02/skos/core#',
@@ -1032,13 +1032,13 @@ export class FindDdoHandler extends CommandHandler {
       dcat['dct:accessRights'] = metadata.accessRights
     }
 
-    dcat['oc:chainId'] = credentialSubject.chainId
-    dcat['oc:nftAddress'] = credentialSubject.nftAddress
-    dcat['oc:datatokens'] = credentialSubject.datatokens || []
-    dcat['oc:services'] = this.formatServicesForDCAT(credentialSubject.services || [])
+    dcat['oec:chainId'] = credentialSubject.chainId
+    dcat['oec:nftAddress'] = credentialSubject.nftAddress
+    dcat['oec:datatokens'] = credentialSubject.datatokens || []
+    dcat['oec:services'] = this.formatServicesForDCAT(credentialSubject.services || [])
 
-    dcat['oc:purgatory'] = {
-      'oc:state': purgatory.state
+    dcat['oec:purgatory'] = {
+      'oec:state': purgatory.state
     }
 
     if (stats.length > 0) {
@@ -1046,33 +1046,33 @@ export class FindDdoHandler extends CommandHandler {
         (sum: number, stat: any) => sum + (stat.orders || 0),
         0
       )
-      dcat['oc:stats'] = {
-        'oc:allocated': totalOrders,
-        'oc:orders': totalOrders
+      dcat['oec:stats'] = {
+        'oec:allocated': totalOrders,
+        'oec:orders': totalOrders
       }
 
       const firstPrice = stats[0]?.prices?.[0]
       if (firstPrice) {
-        dcat['oc:stats']['oc:price'] = {
-          'oc:tokenAddress': firstPrice.token,
-          'oc:tokenSymbol': firstPrice.tokenSymbol || 'EURC',
-          'oc:value': firstPrice.price
+        dcat['oec:stats']['oec:price'] = {
+          'oec:tokenAddress': firstPrice.token,
+          'oec:tokenSymbol': firstPrice.tokenSymbol || 'EURC',
+          'oec:value': firstPrice.price
         }
       }
     }
 
     if (Object.keys(nft).length > 0) {
-      dcat['oc:nft'] = {
+      dcat['oec:nft'] = {
         'dct:title': nft.name,
-        'oc:address': nft.address,
-        'oc:owner': nft.owner,
-        'oc:state': nft.state,
-        'oc:symbol': nft.symbol,
-        'oc:tokenURI': nft.tokenURI
+        'oec:address': nft.address,
+        'oec:owner': nft.owner,
+        'oec:state': nft.state,
+        'oec:symbol': nft.symbol,
+        'oec:tokenURI': nft.tokenURI
       }
 
       if (nft.created) {
-        dcat['oc:nft']['dct:issued'] = {
+        dcat['oec:nft']['dct:issued'] = {
           '@type': 'xsd:dateTime',
           '@value': nft.created
         }
@@ -1080,12 +1080,12 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     if (event.txid || event.tx) {
-      dcat['oc:event'] = {
-        'oc:block': event.block,
-        'oc:contract': event.contract,
-        'oc:datetime': event.datetime,
-        'oc:from': event.from,
-        'oc:tx': event.txid || event.tx
+      dcat['oec:event'] = {
+        'oec:block': event.block,
+        'oec:contract': event.contract,
+        'oec:datetime': event.datetime,
+        'oec:from': event.from,
+        'oec:tx': event.txid || event.tx
       }
     }
 
@@ -1094,7 +1094,7 @@ export class FindDdoHandler extends CommandHandler {
       Array.isArray(ddoCopy.accessDetails) &&
       ddoCopy.accessDetails.length > 0
     ) {
-      dcat['oc:accessDetails'] = this.formatAccessDetails(ddoCopy.accessDetails[0])
+      dcat['oec:accessDetails'] = this.formatAccessDetails(ddoCopy.accessDetails[0])
     }
 
     CORE_LOGGER.debug(`[DCAT] Transformed DCAT: ${JSON.stringify(dcat, null, 2)}`)
@@ -1127,38 +1127,38 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     const formatted: any = {
-      '@type': 'oc:Fixed',
-      'oc:addressOrId': accessDetails.addressOrId,
-      'oc:isOwned': accessDetails.isOwned || false,
-      'oc:isPurchasable': accessDetails.isPurchasable || false,
-      'oc:price': accessDetails.price,
-      'oc:publisherMarketOrderFee': accessDetails.publisherMarketOrderFee || '0',
-      'oc:templateId': accessDetails.templateId
+      '@type': 'oec:Fixed',
+      'oec:addressOrId': accessDetails.addressOrId,
+      'oec:isOwned': accessDetails.isOwned || false,
+      'oec:isPurchasable': accessDetails.isPurchasable || false,
+      'oec:price': accessDetails.price,
+      'oec:publisherMarketOrderFee': accessDetails.publisherMarketOrderFee || '0',
+      'oec:templateId': accessDetails.templateId
     }
 
     if (accessDetails.validOrderTx) {
-      formatted['oc:validOrderTx'] = accessDetails.validOrderTx
+      formatted['oec:validOrderTx'] = accessDetails.validOrderTx
     }
 
     if (accessDetails.paymentCollector) {
-      formatted['oc:paymentCollector'] = accessDetails.paymentCollector
+      formatted['oec:paymentCollector'] = accessDetails.paymentCollector
     }
 
     if (accessDetails.baseToken) {
-      formatted['oc:baseToken'] = {
+      formatted['oec:baseToken'] = {
         'dct:title': accessDetails.baseToken.name,
-        'oc:address': accessDetails.baseToken.address,
-        'oc:decimals': accessDetails.baseToken.decimals,
-        'oc:symbol': accessDetails.baseToken.symbol
+        'oec:address': accessDetails.baseToken.address,
+        'oec:decimals': accessDetails.baseToken.decimals,
+        'oec:symbol': accessDetails.baseToken.symbol
       }
     }
 
     if (accessDetails.datatoken) {
-      formatted['oc:datatoken'] = {
+      formatted['oec:datatoken'] = {
         'dct:title': accessDetails.datatoken.name,
-        'oc:address': accessDetails.datatoken.address,
-        'oc:symbol': accessDetails.datatoken.symbol,
-        'oc:decimals': accessDetails.datatoken.decimals
+        'oec:address': accessDetails.datatoken.address,
+        'oec:symbol': accessDetails.datatoken.symbol,
+        'oec:decimals': accessDetails.datatoken.decimals
       }
     }
 

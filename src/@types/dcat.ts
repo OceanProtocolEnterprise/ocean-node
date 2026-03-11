@@ -5,7 +5,7 @@ export interface DCATContext {
     dct: string
     foaf: string
     geo: string
-    oc: string
+    oec: string
     prov: string
     rdfs: string
     skos: string
@@ -49,15 +49,15 @@ export interface DCATTemporal {
 }
 
 export interface DCATCompute {
-  'oc:allowNetworkAccess': boolean
-  'oc:allowRawAlgorithm': boolean
-  'oc:publisherTrustedAlgorithms'?: Array<{
-    'oc:did': string
-    'oc:filesChecksum': string
-    'oc:containerSectionChecksum': string
-    'oc:serviceId'?: string
+  'oec:allowNetworkAccess': boolean
+  'oec:allowRawAlgorithm': boolean
+  'oec:publisherTrustedAlgorithms'?: Array<{
+    'oec:did': string
+    'oec:filesChecksum': string
+    'oec:containerSectionChecksum': string
+    'oec:serviceId'?: string
   }>
-  'oc:publisherTrustedAlgorithmPublishers'?: string[]
+  'oec:publisherTrustedAlgorithmPublishers'?: string[]
 }
 
 export interface DCATDistribution {
@@ -74,7 +74,7 @@ export interface DCATDistribution {
     'spdx:algorithm': string
     'spdx:checksumValue': string
   }
-  'oc:compute'?: DCATCompute
+  'oec:compute'?: DCATCompute
 }
 
 export interface DCATQualifiedAttribution {
@@ -92,11 +92,11 @@ export interface DCATQualifiedAttribution {
 }
 
 export interface DCATEvent {
-  'oc:block'?: number
-  'oc:contract'?: string
-  'oc:datetime'?: string
-  'oc:from'?: string
-  'oc:tx'?: string
+  'oec:block'?: number
+  'oec:contract'?: string
+  'oec:datetime'?: string
+  'oec:from'?: string
+  'oec:tx'?: string
 }
 
 export interface DCATNFT {
@@ -105,45 +105,45 @@ export interface DCATNFT {
     '@type': 'xsd:dateTime'
     '@value': string
   }
-  'oc:address'?: string
-  'oc:owner'?: string
-  'oc:state'?: number
-  'oc:symbol'?: string
-  'oc:tokenURI'?: string
+  'oec:address'?: string
+  'oec:owner'?: string
+  'oec:state'?: number
+  'oec:symbol'?: string
+  'oec:tokenURI'?: string
 }
 
 export interface DCATStats {
-  'oc:allocated'?: number
-  'oc:orders'?: number
-  'oc:price'?: {
-    'oc:tokenAddress': string
-    'oc:tokenSymbol': string
-    'oc:value': string
+  'oec:allocated'?: number
+  'oec:orders'?: number
+  'oec:price'?: {
+    'oec:tokenAddress': string
+    'oec:tokenSymbol': string
+    'oec:value': string
   }
 }
 
 export interface DCATAccessDetails {
-  '@type': 'oc:Fixed'
-  'oc:addressOrId'?: string
-  'oc:baseToken'?: {
+  '@type': 'oec:Fixed'
+  'oec:addressOrId'?: string
+  'oec:baseToken'?: {
     'dct:title'?: string
-    'oc:address'?: string
-    'oc:decimals'?: number
-    'oc:symbol'?: string
+    'oec:address'?: string
+    'oec:decimals'?: number
+    'oec:symbol'?: string
   }
-  'oc:datatoken'?: {
+  'oec:datatoken'?: {
     'dct:title'?: string
-    'oc:address'?: string
-    'oc:symbol'?: string
-    'oc:decimals'?: number
+    'oec:address'?: string
+    'oec:symbol'?: string
+    'oec:decimals'?: number
   }
-  'oc:isOwned'?: boolean
-  'oc:isPurchasable'?: boolean
-  'oc:price'?: string
-  'oc:publisherMarketOrderFee'?: string
-  'oc:templateId'?: number
-  'oc:validOrderTx'?: string
-  'oc:paymentCollector'?: string
+  'oec:isOwned'?: boolean
+  'oec:isPurchasable'?: boolean
+  'oec:price'?: string
+  'oec:publisherMarketOrderFee'?: string
+  'oec:templateId'?: number
+  'oec:validOrderTx'?: string
+  'oec:paymentCollector'?: string
 }
 
 export interface DCATDataset {
@@ -193,15 +193,15 @@ export interface DCATDataset {
   'dct:rights'?: string
   'dct:accessRights'?: string
   'prov:qualifiedAttribution'?: DCATQualifiedAttribution[]
-  'oc:accessDetails'?: DCATAccessDetails
-  'oc:chainId'?: number
-  'oc:datatokens'?: any[]
-  'oc:event'?: DCATEvent
-  'oc:nft'?: DCATNFT
-  'oc:nftAddress'?: string
-  'oc:purgatory'?: {
-    'oc:state': boolean
+  'oec:accessDetails'?: DCATAccessDetails
+  'oec:chainId'?: number
+  'oec:datatokens'?: any[]
+  'oec:event'?: DCATEvent
+  'oec:nft'?: DCATNFT
+  'oec:nftAddress'?: string
+  'oec:purgatory'?: {
+    'oec:state': boolean
   }
-  'oc:services'?: any[]
-  'oc:stats'?: DCATStats
+  'oec:services'?: any[]
+  'oec:stats'?: DCATStats
 }
