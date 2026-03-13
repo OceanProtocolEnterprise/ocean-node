@@ -21,7 +21,7 @@ const validateFileInfoRequest = (req: FileInfoHttpRequest): boolean => {
   const matchesRegex = (value: string, regex: RegExp): boolean => regex.test(value)
 
   if (!req.type && !req.did) return false // either 'type' or 'did' is required
-  if (req.type && !['ipfs', 'url', 'arweave'].includes(req.type)) return false // 'type' must be one of the allowed values
+  if (req.type && !['ipfs', 'url', 'arweave', 's3'].includes(req.type)) return false // 'type' must be one of the allowed values
   if (req.did && !matchesRegex(req.did, /^did:op/)) return false // 'did' must match the regex
   if (req.type === 'ipfs' && !req.hash) return false // 'hash' is required if 'type' is 'ipfs'
   if (req.type === 'url' && !req.url) return false // 'url' is required if 'type' is 'url'
