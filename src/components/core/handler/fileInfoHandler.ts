@@ -4,7 +4,8 @@ import { P2PCommandResponse } from '../../../@types/index.js'
 import {
   ArweaveFileObject,
   IpfsFileObject,
-  UrlFileObject
+  UrlFileObject,
+  S3FileObject
 } from '../../../@types/fileObject.js'
 import { OceanNodeConfig } from '../../../@types/OceanNode.js'
 import { FileInfoCommand } from '../../../@types/commands.js'
@@ -22,18 +23,32 @@ import { getFile } from '../../../utils/file.js'
 import { getConfiguration } from '../../../utils/index.js'
 
 async function formatMetadata(
-  file: ArweaveFileObject | IpfsFileObject | UrlFileObject,
+  file: ArweaveFileObject | IpfsFileObject | UrlFileObject | S3FileObject,
   config: OceanNodeConfig
 ) {
-  const url =
-    file.type === 'url'
-      ? (file as UrlFileObject).url
-      : file.type === 'arweave'
-        ? urlJoin(config.arweaveGateway, (file as ArweaveFileObject).transactionId)
-        : file.type === 'ipfs'
-          ? urlJoin(config.ipfsGateway, (file as IpfsFileObject).hash)
-          : null
-  const headers = file.type === 'url' ? (file as UrlFileObject).headers : undefined
+  let url = null
+  let headers
+
+  if (file.type === 'url') {
+    url = (file as UrlFileObject).url
+    headers = (file as UrlFileObject).headers
+  } else if (file.type === 'arweave') {
+    url = urlJoin(config.arweaveGateway, (file as ArweaveFileObject).transactionId)
+  } else if (file.type === 'ipfs') {
+    url = urlJoin(config.ipfsGateway, (file as IpfsFileObject).hash)
+  } else if (file.type === 's3') {
+    return {
+      valid: true,
+      contentLength: '0',
+      contentType: 'application/octet-stream',
+      name: (file as S3FileObject).s3Access.objectKey.split('/').pop() || '',
+      type: file.type
+    }
+  }
+
+  if (!url) {
+    throw new Error(`Unsupported file type: ${file.type}`)
+  }
 
   const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
     url,

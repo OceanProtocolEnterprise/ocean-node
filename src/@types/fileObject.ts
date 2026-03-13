@@ -87,4 +87,5 @@ export interface FileInfoHttpRequest {
   url?: string
   transactionId?: string
   serviceId?: string
+  s3Access?: S3Object
 }

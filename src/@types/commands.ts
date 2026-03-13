@@ -14,7 +14,8 @@ import {
   EncryptMethod,
   IpfsFileObject,
   UrlFileObject,
-  BaseFileObject
+  BaseFileObject,
+  S3FileObject
 } from './fileObject'
 
 export interface Command {
@@ -69,7 +70,7 @@ export interface FileInfoCommand extends Command {
   did?: string
   serviceId?: string
   fileIndex?: number
-  file?: UrlFileObject | ArweaveFileObject | IpfsFileObject
+  file?: UrlFileObject | ArweaveFileObject | IpfsFileObject | S3FileObject
   checksum?: boolean
 }
 // group these 2
