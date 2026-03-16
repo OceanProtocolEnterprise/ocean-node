@@ -234,10 +234,6 @@ export class ComputeInitializeHandler extends CommandHandler {
             credentials,
             metadata
           } = ddoInstance.getDDOFields()
-          CORE_LOGGER.logMessage(
-            `InitializeCompute: evaluating access for did=${ddoInstance.getDid()} serviceId=${elem.serviceId} metadataType=${metadata?.type} consumerAddress=${task.consumerAddress}`,
-            true
-          )
           const isOrdable = isOrderingAllowedForAsset(ddo)
           if (!isOrdable.isOrdable) {
             CORE_LOGGER.error(isOrdable.reason)
@@ -299,10 +295,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           // check credentials (DDO level)
           let accessGrantedDDOLevel: boolean
           if (credentials) {
-            CORE_LOGGER.logMessage(
-              `InitializeCompute: DDO-level credentials found for did=${ddoInstance.getDid()} policyServerConfigured=${isPolicyServerConfigured()}`,
-              true
-            )
             // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
             // It will just use the existing code and let PolicyServer decide.
             if (isPolicyServerConfigured()) {
@@ -313,20 +305,12 @@ export class ComputeInitializeHandler extends CommandHandler {
                 task.consumerAddress,
                 task.policyServer
               )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: policy server DDO-level decision for did=${ddoInstance.getDid()} serviceId=${elem.serviceId} success=${response.success} httpStatus=${response.httpStatus} message=${response.message}`,
-                true
-              )
               accessGrantedDDOLevel = response.success
             } else {
               accessGrantedDDOLevel = await checkCredentials(
                 task.consumerAddress,
                 credentials as Credentials,
                 await blockchain.getSigner()
-              )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: local DDO-level credentials decision for did=${ddoInstance.getDid()} serviceId=${elem.serviceId} success=${accessGrantedDDOLevel}`,
-                true
               )
             }
             if (!accessGrantedDDOLevel) {
@@ -357,10 +341,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           // check credentials on service level
           // if using a policy server and we are here it means that access was granted (they are merged/assessed together)
           if (service.credentials) {
-            CORE_LOGGER.logMessage(
-              `InitializeCompute: service-level credentials found for did=${ddoInstance.getDid()} serviceId=${service.id} policyServerConfigured=${isPolicyServerConfigured()}`,
-              true
-            )
             let accessGrantedServiceLevel: boolean
             if (isPolicyServerConfigured()) {
               // we use the previous check or we do it again
@@ -372,20 +352,12 @@ export class ComputeInitializeHandler extends CommandHandler {
                 task.consumerAddress,
                 task.policyServer
               )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: policy server service-level decision for did=${ddoInstance.getDid()} serviceId=${service.id} success=${response.success} httpStatus=${response.httpStatus} message=${response.message}`,
-                true
-              )
               accessGrantedServiceLevel = accessGrantedDDOLevel || response.success
             } else {
               accessGrantedServiceLevel = await checkCredentials(
                 task.consumerAddress,
                 service.credentials,
                 await blockchain.getSigner()
-              )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: local service-level credentials decision for did=${ddoInstance.getDid()} serviceId=${service.id} success=${accessGrantedServiceLevel}`,
-                true
               )
             }
 
