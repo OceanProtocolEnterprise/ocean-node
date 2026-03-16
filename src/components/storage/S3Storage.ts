@@ -12,19 +12,16 @@ import { CORE_LOGGER } from '../../utils/logging/common.js'
 import { Storage } from './Storage.js'
 
 function createS3Client(s3Access: S3FileObject['s3Access']): S3Client {
-  const endpoint = s3Access.endpoint.startsWith('http')
-    ? s3Access.endpoint
-    : `https://${s3Access.endpoint}`
   return new S3Client({
-    endpoint,
-    // Region is optional; default to us-east-1 if not provided
+    endpoint: s3Access.endpoint,
     region: s3Access.region ?? 'us-east-1',
-    // Path-style (e.g. endpoint/bucket/key) required for some S3-compatible services (e.g. MinIO); default false for AWS virtual-host style
     forcePathStyle: s3Access.forcePathStyle ?? false,
     credentials: {
       accessKeyId: s3Access.accessKeyId,
       secretAccessKey: s3Access.secretAccessKey
-    }
+    },
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED'
   })
 }
 
