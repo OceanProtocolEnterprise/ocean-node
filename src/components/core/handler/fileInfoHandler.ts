@@ -26,37 +26,15 @@ async function formatMetadata(
   name: string
   type: string
 }> {
+  const storage = Storage.getStorageClass(file, config)
+  const fileInfo = await storage.fetchSpecificFileMetadata(file, false)
   CORE_LOGGER.logMessage(
-    `[formatMetadata] Formatting metadata for file type: ${file.type}`,
-    true
+    `Metadata for file: ${fileInfo.contentLength} ${fileInfo.contentType}`
   )
-
-  try {
-    const storage = Storage.getStorageClass(file, config)
-    CORE_LOGGER.logMessage(
-      `[formatMetadata] Got storage class for type: ${file.type}`,
-      true
-    )
-
-    const fileInfo = await storage.fetchSpecificFileMetadata(file, false)
-    CORE_LOGGER.logMessage(
-      `[formatMetadata] Metadata for file: ${fileInfo.contentLength} ${fileInfo.contentType}`,
-      true
-    )
-    return fileInfo
-  } catch (error) {
-    CORE_LOGGER.error(`[formatMetadata] Error: ${error.message}`)
-    if (error instanceof Error) {
-      CORE_LOGGER.error(`[formatMetadata] Stack: ${error.stack}`)
-    }
-    throw error
-  }
+  return fileInfo
 }
-
 export class FileInfoHandler extends CommandHandler {
   validate(command: FileInfoCommand): ValidateParams {
-    CORE_LOGGER.logMessage(`[FileInfoHandler] Validating command`, true)
-
     let validation = validateCommandParameters(command, []) // all optional? weird
     if (validation.valid) {
       if (command.did) {
@@ -80,88 +58,37 @@ export class FileInfoHandler extends CommandHandler {
   }
 
   async handle(task: FileInfoCommand): Promise<P2PCommandResponse> {
-    CORE_LOGGER.logMessage(
-      `[FileInfoHandler] Handling task: ${JSON.stringify(task, null, 2)}`,
-      true
-    )
-
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
-
     try {
       const oceanNode = this.getOceanNode()
       const config = await getConfiguration()
       let fileInfo = []
 
       if (task.file && task.type) {
-        CORE_LOGGER.logMessage(
-          `[FileInfoHandler] Processing file of type: ${task.type}`,
-          true
-        )
-        CORE_LOGGER.logMessage(
-          `[FileInfoHandler] File object: ${JSON.stringify(task.file, null, 2)}`,
-          true
-        )
+        const storage = Storage.getStorageClass(task.file, config)
 
-        try {
-          const storage = Storage.getStorageClass(task.file, config)
-          CORE_LOGGER.logMessage(
-            `[FileInfoHandler] Storage class created successfully`,
-            true
-          )
-
-          fileInfo = await storage.getFileInfo({
-            type: task.type,
-            fileIndex: task.fileIndex
-          })
-          CORE_LOGGER.logMessage(
-            `[FileInfoHandler] getFileInfo returned: ${JSON.stringify(fileInfo, null, 2)}`,
-            true
-          )
-        } catch (storageError) {
-          CORE_LOGGER.error(`[FileInfoHandler] Storage error: ${storageError.message}`)
-          if (storageError instanceof Error) {
-            CORE_LOGGER.error(
-              `[FileInfoHandler] Storage error stack: ${storageError.stack}`
-            )
-          }
-          throw storageError
-        }
+        fileInfo = await storage.getFileInfo({
+          type: task.type,
+          fileIndex: task.fileIndex
+        })
       } else if (task.did && task.serviceId) {
-        CORE_LOGGER.logMessage(
-          `[FileInfoHandler] Processing DID: ${task.did}, serviceId: ${task.serviceId}`,
-          true
-        )
-
         const fileArray = await getFile(task.did, task.serviceId, oceanNode)
-        CORE_LOGGER.logMessage(
-          `[FileInfoHandler] Got fileArray with ${fileArray.length} files`,
-          true
-        )
-
         if (task.fileIndex) {
-          CORE_LOGGER.logMessage(
-            `[FileInfoHandler] Getting metadata for file index: ${task.fileIndex}`,
-            true
-          )
           const fileMetadata = await formatMetadata(fileArray[task.fileIndex], config)
           fileInfo.push(fileMetadata)
         } else {
-          for (let i = 0; i < fileArray.length; i++) {
-            CORE_LOGGER.logMessage(
-              `[FileInfoHandler] Getting metadata for file index: ${i}`,
-              true
-            )
-            const fileMetadata = await formatMetadata(fileArray[i], config)
+          for (const file of fileArray) {
+            const fileMetadata = await formatMetadata(file, config)
             fileInfo.push(fileMetadata)
           }
         }
       } else {
         const errorMessage =
           'Invalid arguments. Please provide either file && Type OR did && serviceId'
-        CORE_LOGGER.error(`[FileInfoHandler] ${errorMessage}`)
+        CORE_LOGGER.error(errorMessage)
         return {
           stream: null,
           status: {
@@ -170,9 +97,8 @@ export class FileInfoHandler extends CommandHandler {
           }
         }
       }
-
       CORE_LOGGER.logMessage(
-        '[FileInfoHandler] File Info Response: ' + JSON.stringify(fileInfo, null, 2),
+        'File Info Response: ' + JSON.stringify(fileInfo, null, 2),
         true
       )
 
@@ -183,16 +109,12 @@ export class FileInfoHandler extends CommandHandler {
         }
       }
     } catch (error) {
-      CORE_LOGGER.error(`[FileInfoHandler] Error: ${error.message}`)
-      if (error instanceof Error) {
-        CORE_LOGGER.error(`[FileInfoHandler] Error stack: ${error.stack}`)
-        CORE_LOGGER.error(`[FileInfoHandler] Error name: ${error.name}`)
-      }
+      CORE_LOGGER.error(error.message)
       return {
         stream: null,
         status: {
           httpStatus: 500,
-          error: error.message || 'UnknownError'
+          error: error.message
         }
       }
     }
