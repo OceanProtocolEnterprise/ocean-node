@@ -5,7 +5,8 @@ import {
   FileObjectType,
   FtpFileObject,
   IpfsFileObject,
-  UrlFileObject
+  UrlFileObject,
+  S3FileObject
 } from '../../@types/fileObject.js'
 import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants.js'
 import { FileInfoHandler } from '../core/handler/fileInfoHandler.js'
@@ -29,6 +30,7 @@ const validateFileInfoRequest = (req: FileInfoHttpRequest): boolean => {
   if (req.type === 'url' && !req.url) return false // 'url' is required if 'type' is 'url'
   if (req.type === 'ftp' && !req.url) return false // 'url' is required if 'type' is 'ftp'
   if (req.type === 'arweave' && !req.transactionId) return false // 'transactionId' is required if 'type' is 'arweave'
+  if (req.type === 's3' && !req.s3Access) return false // 's3Access' is required if 'type' is 's3'
   if (!req.type && !req.serviceId) return false // 'serviceId' is required if 'type' is not provided
 
   return true
@@ -48,7 +50,12 @@ fileInfoRoute.post(
 
     try {
       // Retrieve the file info
-      let fileObject: UrlFileObject | IpfsFileObject | ArweaveFileObject | FtpFileObject
+      let fileObject:
+        | UrlFileObject
+        | IpfsFileObject
+        | ArweaveFileObject
+        | FtpFileObject
+        | S3FileObject
       let fileInfoTask: FileInfoCommand
 
       if (fileInfoReq.did && fileInfoReq.serviceId) {
@@ -103,6 +110,17 @@ fileInfoRoute.post(
           command: PROTOCOL_COMMANDS.FILE_INFO,
           file: fileObject,
           type: FileObjectType.FTP,
+          caller: req.caller
+        }
+      } else if (fileInfoReq.type === 's3' && fileInfoReq.s3Access) {
+        fileObject = {
+          type: 's3',
+          s3Access: fileInfoReq.s3Access
+        } as S3FileObject
+        fileInfoTask = {
+          command: PROTOCOL_COMMANDS.FILE_INFO,
+          file: fileObject,
+          type: FileObjectType.S3,
           caller: req.caller
         }
       }
