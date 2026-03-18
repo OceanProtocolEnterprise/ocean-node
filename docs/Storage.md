@@ -1,15 +1,16 @@
 # Storage Types
 
-Ocean Node supports four storage backends for assets (e.g. algorithm or data files). Each type is identified by a `type` field on the file object and has its own shape and validation rules.
+Ocean Node supports five storage backends for assets (e.g. algorithm or data files). Each type is identified by a `type` field on the file object and has its own shape and validation rules.
 
 ## Supported types
 
-| Type       | `type` value | Description                          |
-| ---------- | ------------- | ------------------------------------ |
-| **URL**    | `url`         | File served via HTTP/HTTPS           |
-| **IPFS**   | `ipfs`        | File identified by IPFS CID          |
-| **Arweave**| `arweave`     | File identified by Arweave transaction ID |
-| **S3**     | `s3`          | File in S3-compatible storage (AWS, Ceph, MinIO, etc.) |
+| Type        | `type` value | Description                                            |
+| ----------- | ------------ | ------------------------------------------------------ |
+| **URL**     | `url`        | File served via HTTP/HTTPS                             |
+| **IPFS**    | `ipfs`       | File identified by IPFS CID                            |
+| **Arweave** | `arweave`    | File identified by Arweave transaction ID              |
+| **S3**      | `s3`         | File in S3-compatible storage (AWS, Ceph, MinIO, etc.) |
+| **FTP**     | `ftp`        | File served via FTP or FTPS                            |
 
 All file objects can optionally include encryption metadata: `encryptedBy` and `encryptMethod` (e.g. `AES`, `ECIES`).
 
@@ -30,12 +31,12 @@ Files are fetched from a given URL using HTTP GET or POST.
 }
 ```
 
-| Field     | Required | Description                                      |
-| --------- | -------- | ------------------------------------------------ |
-| `type`    | Yes      | Must be `"url"`                                  |
-| `url`     | Yes      | Full HTTP/HTTPS URL to the file                  |
-| `method`  | Yes      | `"get"` or `"post"`                              |
-| `headers` | No       | Optional request headers (key-value object)      |
+| Field     | Required | Description                                 |
+| --------- | -------- | ------------------------------------------- |
+| `type`    | Yes      | Must be `"url"`                             |
+| `url`     | Yes      | Full HTTP/HTTPS URL to the file             |
+| `method`  | Yes      | `"get"` or `"post"`                         |
+| `headers` | No       | Optional request headers (key-value object) |
 
 ### Validation
 
@@ -63,10 +64,10 @@ Files are resolved via an IPFS gateway using a content identifier (CID).
 }
 ```
 
-| Field  | Required | Description                    |
-| ------ | -------- | ------------------------------ |
-| `type` | Yes      | Must be `"ipfs"`               |
-| `hash` | Yes      | IPFS content identifier (CID)  |
+| Field  | Required | Description                   |
+| ------ | -------- | ----------------------------- |
+| `type` | Yes      | Must be `"ipfs"`              |
+| `hash` | Yes      | IPFS content identifier (CID) |
 
 The node builds the download URL as: `{ipfsGateway}/ipfs/{hash}` (e.g. `https://ipfs.io/ipfs/QmXoy...`).
 
@@ -95,10 +96,10 @@ Files are identified by an Arweave transaction ID and fetched via an Arweave gat
 }
 ```
 
-| Field           | Required | Description                |
-| --------------- | -------- | -------------------------- |
-| `type`          | Yes      | Must be `"arweave"`        |
-| `transactionId` | Yes      | Arweave transaction ID     |
+| Field           | Required | Description            |
+| --------------- | -------- | ---------------------- |
+| `type`          | Yes      | Must be `"arweave"`    |
+| `transactionId` | Yes      | Arweave transaction ID |
 
 The node builds the download URL as: `{arweaveGateway}/{transactionId}`.
 
@@ -134,21 +135,21 @@ Files are stored in S3-compatible object storage. The node uses the AWS SDK and 
 }
 ```
 
-| Field     | Required | Description |
-| --------- | -------- | ----------- |
-| `type`    | Yes      | Must be `"s3"` |
-| `s3Access` | Yes    | Object with endpoint, bucket, object key, and credentials (see below). |
+| Field      | Required | Description                                                            |
+| ---------- | -------- | ---------------------------------------------------------------------- |
+| `type`     | Yes      | Must be `"s3"`                                                         |
+| `s3Access` | Yes      | Object with endpoint, bucket, object key, and credentials (see below). |
 
 **`s3Access` fields:**
 
-| Field             | Required | Description |
-| ----------------- | -------- | ----------- |
-| `endpoint`        | Yes      | S3 endpoint URL (e.g. `https://s3.amazonaws.com`, `https://nyc3.digitaloceanspaces.com`, or `https://my-ceph.example.com`) |
-| `bucket`          | Yes      | Bucket name |
-| `objectKey`       | Yes      | Object key (path within the bucket) |
-| `accessKeyId`     | Yes      | Access key for the S3-compatible API |
-| `secretAccessKey` | Yes      | Secret key for the S3-compatible API |
-| `region`          | No       | Region (e.g. `us-east-1`). Optional; defaults to `us-east-1` if omitted. Some backends (e.g. Ceph) may ignore it. |
+| Field             | Required | Description                                                                                                                                                                                                      |
+| ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`        | Yes      | S3 endpoint URL (e.g. `https://s3.amazonaws.com`, `https://nyc3.digitaloceanspaces.com`, or `https://my-ceph.example.com`)                                                                                       |
+| `bucket`          | Yes      | Bucket name                                                                                                                                                                                                      |
+| `objectKey`       | Yes      | Object key (path within the bucket)                                                                                                                                                                              |
+| `accessKeyId`     | Yes      | Access key for the S3-compatible API                                                                                                                                                                             |
+| `secretAccessKey` | Yes      | Secret key for the S3-compatible API                                                                                                                                                                             |
+| `region`          | No       | Region (e.g. `us-east-1`). Optional; defaults to `us-east-1` if omitted. Some backends (e.g. Ceph) may ignore it.                                                                                                |
 | `forcePathStyle`  | No       | If `true`, use path-style addressing (e.g. `endpoint/bucket/key`). Required for some S3-compatible services (e.g. MinIO). Default `false` (virtual-host style, e.g. `bucket.endpoint/key`, standard for AWS S3). |
 
 ### Validation
@@ -163,11 +164,55 @@ Files are stored in S3-compatible object storage. The node uses the AWS SDK and 
 
 ---
 
+## FTP storage
+
+Files are fetched or uploaded via FTP or FTPS. The node uses a single `url` field containing the full FTP(S) URL (including optional credentials). Functionality mirrors URL storage: stream download, file metadata (size; content-type is `application/octet-stream`), and upload via STOR.
+
+### File object shape
+
+```json
+{
+  "type": "ftp",
+  "url": "ftp://user:password@ftp.example.com:21/path/to/file.zip"
+}
+```
+
+For FTPS (TLS):
+
+```json
+{
+  "type": "ftp",
+  "url": "ftps://user:password@secure.example.com:990/pub/data.csv"
+}
+```
+
+| Field  | Required | Description                                                                                                                                                          |
+| ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type` | Yes      | Must be `"ftp"`                                                                                                                                                      |
+| `url`  | Yes      | Full FTP or FTPS URL. Supports `ftp://` and `ftps://`. May include credentials as `ftp://user:password@host:port/path`. Default port is 21 for FTP and 990 for FTPS. |
+
+### Validation
+
+- `url` must be present.
+- URL must use protocol `ftp://` or `ftps://`.
+- If the node config defines `unsafeURLs` (list of regex patterns), any URL matching a pattern is rejected.
+
+### Node configuration
+
+- Optional: `unsafeURLs` – array of regex strings; URLs matching any of them are considered unsafe and rejected (same as URL storage).
+
+### Upload
+
+FTPStorage supports `upload(filename, stream)`. If the file object’s `url` ends with `/`, the filename is appended to form the remote path; otherwise the URL is used as the full target path. Uses FTP STOR command.
+
+---
+
 ## Summary
 
 - **URL**: flexible HTTP(S) endpoints; optional custom headers and `unsafeURLs` filtering.
 - **IPFS**: CID-based; requires `ipfsGateway` in config.
 - **Arweave**: transaction-ID-based; requires `arweaveGateway` in config.
 - **S3**: S3-compatible object storage (AWS, Ceph, MinIO, etc.); credentials and endpoint in the file object; `region` optional (defaults to `us-east-1`).
+- **FTP**: FTP/FTPS URLs; stream download, metadata (size), and upload via STOR; optional `unsafeURLs` filtering.
 
 The storage implementation lives under `src/components/storage/`. The node selects the backend from the file object’s `type` (case-insensitive) and validates the shape and config before fetching or streaming the file.

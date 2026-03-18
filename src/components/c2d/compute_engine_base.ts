@@ -5,7 +5,6 @@ import type {
   ComputeAlgorithm,
   ComputeAsset,
   ComputeJob,
-  ComputeOutput,
   ComputeResourceRequest,
   ComputeResourceRequestWithPrice,
   ComputeResourceType,
@@ -84,7 +83,7 @@ export abstract class C2DEngine {
   public abstract startComputeJob(
     assets: ComputeAsset[],
     algorithm: ComputeAlgorithm,
-    output: ComputeOutput,
+    output: string,
     environment: string,
     owner: string,
     maxJobDuration: number,
@@ -112,7 +111,8 @@ export abstract class C2DEngine {
   public abstract getComputeJobResult(
     consumerAddress: string,
     jobId: string,
-    index: number
+    index: number,
+    offset?: number
   ): Promise<{ stream: Readable; headers: any }>
 
   public abstract cleanupExpiredStorage(job: DBComputeJob): Promise<boolean>
