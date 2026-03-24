@@ -207,6 +207,113 @@ FTPStorage supports `upload(filename, stream)`. If the file object’s `url` end
 
 ---
 
+## C2D result upload to remote storage
+
+Compute-to-Data jobs can upload their output archive to a remote backend instead of keeping it only on local node disk.
+
+### How it works
+
+1. You build a `ComputeOutput` JSON object with:
+   - `remoteStorage`: one of the storage objects from this document (`url`, `s3`, `ftp`, etc.)
+   - optional `encryption`: currently only `AES` is accepted, with a hex key
+2. You ECIES-encrypt that JSON into a string and send it in the compute command as `output`.
+3. When the job finishes:
+   - if `output` is present and remote storage supports upload, Ocean Node uploads the tar archive remotely
+   - otherwise, Ocean Node falls back to local `outputs.tar` behavior
+
+### `ComputeOutput` shape
+
+```json
+{
+  "remoteStorage": {
+    "type": "s3",
+    "s3Access": {
+      "endpoint": "https://s3.amazonaws.com",
+      "region": "us-east-1",
+      "bucket": "my-c2d-results",
+      "objectKey": "jobs/result.tar",
+      "accessKeyId": "AKIA...",
+      "secretAccessKey": "..."
+    }
+  },
+  "encryption": {
+    "encryptMethod": "AES",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+Notes:
+
+- `output` itself is **not plain JSON** in the compute request; it must be an ECIES-encrypted string.
+- `encryption.key` must be at least 32 bytes (64 hex chars).
+- `encryption.encryptMethod` must be `AES` if provided.
+
+### End-to-end example
+
+#### 1) Create plaintext output instructions
+
+```json
+{
+  "remoteStorage": {
+    "type": "ftp",
+    "url": "ftp://user:password@ftp.example.com:21/results/"
+  },
+  "encryption": {
+    "encryptMethod": "AES",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+#### 2) Encrypt the JSON
+
+You can use `POST /api/services/encrypt` to encrypt the JSON string for Ocean Node:
+
+```bash
+curl -X POST "https://<node>/api/services/encrypt?consumerAddress=<0xAddress>&nonce=<nonce>&signature=<signature>" \
+  -H "Content-Type: text/plain" \
+  --data-raw '{"remoteStorage":{"type":"ftp","url":"ftp://user:password@ftp.example.com:21/results/"},"encryption":{"encryptMethod":"AES","key":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}'
+```
+
+The response is the encrypted blob (hex string).  
+If your encrypt response includes `0x` prefix, remove it before sending as compute `output` (compute handlers decode `output` as raw hex bytes).
+
+#### 3) Send compute command with `output`
+
+Example for `freeStartCompute`:
+
+```json
+{
+  "command": "freeStartCompute",
+  "consumerAddress": "0x...",
+  "signature": "0x...",
+  "nonce": "123",
+  "environment": "<env-id>",
+  "datasets": [],
+  "algorithm": {
+    "meta": {
+      "rawcode": "print('hello')",
+      "container": {
+        "image": "python",
+        "tag": "3.10",
+        "entrypoint": "python",
+        "checksum": "..."
+      }
+    }
+  },
+  "output": "<ecies-encrypted-output-string>"
+}
+```
+
+### Uploaded filename and fallback behavior
+
+- For remote upload, Ocean Node writes: `outputs-<clusterHash>-<jobId>.tar`
+- If `output` is missing/empty, or chosen storage does not support upload, Ocean Node stores output locally (`outputs.tar`) as before.
+- If remote upload fails, job status is set to `ResultsUploadFailed`.
+
+---
+
 ## Summary
 
 - **URL**: flexible HTTP(S) endpoints; optional custom headers and `unsafeURLs` filtering.
