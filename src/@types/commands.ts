@@ -4,18 +4,10 @@ import { DDO } from '@oceanprotocol/ddo-js'
 import type {
   ComputeAsset,
   ComputeAlgorithm,
-  ComputeOutput,
   ComputeResourceRequest,
   DBComputeJobMetadata
 } from './C2D/C2D.js'
-import {
-  ArweaveFileObject,
-  FileObjectType,
-  EncryptMethod,
-  IpfsFileObject,
-  UrlFileObject,
-  BaseFileObject
-} from './fileObject'
+import { FileObjectType, StorageObject, EncryptMethod } from './fileObject'
 
 export interface Command {
   command: string // command name
@@ -69,7 +61,7 @@ export interface FileInfoCommand extends Command {
   did?: string
   serviceId?: string
   fileIndex?: number
-  file?: UrlFileObject | ArweaveFileObject | IpfsFileObject
+  file?: StorageObject
   checksum?: boolean
 }
 // group these 2
@@ -135,7 +127,7 @@ export interface EncryptFileCommand extends Command {
   consumerAddress: string
   signature: string
   encryptionType?: EncryptMethod.AES | EncryptMethod.ECIES
-  files?: BaseFileObject
+  files?: StorageObject
   rawData?: Buffer
   policyServer?: any // object to pass to policy server
 }
@@ -228,6 +220,7 @@ export interface ComputeInitializeCommand extends Command {
   policyServer?: any // object to pass to policy server
   queueMaxWaitTime?: number // max time in seconds a job can wait in the queue before being started
   encryptedDockerRegistryAuth?: string
+  output?: string // this is always an ECIES encrypted string, that decodes to ComputeOutput interface
 }
 
 export interface FreeComputeStartCommand extends Command {
@@ -237,7 +230,7 @@ export interface FreeComputeStartCommand extends Command {
   environment: string
   algorithm: ComputeAlgorithm
   datasets?: ComputeAsset[]
-  output?: ComputeOutput
+  output?: string // this is always an ECIES encrypted string, that decodes to ComputeOutput interface
   resources?: ComputeResourceRequest[]
   maxJobDuration?: number
   policyServer?: any // object to pass to policy server
@@ -264,6 +257,7 @@ export interface ComputeGetResultCommand extends Command {
   nonce: string
   jobId: string
   index: number
+  offset?: number
 }
 export interface ComputeGetStreamableLogsCommand extends Command {
   consumerAddress: string

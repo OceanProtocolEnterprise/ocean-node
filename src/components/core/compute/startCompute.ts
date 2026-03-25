@@ -7,7 +7,12 @@ import {
 } from '../../../@types/commands.js'
 import { CommandHandler } from '../handler/handler.js'
 import { OceanNode } from '../../../OceanNode.js'
-import { generateUniqueID, getAlgoChecksums, validateAlgoForDataset } from './utils.js'
+import {
+  generateUniqueID,
+  getAlgoChecksums,
+  validateAlgoForDataset,
+  validateOutput
+} from './utils.js'
 import {
   ValidateParams,
   buildInvalidRequestMessage,
@@ -39,7 +44,20 @@ import { PolicyServer } from '../../policyServer/index.js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { checkAddressOnAccessList } from '../../../utils/accessList.js'
 
-export class PaidComputeStartHandler extends CommandHandler {
+export class CommonComputeHandler extends CommandHandler {
+  validate(command: PaidComputeStartCommand): ValidateParams {
+    return {
+      valid: true
+    }
+  }
+
+  // eslint-disable-next-line require-await
+  async handle(task: PaidComputeStartCommand): Promise<P2PCommandResponse> {
+    return null
+  }
+}
+
+export class PaidComputeStartHandler extends CommonComputeHandler {
   validate(command: PaidComputeStartCommand): ValidateParams {
     const commandValidation = validateCommandParameters(command, [
       'environment',
@@ -79,9 +97,8 @@ export class PaidComputeStartHandler extends CommandHandler {
     if (authValidationResponse.status.httpStatus !== 200) {
       return authValidationResponse
     }
-
+    const node = this.getOceanNode()
     try {
-      const node = this.getOceanNode()
       // split compute env (which is already in hash-envId format) and get the hash
       // then get env which might contain dashes as well
       const eIndex = task.environment.indexOf('-')
@@ -564,6 +581,14 @@ export class PaidComputeStartHandler extends CommandHandler {
           }
         }
       }
+      const isValidOutput = await validateOutput(
+        node,
+        task.output,
+        await getConfiguration()
+      )
+      if (isValidOutput.status.httpStatus !== 200) {
+        return isValidOutput
+      }
       try {
         const response = await engine.startComputeJob(
           task.datasets,
@@ -634,7 +659,7 @@ export class PaidComputeStartHandler extends CommandHandler {
   }
 }
 
-export class FreeComputeStartHandler extends CommandHandler {
+export class FreeComputeStartHandler extends CommonComputeHandler {
   validate(command: FreeComputeStartCommand): ValidateParams {
     const commandValidation = validateCommandParameters(command, [
       'algorithm',
@@ -712,6 +737,15 @@ export class FreeComputeStartHandler extends CommandHandler {
             }
           }
         }
+      }
+      const node = this.getOceanNode()
+      const isValidOutput = await validateOutput(
+        node,
+        task.output,
+        await getConfiguration()
+      )
+      if (isValidOutput.status.httpStatus !== 200) {
+        return isValidOutput
       }
       const policyServer = new PolicyServer()
       for (const elem of [...[task.algorithm], ...task.datasets]) {
