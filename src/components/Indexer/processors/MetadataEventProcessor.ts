@@ -158,8 +158,14 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         )
         return
       }
-      // for unencrypted DDOs
-      if ((parseInt(flag) & 2) === 0 && !this.checkDdoHash(updatedDdo, metadataHash)) {
+      // For remote DDOs, the on-chain hash covers the remote pointer payload,
+      // not the fetched document body, so only inline unencrypted DDOs can be
+      // revalidated here against metadataHash.
+      if (
+        !isRemoteDDO(decryptedDDO) &&
+        (parseInt(flag) & 2) === 0 &&
+        !this.checkDdoHash(updatedDdo, metadataHash)
+      ) {
         INDEXER_LOGGER.error('Unencrypted DDO hash does not match metadata hash.')
         await ddoState.update(
           this.networkId,
