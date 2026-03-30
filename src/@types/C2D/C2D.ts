@@ -22,6 +22,12 @@ export interface C2DClusterInfo {
 
 export type ComputeResourceType = 'cpu' | 'ram' | 'disk' | any
 
+export interface ResourceConstraint {
+  id: ComputeResourceType // the resource being constrained
+  min?: number // min units of this resource per unit of parent resource
+  max?: number // max units of this resource per unit of parent resource
+}
+
 export interface ComputeResourcesPricingInfo {
   id: ComputeResourceType
   price: number // price per unit per minute
@@ -63,6 +69,7 @@ export interface ComputeResource {
    */
   platform?: string
   init?: dockerHwInit
+  constraints?: ResourceConstraint[] // optional cross-resource constraints
 }
 export interface ComputeResourceRequest {
   id: string
@@ -245,6 +252,7 @@ export interface DBComputeJobPayment {
   token: string
   lockTx: string
   claimTx: string
+  cancelTx: string
   cost: number
 }
 
@@ -271,6 +279,7 @@ export interface DBComputeJob extends ComputeJob {
   algoDuration: number // duration of the job in seconds
   encryptedDockerRegistryAuth?: string
   output?: string // this is always an ECIES encrypted string, that decodes to ComputeOutput interface
+  jobIdHash: string
 }
 
 // make sure we keep them both in sync

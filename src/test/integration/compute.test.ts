@@ -81,6 +81,7 @@ import { DDOManager } from '@oceanprotocol/ddo-js'
 import Dockerode from 'dockerode'
 import { C2DEngineDocker } from '../../components/c2d/compute_engine_docker.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
+import { create256Hash } from '../../utils/crypt.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -205,7 +206,7 @@ describe('Compute', () => {
       oceanNode.blockchainRegistry
     )
     oceanNode.addIndexer(indexer)
-    oceanNode.addC2DEngines()
+    await oceanNode.addC2DEngines()
 
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
@@ -2215,7 +2216,7 @@ describe('Compute', () => {
 
   after(async () => {
     await tearDownEnvironment(previousConfiguration)
-    indexer.stopAllChainIndexers()
+    await indexer.stopAllChainIndexers()
   })
 })
 
@@ -2368,7 +2369,7 @@ describe('Compute Access Restrictions', () => {
         oceanNode.blockchainRegistry
       )
       oceanNode.addIndexer(indexer)
-      oceanNode.addC2DEngines()
+      await oceanNode.addC2DEngines()
 
       publishedComputeDataset = await publishAsset(computeAsset, publisherAccount)
       publishedAlgoDataset = await publishAsset(algoAsset, publisherAccount)
@@ -2555,7 +2556,7 @@ describe('Compute Access Restrictions', () => {
         oceanNode.blockchainRegistry
       )
       oceanNode.addIndexer(indexer)
-      oceanNode.addC2DEngines()
+      await oceanNode.addC2DEngines()
 
       publishedComputeDataset = await publishAsset(computeAsset, publisherAccount)
       publishedAlgoDataset = await publishAsset(algoAsset, publisherAccount)
@@ -2685,7 +2686,7 @@ describe('Compute Access Restrictions', () => {
         oceanNode.blockchainRegistry
       )
       oceanNode.addIndexer(indexer)
-      oceanNode.addC2DEngines()
+      await oceanNode.addC2DEngines()
 
       const provider = new JsonRpcProvider('http://127.0.0.1:8545')
       const publisherAccount = (await provider.getSigner(0)) as Signer
@@ -2733,6 +2734,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now,
         status: C2DStatusNumber.PublishingResults,
         statusText: C2DStatusText.PublishingResults,
@@ -2749,6 +2751,7 @@ describe('Compute Access Restrictions', () => {
           token: paymentToken,
           lockTx: '0x123',
           claimTx: '',
+          cancelTx: '',
           cost: 0
         },
         resources: [
@@ -2901,6 +2904,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now.toString(),
         status: C2DStatusNumber.JobSettle,
         statusText: C2DStatusText.JobSettle,
@@ -2917,6 +2921,7 @@ describe('Compute Access Restrictions', () => {
           token: paymentToken,
           lockTx: lockTx || '0x123',
           claimTx: '',
+          cancelTx: '',
           cost: 0
         },
         resources: [
@@ -2968,6 +2973,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now.toString(),
         status: C2DStatusNumber.JobSettle,
         statusText: C2DStatusText.JobSettle,
@@ -2984,6 +2990,7 @@ describe('Compute Access Restrictions', () => {
           token: paymentToken,
           lockTx: '0xexpired',
           claimTx: '',
+          cancelTx: '',
           cost: 0
         },
         resources: [
@@ -3032,6 +3039,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now,
         status: C2DStatusNumber.JobSettle,
         statusText: C2DStatusText.JobSettle,
@@ -3095,6 +3103,7 @@ describe('Compute Access Restrictions', () => {
         const testJob: DBComputeJob = {
           owner: await consumerAccount.getAddress(),
           jobId: testJobId,
+          jobIdHash: create256Hash(testJobId),
           dateCreated: now.toString(),
           status: C2DStatusNumber.JobSettle,
           statusText: C2DStatusText.JobSettle,
