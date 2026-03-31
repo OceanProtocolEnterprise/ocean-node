@@ -1,6 +1,7 @@
 /* eslint-disable security/detect-non-literal-fs-filename */
-import { Readable } from 'stream'
+import { Readable, PassThrough } from 'stream'
 import os from 'os'
+import path from 'path'
 import {
   C2DStatusNumber,
   C2DStatusText,
@@ -55,6 +56,8 @@ import { dockerRegistrysAuth, dockerRegistryAuth } from '../../@types/OceanNode.
 import { EncryptMethod } from '../../@types/fileObject.js'
 import { ZeroAddress } from 'ethers'
 
+const trivyImage = 'aquasec/trivy:0.69.3' // Use pinned versions for safety
+
 export class C2DEngineDocker extends C2DEngine {
   private envs: ComputeEnvironment[] = []
 
@@ -65,10 +68,14 @@ export class C2DEngineDocker extends C2DEngine {
   private isInternalLoopRunning: boolean = false
   private imageCleanupTimer: NodeJS.Timeout | null = null
   private paymentClaimTimer: NodeJS.Timeout | null = null
+  private scanDBUpdateTimer: NodeJS.Timeout | null = null
   private static DEFAULT_DOCKER_REGISTRY = 'https://registry-1.docker.io'
   private retentionDays: number
   private cleanupInterval: number
   private paymentClaimInterval: number
+  private scanImages: boolean
+  private scanImageDBUpdateInterval: number
+  private trivyCachePath: string
   private cpuAllocations: Map<string, number[]> = new Map()
   private envCpuCores: number[] = []
   private cpuOffset: number
@@ -93,8 +100,10 @@ export class C2DEngineDocker extends C2DEngine {
       }
     }
     this.retentionDays = clusterConfig.connection.imageRetentionDays || 7
-    this.cleanupInterval = clusterConfig.connection.imageCleanupInterval || 86400 // 24 hours
+    this.cleanupInterval = clusterConfig.connection.imageCleanupInterval
     this.paymentClaimInterval = clusterConfig.connection.paymentClaimInterval || 3600 // 1 hour
+    this.scanImages = clusterConfig.connection.scanImages || false // default is not to scan images for now, until it's prod ready
+    this.scanImageDBUpdateInterval = clusterConfig.connection.scanImageDBUpdateInterval
     if (
       clusterConfig.connection.protocol &&
       clusterConfig.connection.host &&
@@ -110,16 +119,28 @@ export class C2DEngineDocker extends C2DEngine {
         CORE_LOGGER.error('Could not create Docker container: ' + e.message)
       }
     }
-    // TO DO C2D - create envs
+    // trivy cache is the same for all engines
+    this.trivyCachePath = path.join(
+      process.cwd(),
+      this.getC2DConfig().tempFolder,
+      'trivy_cache'
+    )
     try {
-      if (!existsSync(clusterConfig.tempFolder))
-        mkdirSync(clusterConfig.tempFolder, { recursive: true })
+      if (!existsSync(this.getStoragePath()))
+        mkdirSync(this.getStoragePath(), { recursive: true })
+      if (!existsSync(this.trivyCachePath))
+        mkdirSync(this.trivyCachePath, { recursive: true })
     } catch (e) {
       CORE_LOGGER.error(
         'Could not create Docker container temporary folders: ' + e.message
       )
     }
+
     // envs are build on start function
+  }
+
+  public getStoragePath(): string {
+    return this.getC2DConfig().tempFolder + this.getC2DConfig().hash
   }
 
   public override async start() {
@@ -322,10 +343,86 @@ export class C2DEngineDocker extends C2DEngine {
     if (!this.cronTimer) {
       this.setNewTimer()
     }
+    this.startCrons()
+  }
+
+  public startCrons() {
+    if (!this.docker) {
+      CORE_LOGGER.debug('Docker not available, skipping crons')
+      return
+    }
+
     // Start image cleanup timer
-    this.startImageCleanupTimer()
-    // Start claim timer
-    this.startPaymentTimer()
+    if (this.cleanupInterval) {
+      if (this.imageCleanupTimer) {
+        return // Already running
+      }
+      // Run initial cleanup after a short delay
+      setTimeout(() => {
+        this.cleanupOldImages().catch((e) => {
+          CORE_LOGGER.error(`Initial image cleanup failed: ${e.message}`)
+        })
+      }, 60000) // Wait 1 minute after start
+
+      // Set up periodic cleanup
+      this.imageCleanupTimer = setInterval(() => {
+        this.cleanupOldImages().catch((e) => {
+          CORE_LOGGER.error(`Periodic image cleanup failed: ${e.message}`)
+        })
+      }, this.cleanupInterval * 1000)
+
+      CORE_LOGGER.info(
+        `Image cleanup timer started (interval: ${this.cleanupInterval / 60} minutes)`
+      )
+    }
+    // start payments cron
+    if (this.paymentClaimInterval) {
+      if (this.paymentClaimTimer) {
+        return // Already running
+      }
+
+      // Run initial cleanup after a short delay
+      setTimeout(() => {
+        this.claimPayments().catch((e) => {
+          CORE_LOGGER.error(`Initial payments claim failed: ${e.message}`)
+        })
+      }, 60000) // Wait 1 minute after start
+
+      // Set up periodic cleanup
+      this.paymentClaimTimer = setInterval(() => {
+        this.claimPayments().catch((e) => {
+          CORE_LOGGER.error(`Periodic payments claim failed: ${e.message}`)
+        })
+      }, this.paymentClaimInterval * 1000)
+
+      CORE_LOGGER.info(
+        `Payments claim timer started (interval: ${this.paymentClaimInterval / 60} minutes)`
+      )
+    }
+    // scan db updater cron
+    if (this.scanImageDBUpdateInterval) {
+      if (this.scanDBUpdateTimer) {
+        return // Already running
+      }
+
+      // Run initial db cache
+      setTimeout(() => {
+        this.scanDBUpdate().catch((e) => {
+          CORE_LOGGER.error(`scan DB Update Initial failed: ${e.message}`)
+        })
+      }, 30000) // Wait 30 seconds
+
+      // Set up periodic cleanup
+      this.scanDBUpdateTimer = setInterval(() => {
+        this.scanDBUpdate().catch((e) => {
+          CORE_LOGGER.error(`Periodic scan DB update failed: ${e.message}`)
+        })
+      }, this.scanImageDBUpdateInterval * 1000)
+
+      CORE_LOGGER.info(
+        `scan DB update timer started (interval: ${this.scanImageDBUpdateInterval / 60} minutes)`
+      )
+    }
   }
 
   public override stop(): Promise<void> {
@@ -730,59 +827,6 @@ export class C2DEngineDocker extends C2DEngine {
     } catch (e) {
       CORE_LOGGER.error(`Error during image cleanup: ${e.message}`)
     }
-  }
-
-  private startImageCleanupTimer(): void {
-    if (this.imageCleanupTimer) {
-      return // Already running
-    }
-
-    if (!this.docker) {
-      CORE_LOGGER.debug('Docker not available, skipping image cleanup timer')
-      return
-    }
-
-    // Run initial cleanup after a short delay
-    setTimeout(() => {
-      this.cleanupOldImages().catch((e) => {
-        CORE_LOGGER.error(`Initial image cleanup failed: ${e.message}`)
-      })
-    }, 60000) // Wait 1 minute after start
-
-    // Set up periodic cleanup
-    this.imageCleanupTimer = setInterval(() => {
-      this.cleanupOldImages().catch((e) => {
-        CORE_LOGGER.error(`Periodic image cleanup failed: ${e.message}`)
-      })
-    }, this.cleanupInterval * 1000)
-
-    CORE_LOGGER.info(
-      `Image cleanup timer started (interval: ${this.cleanupInterval / 60} minutes)`
-    )
-  }
-
-  private startPaymentTimer(): void {
-    if (this.paymentClaimTimer) {
-      return // Already running
-    }
-
-    // Run initial cleanup after a short delay
-    setTimeout(() => {
-      this.claimPayments().catch((e) => {
-        CORE_LOGGER.error(`Initial payments claim failed: ${e.message}`)
-      })
-    }, 60000) // Wait 1 minute after start
-
-    // Set up periodic cleanup
-    this.paymentClaimTimer = setInterval(() => {
-      this.claimPayments().catch((e) => {
-        CORE_LOGGER.error(`Periodic payments claim failed: ${e.message}`)
-      })
-    }, this.paymentClaimInterval * 1000)
-
-    CORE_LOGGER.info(
-      `Payments claim timer started (interval: ${this.paymentClaimInterval / 60} minutes)`
-    )
   }
 
   // eslint-disable-next-line require-await
@@ -1236,7 +1280,7 @@ export class C2DEngineDocker extends C2DEngine {
     let index = 0
     try {
       const logStat = statSync(
-        this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/image.log'
+        this.getStoragePath() + '/' + jobId + '/data/logs/image.log'
       )
       if (logStat) {
         res.push({
@@ -1250,7 +1294,7 @@ export class C2DEngineDocker extends C2DEngine {
     } catch (e) {}
     try {
       const logStat = statSync(
-        this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/configuration.log'
+        this.getStoragePath() + '/' + jobId + '/data/logs/configuration.log'
       )
       if (logStat) {
         res.push({
@@ -1264,7 +1308,7 @@ export class C2DEngineDocker extends C2DEngine {
     } catch (e) {}
     try {
       const logStat = statSync(
-        this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/algorithm.log'
+        this.getStoragePath() + '/' + jobId + '/data/logs/algorithm.log'
       )
       if (logStat) {
         res.push({
@@ -1281,7 +1325,7 @@ export class C2DEngineDocker extends C2DEngine {
       const jobDb = await this.db.getJob(jobId)
       if (jobDb.length < 1 || !jobDb[0].output) {
         const outputStat = statSync(
-          this.getC2DConfig().tempFolder + '/' + jobId + '/data/outputs/outputs.tar'
+          this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar'
         )
         if (outputStat) {
           res.push({
@@ -1296,7 +1340,7 @@ export class C2DEngineDocker extends C2DEngine {
     } catch (e) {}
     try {
       const logStat = statSync(
-        this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/publish.log'
+        this.getStoragePath() + '/' + jobId + '/data/logs/publish.log'
       )
       if (logStat) {
         res.push({
@@ -1358,7 +1402,7 @@ export class C2DEngineDocker extends C2DEngine {
         if (i.type === 'algorithmLog') {
           return {
             stream: createReadStream(
-              this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/algorithm.log'
+              this.getStoragePath() + '/' + jobId + '/data/logs/algorithm.log'
             ),
             headers: {
               'Content-Type': 'text/plain'
@@ -1368,10 +1412,7 @@ export class C2DEngineDocker extends C2DEngine {
         if (i.type === 'configurationLog') {
           return {
             stream: createReadStream(
-              this.getC2DConfig().tempFolder +
-                '/' +
-                jobId +
-                '/data/logs/configuration.log'
+              this.getStoragePath() + '/' + jobId + '/data/logs/configuration.log'
             ),
             headers: {
               'Content-Type': 'text/plain'
@@ -1381,7 +1422,7 @@ export class C2DEngineDocker extends C2DEngine {
         if (i.type === 'publishLog') {
           return {
             stream: createReadStream(
-              this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/publish.log'
+              this.getStoragePath() + '/' + jobId + '/data/logs/publish.log'
             ),
             headers: {
               'Content-Type': 'text/plain'
@@ -1391,7 +1432,7 @@ export class C2DEngineDocker extends C2DEngine {
         if (i.type === 'imageLog') {
           return {
             stream: createReadStream(
-              this.getC2DConfig().tempFolder + '/' + jobId + '/data/logs/image.log'
+              this.getStoragePath() + '/' + jobId + '/data/logs/image.log'
             ),
             headers: {
               'Content-Type': 'text/plain'
@@ -1401,7 +1442,7 @@ export class C2DEngineDocker extends C2DEngine {
         if (i.type === 'output') {
           return {
             stream: createReadStream(
-              this.getC2DConfig().tempFolder + '/' + jobId + '/data/outputs/outputs.tar',
+              this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar',
               offset > 0 ? { start: offset } : undefined
             ),
             headers: {
@@ -1628,6 +1669,27 @@ export class C2DEngineDocker extends C2DEngine {
         job.algoStopTimestamp = '0'
         job.isRunning = false
         await this.db.updateJob(job)
+        return
+      }
+      // now that we have the image ready, check it for vulnerabilities
+      if (this.getC2DConfig().connection?.scanImages) {
+        const check = await this.checkImageVulnerability(job.containerImage)
+        const imageLogFile =
+          this.getStoragePath() + '/' + job.jobId + '/data/logs/image.log'
+        const logText =
+          `Image scanned for vulnerabilities\nVulnerable:${check.vulnerable}\nSummary:` +
+          JSON.stringify(check.summary, null, 2)
+        CORE_LOGGER.debug(logText)
+        appendFileSync(imageLogFile, logText)
+        if (check.vulnerable) {
+          job.status = C2DStatusNumber.VulnerableImage
+          job.statusText = C2DStatusText.VulnerableImage
+          job.isRunning = false
+          job.dateFinished = String(Date.now() / 1000)
+          await this.db.updateJob(job)
+          await this.cleanupJob(job)
+          return
+        }
       }
       // create the volume & create container
       // TO DO C2D:  Choose driver & size
@@ -1810,10 +1872,7 @@ export class C2DEngineDocker extends C2DEngine {
             job.algoStopTimestamp = String(Date.now() / 1000)
             try {
               const algoLogFile =
-                this.getC2DConfig().tempFolder +
-                '/' +
-                job.jobId +
-                '/data/logs/algorithm.log'
+                this.getStoragePath() + '/' + job.jobId + '/data/logs/algorithm.log'
               writeFileSync(algoLogFile, String(e.message))
             } catch (e) {
               CORE_LOGGER.error('Failed to write algorithm log file: ' + e.message)
@@ -1891,7 +1950,7 @@ export class C2DEngineDocker extends C2DEngine {
         job.dateFinished = String(Date.now() / 1000)
         try {
           const algoLogFile =
-            this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/logs/algorithm.log'
+            this.getStoragePath() + '/' + job.jobId + '/data/logs/algorithm.log'
           writeFileSync(algoLogFile, String(e.message))
         } catch (e) {
           CORE_LOGGER.error('Failed to write algorithm log file: ' + e.message)
@@ -1909,7 +1968,7 @@ export class C2DEngineDocker extends C2DEngine {
         job.terminationDetails.exitCode = null
       }
       const outputsArchivePath =
-        this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/outputs/outputs.tar'
+        this.getStoragePath() + '/' + job.jobId + '/data/outputs/outputs.tar'
 
       try {
         if (container) {
@@ -2085,7 +2144,7 @@ export class C2DEngineDocker extends C2DEngine {
       if (container) {
         if (job.status !== C2DStatusNumber.AlgorithmFailed) {
           writeFileSync(
-            this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/logs/algorithm.log',
+            this.getStoragePath() + '/' + job.jobId + '/data/logs/algorithm.log',
             await container.logs({
               stdout: true,
               stderr: true,
@@ -2112,33 +2171,32 @@ export class C2DEngineDocker extends C2DEngine {
     }
     try {
       // remove folders
-      rmSync(this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/inputs', {
+      rmSync(this.getStoragePath() + '/' + job.jobId + '/data/inputs', {
         recursive: true,
         force: true
       })
     } catch (e) {
       console.error(
-        `Could not delete inputs from path ${this.getC2DConfig().tempFolder} for job ID ${
+        `Could not delete inputs from path ${this.getStoragePath()} for job ID ${
           job.jobId
         }! ` + e.message
       )
     }
     try {
-      rmSync(this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/transformations', {
+      rmSync(this.getStoragePath() + '/' + job.jobId + '/data/transformations', {
         recursive: true,
         force: true
       })
     } catch (e) {
       console.error(
-        `Could not delete algorithms from path ${
-          this.getC2DConfig().tempFolder
-        } for job ID ${job.jobId}! ` + e.message
+        `Could not delete algorithms from path ${this.getStoragePath()} for job ID ${job.jobId}! ` +
+          e.message
       )
     }
   }
 
   private deleteOutputFolder(job: DBComputeJob) {
-    rmSync(this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/outputs/', {
+    rmSync(this.getStoragePath() + '/' + job.jobId + '/data/outputs/', {
       recursive: true,
       force: true
     })
@@ -2273,8 +2331,7 @@ export class C2DEngineDocker extends C2DEngine {
 
   private async pullImage(originaljob: DBComputeJob) {
     const job = JSON.parse(JSON.stringify(originaljob)) as DBComputeJob
-    const imageLogFile =
-      this.getC2DConfig().tempFolder + '/' + job.jobId + '/data/logs/image.log'
+    const imageLogFile = this.getStoragePath() + '/' + job.jobId + '/data/logs/image.log'
     try {
       // Get registry auth for the image
       const { registry } = this.parseImage(job.containerImage)
@@ -2545,7 +2602,7 @@ export class C2DEngineDocker extends C2DEngine {
       status: C2DStatusNumber.RunningAlgorithm,
       statusText: C2DStatusText.RunningAlgorithm
     }
-    const jobFolderPath = this.getC2DConfig().tempFolder + '/' + job.jobId
+    const jobFolderPath = this.getStoragePath() + '/' + job.jobId
     const fullAlgoPath = jobFolderPath + '/data/transformations/algorithm'
     const configLogPath = jobFolderPath + '/data/logs/configuration.log'
 
@@ -2555,10 +2612,7 @@ export class C2DEngineDocker extends C2DEngine {
         "Writing algocustom data to '/data/inputs/algoCustomData.json'\n"
       )
       const customdataPath =
-        this.getC2DConfig().tempFolder +
-        '/' +
-        job.jobId +
-        '/data/inputs/algoCustomData.json'
+        this.getStoragePath() + '/' + job.jobId + '/data/inputs/algoCustomData.json'
       writeFileSync(customdataPath, JSON.stringify(job.algorithm.algocustomdata ?? {}))
 
       let storage = null
@@ -2859,7 +2913,7 @@ export class C2DEngineDocker extends C2DEngine {
 
   private makeJobFolders(job: DBComputeJob): boolean {
     try {
-      const baseFolder = this.getC2DConfig().tempFolder + '/' + job.jobId
+      const baseFolder = this.getStoragePath() + '/' + job.jobId
       const dirs = [
         baseFolder,
         baseFolder + '/data',
@@ -2918,6 +2972,215 @@ export class C2DEngineDocker extends C2DEngine {
     if (start <= 0) return 0
     if (stop < start) return 0
     return stop - start
+  }
+
+  private async checkscanDBImage(): Promise<boolean> {
+    // 1. Pull the image if it's missing locally
+    try {
+      await this.docker.getImage(trivyImage).inspect()
+      return true
+    } catch (error) {
+      if (error.statusCode === 404) {
+        CORE_LOGGER.info(`Trivy not found. Pulling ${trivyImage}...`)
+        const stream = await this.docker.pull(trivyImage)
+
+        // We must wrap the pull stream in a promise to wait for completion
+        await new Promise((resolve, reject) => {
+          this.docker.modem.followProgress(stream, (err, res) =>
+            err ? reject(err) : resolve(res)
+          )
+        })
+
+        CORE_LOGGER.info('Pull complete.')
+        return true
+      } else {
+        CORE_LOGGER.error(`Unable to pull ${trivyImage}: ${error.message}`)
+        return true
+      }
+    }
+  }
+
+  private async scanDBUpdate(): Promise<void> {
+    CORE_LOGGER.info('Starting Trivy database refresh cron')
+    const hasImage = await this.checkscanDBImage()
+    if (!hasImage) {
+      // we cannot update without image
+      return
+    }
+    const updater = await this.docker.createContainer({
+      Image: trivyImage,
+      Cmd: ['image', '--download-db-only'], // Only refreshes the cache
+      HostConfig: {
+        Binds: [`${this.trivyCachePath}:/root/.cache/trivy`]
+      }
+    })
+
+    await updater.start()
+    await updater.wait()
+    await updater.remove()
+    CORE_LOGGER.info('Trivy database refreshed.')
+  }
+
+  private async scanImage(imageName: string) {
+    if (!imageName || !imageName.trim()) return null
+    const hasImage = await this.checkscanDBImage()
+    if (!hasImage) {
+      // we cannot update without image
+      return
+    }
+    CORE_LOGGER.debug(`Starting vulnerability check for ${imageName}`)
+    const container = await this.docker.createContainer({
+      Image: trivyImage,
+      Cmd: [
+        'image',
+        '--format',
+        'json',
+        '--quiet',
+        '--no-progress',
+        '--skip-db-update',
+        '--severity',
+        'CRITICAL,HIGH',
+        imageName
+      ],
+      HostConfig: {
+        Binds: [
+          '/var/run/docker.sock:/var/run/docker.sock', // To see local images
+          `${this.trivyCachePath}:/root/.cache/trivy` // THE CACHE BIND
+        ]
+      }
+    })
+
+    await container.start()
+
+    // Wait for completion, then parse from *demuxed stdout* to avoid corrupt JSON
+    // due to Docker multiplexed log framing.
+    const logsStream = await container.logs({
+      follow: true,
+      stdout: true,
+      stderr: true
+    })
+
+    const outStream = new PassThrough()
+    const errStream = new PassThrough()
+    outStream.resume()
+    errStream.resume()
+
+    const rawChunks: Buffer[] = []
+    outStream.on('data', (chunk) => {
+      rawChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+
+    container.modem.demuxStream(logsStream, outStream, errStream)
+
+    const logsDrained = new Promise<void>((resolve, reject) => {
+      const done = () => resolve()
+      logsStream.once('end', done)
+      logsStream.once('close', done)
+      logsStream.once('error', reject)
+    })
+
+    await container.wait()
+    // Wait for the docker log stream to finish producing data.
+    await logsDrained
+
+    await container.remove()
+    CORE_LOGGER.debug(`Vulnerability check for ${imageName} finished`)
+
+    try {
+      const rawData = Buffer.concat(rawChunks).toString('utf8')
+      // Trivy's `--format json` output is a JSON object (it includes `SchemaVersion`).
+      // Prefer extracting the JSON object only; do not attempt array parsing since
+      // Trivy help/usage output may include `[` tokens (e.g. "[flags]") that are not JSON.
+      const firstBrace = rawData.indexOf('{')
+      const lastBrace = rawData.lastIndexOf('}')
+
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        const jsonText = rawData.slice(firstBrace, lastBrace + 1).trim()
+        if (!jsonText.includes('"SchemaVersion"')) {
+          CORE_LOGGER.error(
+            'Trivy output did not contain SchemaVersion in extracted JSON. Truncated output: ' +
+              rawData.slice(0, 500)
+          )
+          return null
+        }
+        return JSON.parse(jsonText)
+      }
+
+      CORE_LOGGER.error(
+        `Failed to locate JSON in Trivy output. Truncated output: ${rawData.slice(
+          0,
+          1000
+        )}`
+      )
+      return null
+    } catch (e) {
+      CORE_LOGGER.error('Failed to parse Trivy output: ' + e.message)
+      return null
+    }
+  }
+
+  private async checkImageVulnerability(imageName: string) {
+    const report = await this.scanImage(imageName)
+    if (!report) {
+      //
+      return { vulnerable: false, summary: 'failed to scan' }
+    }
+    // Results is an array (one entry per OS package manager / language)
+    const allVulnerabilities = report.Results.flatMap((r: any) => r.Vulnerabilities || [])
+
+    const severityRank = (sev: string) => {
+      switch (sev) {
+        case 'CRITICAL':
+          return 3
+        case 'HIGH':
+          return 2
+        default:
+          return 1
+      }
+    }
+
+    const summary = {
+      total: allVulnerabilities.length,
+      critical: allVulnerabilities.filter((v: any) => v.Severity === 'CRITICAL').length,
+      high: allVulnerabilities.filter((v: any) => v.Severity === 'HIGH').length,
+      list: (() => {
+        // Present the most important vulnerabilities first.
+        const sorted = [...allVulnerabilities].sort((a: any, b: any) => {
+          const diff = severityRank(b.Severity) - severityRank(a.Severity)
+          if (diff !== 0) return diff
+          return String(a.VulnerabilityID || '').localeCompare(
+            String(b.VulnerabilityID || '')
+          )
+        })
+
+        const list: Array<{
+          severity: string
+          id: string
+          package: string
+          title: string
+        }> = []
+
+        for (const v of sorted) {
+          list.push({
+            severity: v.Severity,
+            id: v.VulnerabilityID,
+            package: v.PkgName,
+            title: v.Title || 'No description'
+          })
+        }
+
+        return list
+      })()
+    }
+
+    if (summary.critical > 0) {
+      return {
+        vulnerable: true,
+        summary
+      }
+    }
+
+    return { vulnerable: false, summary }
   }
 }
 
