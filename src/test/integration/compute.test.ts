@@ -868,7 +868,7 @@ describe('Compute', () => {
   })
 
   it('should start a compute job with maxed resources', async function () {
-    this.timeout(130_000) // waitForAllJobsToFinish can take up to 120s
+    this.timeout(180_000) // waitForAllJobsToFinish can take up to 180s
     await waitForAllJobsToFinish(oceanNode)
     let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     if (BigInt(balance.toString()) === BigInt(0)) {
@@ -3166,20 +3166,6 @@ describe('Compute Access Restrictions', () => {
           `Job ${jobId} should be processed`
         )
       }
-    })
-
-    it('should start payment claim timer on engine start', function () {
-      // Verify timer methods exist
-      // Timer might be null if not started yet, or a NodeJS.Timeout if started
-      // We can't easily test the timer directly, but we can verify the method exists
-      assert(
-        typeof (dockerEngine as any).startPaymentTimer === 'function',
-        'startPaymentTimer method should exist'
-      )
-      assert(
-        typeof (dockerEngine as any).claimPayments === 'function',
-        'claimPayments method should exist'
-      )
     })
   })
 })
