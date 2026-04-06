@@ -39,6 +39,7 @@ import { getDatabase, isReachableConnection } from '../../utils/database.js'
 import { sleep } from '../../utils/util.js'
 import { isReindexingNeeded } from './version.js'
 import { DB_EVENTS, ES_CONNECTION_EVENTS } from '../database/ElasticsearchConfigHelper.js'
+import { getPackageVersion } from '../../utils/version.js'
 
 /**
  * Event emitter for DDO (Data Descriptor Object) events
@@ -535,7 +536,7 @@ export class OceanIndexer {
    * Checks if reindexing is needed and triggers it for all chains
    */
   public async checkAndTriggerReindexing(): Promise<void> {
-    const currentVersion = process.env.npm_package_version
+    const currentVersion = getPackageVersion()
     const dbActive = this.getDatabase()
     if (!dbActive || !(await isReachableConnection(dbActive.getConfig().url))) {
       INDEXER_LOGGER.error(`Giving up reindexing. DB is not online!`)

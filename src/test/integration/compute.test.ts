@@ -868,7 +868,7 @@ describe('Compute', () => {
   })
 
   it('should start a compute job with maxed resources', async function () {
-    this.timeout(130_000) // waitForAllJobsToFinish can take up to 120s
+    this.timeout(180_000) // waitForAllJobsToFinish can take up to 180s
     await waitForAllJobsToFinish(oceanNode)
     let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     if (BigInt(balance.toString()) === BigInt(0)) {

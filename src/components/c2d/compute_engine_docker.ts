@@ -36,6 +36,7 @@ import {
   createWriteStream,
   existsSync,
   mkdirSync,
+  chmodSync,
   rmSync,
   writeFileSync,
   appendFileSync,
@@ -79,6 +80,7 @@ export class C2DEngineDocker extends C2DEngine {
   private cpuAllocations: Map<string, number[]> = new Map()
   private envCpuCores: number[] = []
   private cpuOffset: number
+  private enableNetwork: boolean
 
   public constructor(
     clusterConfig: C2DClusterInfo,
@@ -104,6 +106,7 @@ export class C2DEngineDocker extends C2DEngine {
     this.paymentClaimInterval = clusterConfig.connection.paymentClaimInterval || 3600 // 1 hour
     this.scanImages = clusterConfig.connection.scanImages || false // default is not to scan images for now, until it's prod ready
     this.scanImageDBUpdateInterval = clusterConfig.connection.scanImageDBUpdateInterval
+    this.enableNetwork = clusterConfig.connection.enableNetwork ?? false
     if (
       clusterConfig.connection.protocol &&
       clusterConfig.connection.host &&
@@ -754,7 +757,7 @@ export class C2DEngineDocker extends C2DEngine {
 
   private async cleanUpUnknownLocks(chain: string, currentTimestamp: bigint) {
     try {
-      const nodeAddress = await this.getKeyManager().getEthAddress()
+      const nodeAddress = this.getKeyManager().getEthAddress()
       const jobIds: any[] = []
       const tokens: string[] = []
       const payer: string[] = []
@@ -765,6 +768,10 @@ export class C2DEngineDocker extends C2DEngine {
         '0x0000000000000000000000000000000000000000',
         nodeAddress
       )
+      if (!balocks || balocks.length === 0) {
+        CORE_LOGGER.warn(`Could not find any locks for chain ${chain}, skipping cleanup`)
+        return
+      }
       for (const lock of balocks) {
         const lockExpiry = BigInt(lock.expiry.toString())
         if (currentTimestamp > lockExpiry) {
@@ -1721,7 +1728,6 @@ export class C2DEngineDocker extends C2DEngine {
       // create the container
       const mountVols: any = { '/data': {} }
       const hostConfig: HostConfig = {
-        NetworkMode: 'none', // no network inside the container
         Mounts: [
           {
             Type: 'volume',
@@ -1730,6 +1736,9 @@ export class C2DEngineDocker extends C2DEngine {
             ReadOnly: false
           }
         ]
+      }
+      if (!this.enableNetwork) {
+        hostConfig.NetworkMode = 'none' // no network inside the container
       }
       // disk
       // if (diskSize && diskSize > 0) {
@@ -2928,6 +2937,8 @@ export class C2DEngineDocker extends C2DEngine {
         if (!existsSync(dir)) {
           mkdirSync(dir, { recursive: true })
         }
+        // update directory permissions to allow read/write from job containers
+        chmodSync(dir, 0o777)
       }
       return true
     } catch (e) {

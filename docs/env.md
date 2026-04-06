@@ -34,49 +34,6 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 - `AUTHORIZED_PUBLISHERS_LIST`: AccessList contract addresses (per chain). If present, Node will only index assets published by the accounts present on the given access lists. Example: `"{ \"8996\": [\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"] }"`
 - `VALIDATE_UNSIGNED_DDO`: If set to `false`, the node will not validate unsigned DDOs and will request a signed message with the publisher address, nonce and signature. Default is `true`. Example: `false`
 - `JWT_SECRET`: Secret used to sign JWT tokens. Default is `ocean-node-secret`. Example: `"my-secret-jwt-token"`
-- `NODE_OWNER_INFO`: Optional JSON object returned by the root endpoint as `ownerInfo`. Example: `"{\"imprint\":{\"legalName\":\"Example Ocean Services GmbH\"},\"termsAndConditions\":{\"url\":\"https://example.com/terms\"},\"anyCustomSection\":{\"foo\":\"bar\"}}"`
-
-## Database
-
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
-- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
-- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
-- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
-- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
-- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
-- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
-- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
-- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
-- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
-
-## Database
-
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
-- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
-- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
-- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
-- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
-- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
-- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
-- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
-- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
-- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
-
-## Database
-
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
-- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
-- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
-- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
-- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
-- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
-- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
-- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
-- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
-- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
 
 ## Database
 
@@ -180,6 +137,7 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
   {
     "socketPath": "/var/run/docker.sock",
     "scanImages": true,
+    "enableNetwork": false,
     "imageRetentionDays": 7,
     "imageCleanupInterval": 86400,
     "resources": [
@@ -238,7 +196,9 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
 #### Configuration Options
 
 - **socketPath**: Path to the Docker socket (e.g., docker.sock).
-- **scanImages**: If the docker images should be scan for vulnerabilities using trivy. If yes and critical vulnerabilities are found, then C2D job is refused
+- **scanImages**: Whether Docker images should be scanned for vulnerabilities using Trivy. If enabled and critical vulnerabilities are found, the C2D job is rejected.
+- **scanImageDBUpdateInterval**: How often to update the vulnerability database, in seconds. Default: 43200 (12 hours)
+- **enableNetwork**: Whether networking is enabled for algorithm containers. Default: false
 - **imageRetentionDays** - how long docker images are kept, in days. Default: 7
 - **imageCleanupInterval** - how often to run cleanup for docker images, in seconds. Min: 3600 (1hour), Default: 86400 (24 hours)
 - **paymentClaimInterval** - how often to run payment claiming, in seconds. Default: 3600 (1 hour)
