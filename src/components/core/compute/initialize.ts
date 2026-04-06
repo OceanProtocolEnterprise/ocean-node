@@ -318,6 +318,12 @@ export class ComputeInitializeHandler extends CommandHandler {
                 task.consumerAddress,
                 task.policyServer
               )
+              CORE_LOGGER.logMessage(
+                `Policy Server response for DDO ${ddoInstance.getDid()}: ${JSON.stringify(
+                  response
+                )}`,
+                true
+              )
               accessGrantedDDOLevel = response.success
             } else {
               accessGrantedDDOLevel = await checkCredentials(
@@ -364,6 +370,12 @@ export class ComputeInitializeHandler extends CommandHandler {
                 elem.serviceId,
                 task.consumerAddress,
                 task.policyServer
+              )
+              CORE_LOGGER.logMessage(
+                `Policy Server response for service ${ddoInstance.getDid()}: ${JSON.stringify(
+                  response
+                )}`,
+                true
               )
               accessGrantedServiceLevel = accessGrantedDDOLevel || response.success
             } else {
