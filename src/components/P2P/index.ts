@@ -331,20 +331,23 @@ export class OceanP2P extends EventEmitter {
           `/ip6/${config.p2pConfig.ipV6BindAddress}/tcp/${config.p2pConfig.ipV6BindWsPort}/ws`
         )
       }
+      const listenAddrs = config.p2pConfig.enableCircuitRelayClient
+        ? [...bindInterfaces, '/p2p-circuit']
+        : bindInterfaces
       let addresses = {}
       if (
         config.p2pConfig.announceAddresses &&
         config.p2pConfig.announceAddresses.length > 0
       ) {
         addresses = {
-          listen: bindInterfaces,
+          listen: listenAddrs,
           announceFilter: (multiaddrs: any[]) =>
             multiaddrs.filter((m) => this.shouldAnnounce(m)),
           appendAnnounce: config.p2pConfig.announceAddresses
         }
       } else {
         addresses = {
-          listen: bindInterfaces,
+          listen: listenAddrs,
           announceFilter: (multiaddrs: any[]) =>
             multiaddrs.filter((m) => this.shouldAnnounce(m))
         }
@@ -395,7 +398,12 @@ export class OceanP2P extends EventEmitter {
       // eslint-disable-next-line no-constant-condition, no-self-compare
       if (config.p2pConfig.enableCircuitRelayServer) {
         P2P_LOGGER.info('Enabling Circuit Relay Server')
-        servicesConfig = { ...servicesConfig, ...{ circuitRelay: circuitRelayServer() } }
+        servicesConfig = {
+          ...servicesConfig,
+          ...{
+            circuitRelay: circuitRelayServer({ reservations: { maxReservations: 2 } })
+          }
+        }
       }
       // eslint-disable-next-line no-constant-condition, no-self-compare
       if (config.p2pConfig.upnp) {
@@ -964,6 +972,7 @@ export class OceanP2P extends EventEmitter {
         // on timeout the query ends with an abort signal => CodeError: Query aborted
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any)
+
       for await (const value of f) {
         peersFound.push(value)
       }
