@@ -112,6 +112,7 @@ Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/
 ## Policy Server
 
 - `POLICY_SERVER_URL`: URI definition of PolicyServer, if any. See [the policy server documentation for more details](docs/PolicyServer.md).
+- `POLICY_SERVER_API_KEY`: Optional API key sent by Ocean Node as `X-API-Key` when calling Policy Server.
 
 ## Additional Nodes (Test Environments)
 
