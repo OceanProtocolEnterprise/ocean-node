@@ -1,5 +1,6 @@
 import { MetadataAlgorithm, ConsumerParameter } from '@oceanprotocol/ddo-js'
 import type { BaseFileObject, StorageObject, EncryptMethod } from '../fileObject.js'
+import type { AccessList } from '../AccessList.js'
 export enum C2DClusterType {
   // eslint-disable-next-line no-unused-vars
   OPF_K8 = 0,
@@ -21,6 +22,12 @@ export interface C2DClusterInfo {
 }
 
 export type ComputeResourceType = 'cpu' | 'ram' | 'disk' | any
+
+export interface ResourceConstraint {
+  id: ComputeResourceType // the resource being constrained
+  min?: number // min units of this resource per unit of parent resource
+  max?: number // max units of this resource per unit of parent resource
+}
 
 export interface ComputeResourcesPricingInfo {
   id: ComputeResourceType
@@ -63,6 +70,7 @@ export interface ComputeResource {
    */
   platform?: string
   init?: dockerHwInit
+  constraints?: ResourceConstraint[] // optional cross-resource constraints
 }
 export interface ComputeResourceRequest {
   id: string
@@ -88,7 +96,7 @@ export interface RunningPlatform {
 
 export interface ComputeAccessList {
   addresses: string[]
-  accessLists: { [chainId: string]: string[] }[] | null
+  accessLists: AccessList[] | null
 }
 
 export interface ComputeEnvironmentFreeOptions {
@@ -99,6 +107,7 @@ export interface ComputeEnvironmentFreeOptions {
   maxJobs?: number // maximum number of simultaneous free jobs
   resources?: ComputeResource[]
   access: ComputeAccessList
+  allowImageBuild?: boolean
 }
 export interface ComputeEnvironmentBaseConfig {
   description?: string // v1
@@ -132,6 +141,19 @@ export interface ComputeEnvironment extends ComputeEnvironmentBaseConfig {
   runMaxWaitTimeFree: number
 }
 
+export interface C2DEnvironmentConfig {
+  id?: string
+  description?: string
+  storageExpiry?: number
+  minJobDuration?: number
+  maxJobDuration?: number
+  maxJobs?: number
+  fees?: ComputeEnvFeesStructure
+  access?: ComputeAccessList
+  free?: ComputeEnvironmentFreeOptions
+  resources?: ComputeResource[]
+}
+
 export interface C2DDockerConfig {
   socketPath: string
   protocol: string
@@ -140,17 +162,13 @@ export interface C2DDockerConfig {
   caPath: string
   certPath: string
   keyPath: string
-  storageExpiry?: number
-  maxJobDuration?: number
-  minJobDuration?: number
-  maxJobs?: number
-  fees: ComputeEnvFeesStructure
-  resources?: ComputeResource[] // optional, owner can overwrite
-  free?: ComputeEnvironmentFreeOptions
-  access: ComputeAccessList
   imageRetentionDays?: number // Default: 7 days
   imageCleanupInterval?: number // Default: 86400 seconds (24 hours)
   paymentClaimInterval?: number // Default: 3600 seconds (1 hours)
+  scanImages?: boolean
+  scanImageDBUpdateInterval?: number // Default: 12 hours
+  environments: C2DEnvironmentConfig[]
+  enableNetwork?: boolean // whether network is enabled for algorithm containers
 }
 
 export type ComputeResultType =
@@ -245,6 +263,7 @@ export interface DBComputeJobPayment {
   token: string
   lockTx: string
   claimTx: string
+  cancelTx: string
   cost: number
 }
 
@@ -271,6 +290,9 @@ export interface DBComputeJob extends ComputeJob {
   algoDuration: number // duration of the job in seconds
   encryptedDockerRegistryAuth?: string
   output?: string // this is always an ECIES encrypted string, that decodes to ComputeOutput interface
+  jobIdHash: string
+  buildStartTimestamp?: string
+  buildStopTimestamp?: string
 }
 
 // make sure we keep them both in sync
@@ -289,6 +311,8 @@ export enum C2DStatusNumber {
   BuildImage = 12,
   // eslint-disable-next-line no-unused-vars
   BuildImageFailed = 13,
+  // eslint-disable-next-line no-unused-vars
+  VulnerableImage = 14,
   // eslint-disable-next-line no-unused-vars
   ConfiguringVolumes = 20,
   // eslint-disable-next-line no-unused-vars
@@ -337,6 +361,8 @@ export enum C2DStatusText {
   BuildImage = 'Building algorithm image',
   // eslint-disable-next-line no-unused-vars
   BuildImageFailed = 'Building algorithm image failed',
+  // eslint-disable-next-line no-unused-vars
+  VulnerableImage = 'Image has vulnerabilities',
   // eslint-disable-next-line no-unused-vars
   ConfiguringVolumes = 'Configuring volumes',
   // eslint-disable-next-line no-unused-vars

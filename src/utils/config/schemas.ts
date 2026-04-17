@@ -84,6 +84,64 @@ export const OceanNodeDBConfigSchema = z.object({
   dbType: z.string().nullable()
 })
 
+export const PersistentStorageConfigSchema = z
+  .object({
+    enabled: z.boolean().optional().default(false),
+    type: z.enum(['localfs', 's3']).optional().default('localfs'),
+    accessLists: jsonFromString(z.array(z.record(z.string(), z.array(z.string()))))
+      .optional()
+      .default([]),
+    options: z.any().optional()
+  })
+  .superRefine((data, ctx) => {
+    if (!data.enabled) return
+
+    if (data.type === 'localfs') {
+      if (!data.options || typeof data.options !== 'object') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'persistentStorage.options must be an object for localfs',
+          path: ['options']
+        })
+        return
+      }
+      if (
+        typeof (data.options as any).folder !== 'string' ||
+        !(data.options as any).folder
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'persistentStorage.options.folder is required for localfs',
+          path: ['options', 'folder']
+        })
+      }
+    }
+
+    if (data.type === 's3') {
+      if (!data.options || typeof data.options !== 'object') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'persistentStorage.options must be an object for s3',
+          path: ['options']
+        })
+        return
+      }
+      const required = ['endpoint', 'objectKey', 'accessKeyId', 'secretAccessKey']
+      for (const key of required) {
+        if (
+          typeof (data.options as any)[key] !== 'string' ||
+          !(data.options as any)[key]
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `persistentStorage.options.${key} is required for s3`,
+            path: ['options', key]
+          })
+        }
+      }
+    }
+  })
+
 export const DockerRegistryAuthSchema = z
   .object({
     username: z.string().optional(),
@@ -109,6 +167,12 @@ export const DockerRegistryAuthSchema = z
 
 export const DockerRegistrysSchema = z.record(z.string(), DockerRegistryAuthSchema)
 
+const ResourceConstraintSchema = z.object({
+  id: z.string(),
+  min: z.number().optional(),
+  max: z.number().optional()
+})
+
 export const ComputeResourceSchema = z.object({
   id: z.string(),
   total: z.number().optional(),
@@ -121,7 +185,8 @@ export const ComputeResourceSchema = z.object({
   init: z.any().optional(),
   platform: z.string().optional(),
   memoryTotal: z.string().optional(),
-  driverVersion: z.string().optional()
+  driverVersion: z.string().optional(),
+  constraints: z.array(ResourceConstraintSchema).optional()
 })
 
 export const ComputeResourcesPricingInfoSchema = z.object({
@@ -135,6 +200,7 @@ export const ComputeEnvFeesSchema = z.object({
 })
 
 export const ComputeEnvironmentFreeOptionsSchema = z.object({
+  minJobDuration: z.number().int().optional().default(60),
   maxJobDuration: z.number().int().optional().default(3600),
   maxJobs: z.number().int().optional().default(3),
   resources: z.array(ComputeResourceSchema).optional(),
@@ -146,66 +212,67 @@ export const ComputeEnvironmentFreeOptionsSchema = z.object({
         .nullable()
         .optional()
     })
-    .optional()
+    .optional(),
+  allowImageBuild: z.boolean().optional().default(false)
 })
 
+export const C2DEnvironmentConfigSchema = z
+  .object({
+    id: z.string().optional(),
+    description: z.string().optional(),
+    storageExpiry: z.number().int().optional().default(604800),
+    minJobDuration: z.number().int().optional().default(60),
+    maxJobDuration: z.number().int().optional().default(3600),
+    maxJobs: z.number().int().optional(),
+    fees: z.record(z.string(), z.array(ComputeEnvFeesSchema)).optional(),
+    access: z
+      .object({
+        addresses: z.array(z.string()),
+        accessLists: z
+          .array(z.record(z.string(), z.array(z.string())))
+          .nullable()
+          .optional()
+      })
+      .optional(),
+    free: ComputeEnvironmentFreeOptionsSchema.optional(),
+    resources: z.array(ComputeResourceSchema).optional()
+  })
+  .refine(
+    (data) =>
+      (data.fees !== undefined && Object.keys(data.fees).length > 0) ||
+      (data.free !== undefined && data.free !== null),
+    {
+      message:
+        'Each environment must have either a non-empty "fees" configuration or a "free" configuration'
+    }
+  )
+  .refine((data) => data.storageExpiry >= data.maxJobDuration, {
+    message: '"storageExpiry" should be greater than "maxJobDuration"'
+  })
+  .refine(
+    (data) => {
+      if (!data.resources) return false
+      return data.resources.some((r) => r.id === 'disk' && r.total)
+    },
+    { message: 'There is no "disk" resource configured. This is mandatory' }
+  )
+
 export const C2DDockerConfigSchema = z.array(
-  z
-    .object({
-      socketPath: z.string().optional(),
-      protocol: z.string().optional(),
-      host: z.string().optional(),
-      port: z.number().optional(),
-      caPath: z.string().optional(),
-      certPath: z.string().optional(),
-      keyPath: z.string().optional(),
-      resources: z.array(ComputeResourceSchema).optional(),
-      storageExpiry: z.number().int().optional().default(604800),
-      maxJobDuration: z.number().int().optional().default(3600),
-      minJobDuration: z.number().int().optional().default(60),
-      access: z
-        .object({
-          addresses: z.array(z.string()),
-          accessLists: z
-            .array(z.record(z.string(), z.array(z.string())))
-            .nullable()
-            .optional()
-        })
-        .optional(),
-      fees: z.record(z.string(), z.array(ComputeEnvFeesSchema)).optional(),
-      free: ComputeEnvironmentFreeOptionsSchema.optional(),
-      imageRetentionDays: z.number().int().min(1).optional().default(7),
-      imageCleanupInterval: z.number().int().min(3600).optional().default(86400) // min 1 hour, default 24 hours
-    })
-    .refine(
-      (data) =>
-        (data.fees !== undefined && Object.keys(data.fees).length > 0) ||
-        (data.free !== undefined && data.free !== null),
-      {
-        message:
-          'Each docker compute environment must have either a non-empty "fees" configuration or a "free" configuration'
-      }
-    )
-    .refine((data) => data.storageExpiry >= data.maxJobDuration, {
-      message: '"storageExpiry" should be greater than "maxJobDuration"'
-    })
-    .refine(
-      (data) => {
-        if (!data.resources) return false
-        return data.resources.some((r) => r.id === 'disk' && r.total)
-      },
-      { message: 'There is no "disk" resource configured. This is mandatory' }
-    )
-    .transform((data) => {
-      if (data.resources) {
-        for (const resource of data.resources) {
-          if (resource.id === 'disk' && resource.total) {
-            resource.type = 'disk'
-          }
-        }
-      }
-      return data
-    })
+  z.object({
+    socketPath: z.string().optional(),
+    protocol: z.string().optional(),
+    host: z.string().optional(),
+    port: z.number().optional(),
+    caPath: z.string().optional(),
+    certPath: z.string().optional(),
+    keyPath: z.string().optional(),
+    imageRetentionDays: z.number().int().min(1).optional().default(7),
+    imageCleanupInterval: z.number().int().min(3600).optional().default(86400), // min 1 hour, default 24 hours
+    scanImages: z.boolean().optional().default(false),
+    scanImageDBUpdateInterval: z.number().int().min(3600).optional().default(43200), // default 43200 (12 hours)
+    enableNetwork: z.boolean().optional().default(false),
+    environments: z.array(C2DEnvironmentConfigSchema).min(1)
+  })
 )
 
 export const C2DClusterInfoSchema = z.object({
@@ -312,6 +379,7 @@ export const OceanNodeConfigSchema = z
     INTERFACES: z.string().optional(),
     hasP2P: booleanFromString.optional().default(true),
     hasHttp: booleanFromString.optional().default(true),
+    enableBenchmark: booleanFromString.optional().default(false),
 
     p2pConfig: OceanNodeP2PConfigSchema.nullable().optional(),
     hasIndexer: booleanFromString.default(true),
@@ -321,6 +389,41 @@ export const OceanNodeConfigSchema = z
     DB_PASSWORD: z.string().optional(),
     DB_TYPE: z.string().optional(),
     dbConfig: OceanNodeDBConfigSchema.optional(),
+    // Accept either an object (config file) or a JSON string (env var `PERSISTENT_STORAGE`),
+    // and validate the parsed value against the PersistentStorage schema.
+    persistentStorage: z
+      .preprocess((val) => {
+        if (val === undefined || val === null) return val
+        if (typeof val === 'string') {
+          const tryParse = (s: string) => {
+            try {
+              return JSON.parse(s)
+            } catch {
+              return undefined
+            }
+          }
+
+          // 1) Normal JSON string
+          const parsed = tryParse(val)
+          if (parsed !== undefined) {
+            // 2) Handle double-encoded JSON (e.g. "\"{...}\"")
+            if (typeof parsed === 'string') {
+              const parsedTwice = tryParse(parsed)
+              if (parsedTwice !== undefined) return parsedTwice
+            }
+            return parsed
+          }
+
+          // 3) Common docker-compose/shell mistake: single quotes inside JSON
+          const normalized = val.replace(/'/g, '"')
+          const parsedNormalized = tryParse(normalized)
+          if (parsedNormalized !== undefined) return parsedNormalized
+
+          return val
+        }
+        return val
+      }, PersistentStorageConfigSchema)
+      .optional(),
 
     FEE_AMOUNT: z.string().optional(),
     FEE_TOKENS: z.string().optional(),

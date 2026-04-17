@@ -96,76 +96,97 @@
   "dockerComputeEnvironments": [
     {
       "socketPath": "/var/run/docker.sock",
-      "resources": [
+      "environments": [
         {
-          "id": "disk",
-          "total": 1000000000
+          "storageExpiry": 604800,
+          "maxJobDuration": 3600,
+          "minJobDuration": 60,
+          "resources": [
+            {
+              "id": "cpu",
+              "total": 4,
+              "max": 4,
+              "min": 1,
+              "type": "cpu"
+            },
+            {
+              "id": "ram",
+              "total": 10,
+              "max": 10,
+              "min": 1,
+              "type": "ram"
+            },
+            {
+              "id": "disk",
+              "total": 100,
+              "max": 100,
+              "min": 0,
+              "type": "disk"
+            }
+          ],
+          "fees": {
+            "11155111": [
+              {
+                "feeToken": "0x1B083D8584dd3e6Ff37d04a6e7e82b5F622f3985",
+                "prices": [
+                  {
+                    "id": "cpu",
+                    "price": 1
+                  }
+                ]
+              },
+              {
+                "feeToken": "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
+                "prices": [
+                  {
+                    "id": "cpu",
+                    "price": 1
+                  }
+                ]
+              }
+            ],
+            "11155420": [
+              {
+                "feeToken": "0xf26c6C93f9f1d725e149d95f8E7B2334a406aD10",
+                "prices": [
+                  {
+                    "id": "cpu",
+                    "price": 1
+                  }
+                ]
+              },
+              {
+                "feeToken": "0x4200000000000000000000000000000000000006",
+                "prices": [
+                  {
+                    "id": "cpu",
+                    "price": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "free": {
+            "maxJobDuration": 3600,
+            "minJobDuration": 60,
+            "maxJobs": 3,
+            "resources": [
+              {
+                "id": "cpu",
+                "max": 1
+              },
+              {
+                "id": "ram",
+                "max": 1
+              },
+              {
+                "id": "disk",
+                "max": 1
+              }
+            ]
+          }
         }
-      ],
-      "storageExpiry": 604800,
-      "maxJobDuration": 3600,
-      "minJobDuration": 60,
-      "fees": {
-        "11155111": [
-          {
-            "feeToken": "0x1B083D8584dd3e6Ff37d04a6e7e82b5F622f3985",
-            "prices": [
-              {
-                "id": "cpu",
-                "price": 1
-              }
-            ]
-          },
-          {
-            "feeToken": "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
-            "prices": [
-              {
-                "id": "cpu",
-                "price": 1
-              }
-            ]
-          }
-        ],
-        "11155420": [
-          {
-            "feeToken": "0xf26c6C93f9f1d725e149d95f8E7B2334a406aD10",
-            "prices": [
-              {
-                "id": "cpu",
-                "price": 1
-              }
-            ]
-          },
-          {
-            "feeToken": "0x4200000000000000000000000000000000000006",
-            "prices": [
-              {
-                "id": "cpu",
-                "price": 1
-              }
-            ]
-          }
-        ]
-      },
-      "free": {
-        "maxJobDuration": 3600,
-        "minJobDuration": 60,
-        "maxJobs": 3,
-        "resources": [
-          {
-            "id": "cpu",
-            "max": 1
-          },
-          {
-            "id": "ram",
-            "max": 1000000000
-          },
-          {
-            "id": "disk",
-            "max": 1000000000
-          }
-        ]
-      }
+      ]
     }
   ]
 }

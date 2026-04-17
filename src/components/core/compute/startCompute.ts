@@ -29,6 +29,7 @@ import {
 import { EncryptMethod } from '../../../@types/fileObject.js'
 import {
   ComputeAccessList,
+  ComputeEnvironment,
   ComputeResourceRequestWithPrice
 } from '../../../@types/C2D/C2D.js'
 // import { verifyProviderFees } from '../utils/feesHandler.js'
@@ -43,6 +44,10 @@ import { getNonceAsNumber } from '../utils/nonceHandler.js'
 import { PolicyServer } from '../../policyServer/index.js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { checkAddressOnAccessList } from '../../../utils/accessList.js'
+import {
+  ensureConsumerAllowedForPersistentStorageLocalfsFileObject,
+  rejectPersistentStorageFileObjectOnAlgorithm
+} from '../../persistentStorage/PersistentStorageFactory.js'
 
 export class CommonComputeHandler extends CommandHandler {
   validate(command: PaidComputeStartCommand): ValidateParams {
@@ -119,8 +124,10 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
         }
       }
 
+      let allEnvs: ComputeEnvironment[]
       try {
-        env = await engine.getComputeEnvironment(null, task.environment)
+        allEnvs = await engine.getComputeEnvironments()
+        env = allEnvs.find((e) => e.id === task.environment)
         if (!env) {
           return {
             stream: null,
@@ -150,7 +157,7 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
         }
       }
       try {
-        await engine.checkIfResourcesAreAvailable(task.resources, env, false)
+        await engine.checkIfResourcesAreAvailable(task.resources, env, false, allEnvs)
       } catch (e) {
         if (task.queueMaxWaitTime > 0) {
           CORE_LOGGER.verbose(
@@ -225,7 +232,23 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
         }
       }
       const policyServer = new PolicyServer()
-      // check algo
+      const algoPersistentStorageBan = rejectPersistentStorageFileObjectOnAlgorithm(
+        task.algorithm.fileObject
+      )
+      if (algoPersistentStorageBan) {
+        return algoPersistentStorageBan
+      }
+      for (const dataset of task.datasets) {
+        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
+          node,
+          task.consumerAddress,
+          dataset.fileObject
+        )
+        if (psAccess) {
+          return psAccess
+        }
+      }
+      // check algo and datasets (orders, credentials, etc.)
       for (const elem of [...[task.algorithm], ...task.datasets]) {
         const result: any = { validOrder: false }
         if ('documentId' in elem && elem.documentId) {
@@ -603,6 +626,7 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
             token: task.payment.token,
             lockTx: agreementId,
             claimTx: null,
+            cancelTx: null,
             cost: 0
           },
           jobId,
@@ -748,6 +772,22 @@ export class FreeComputeStartHandler extends CommonComputeHandler {
         return isValidOutput
       }
       const policyServer = new PolicyServer()
+      const algoPersistentStorageBanFree = rejectPersistentStorageFileObjectOnAlgorithm(
+        task.algorithm.fileObject
+      )
+      if (algoPersistentStorageBanFree) {
+        return algoPersistentStorageBanFree
+      }
+      for (const dataset of task.datasets) {
+        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
+          thisNode,
+          task.consumerAddress,
+          dataset.fileObject
+        )
+        if (psAccess) {
+          return psAccess
+        }
+      }
       for (const elem of [...[task.algorithm], ...task.datasets]) {
         if (!('documentId' in elem)) {
           continue
@@ -886,7 +926,8 @@ export class FreeComputeStartHandler extends CommonComputeHandler {
           }
         }
       }
-      const env = await engine.getComputeEnvironment(null, task.environment)
+      const allFreeEnvs = await engine.getComputeEnvironments()
+      const env = allFreeEnvs.find((e) => e.id === task.environment)
       if (!env) {
         return {
           stream: null,
@@ -932,7 +973,7 @@ export class FreeComputeStartHandler extends CommonComputeHandler {
         }
       }
       try {
-        await engine.checkIfResourcesAreAvailable(task.resources, env, true)
+        await engine.checkIfResourcesAreAvailable(task.resources, env, true, allFreeEnvs)
       } catch (e) {
         if (task.queueMaxWaitTime > 0) {
           CORE_LOGGER.verbose(
@@ -1026,41 +1067,5 @@ async function validateAccess(
   if (access.addresses.includes(consumerAddress)) {
     return true
   }
-
-  const config = await getConfiguration()
-  const { supportedNetworks } = config
-  for (const accessListMap of access.accessLists) {
-    if (!accessListMap) continue
-    for (const chain of Object.keys(accessListMap)) {
-      const { chainId } = supportedNetworks[chain]
-      try {
-        const blockchain = oceanNode.getBlockchain(chainId)
-        if (!blockchain) {
-          CORE_LOGGER.logMessage(
-            `Blockchain instance not available for chain ${chainId}, skipping access list check`,
-            true
-          )
-          continue
-        }
-        const signer = await blockchain.getSigner()
-        for (const accessListAddress of accessListMap[chain]) {
-          const hasAccess = await checkAddressOnAccessList(
-            accessListAddress,
-            consumerAddress,
-            signer
-          )
-          if (hasAccess) {
-            return true
-          }
-        }
-      } catch (error) {
-        CORE_LOGGER.logMessage(
-          `Failed to check access lists on chain ${chain}: ${error.message}`,
-          true
-        )
-      }
-    }
-  }
-
-  return false
+  return await checkAddressOnAccessList(consumerAddress, access.accessLists, oceanNode)
 }

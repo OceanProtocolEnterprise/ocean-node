@@ -39,6 +39,11 @@ import {
   validateAlgoForDataset,
   validateOutput
 } from './utils.js'
+import {
+  ensureConsumerAllowedForPersistentStorageLocalfsFileObject,
+  rejectPersistentStorageFileObjectOnAlgorithm
+} from '../../persistentStorage/PersistentStorageFactory.js'
+
 export class ComputeInitializeHandler extends CommandHandler {
   validate(command: ComputeInitializeCommand): ValidateParams {
     const validation = validateCommandParameters(command, [
@@ -211,7 +216,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           )
         }
       }
-
       const isValidOutput = await validateOutput(
         node,
         task.output,
@@ -220,7 +224,22 @@ export class ComputeInitializeHandler extends CommandHandler {
       if (isValidOutput.status.httpStatus !== 200) {
         return isValidOutput
       }
-
+      const algoPersistentStorageBan = rejectPersistentStorageFileObjectOnAlgorithm(
+        task.algorithm.fileObject
+      )
+      if (algoPersistentStorageBan) {
+        return algoPersistentStorageBan
+      }
+      for (const dataset of task.datasets) {
+        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
+          node,
+          task.consumerAddress,
+          dataset.fileObject
+        )
+        if (psAccess) {
+          return psAccess
+        }
+      }
       // check algo
       let index = 0
       const policyServer = new PolicyServer()

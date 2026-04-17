@@ -1,473 +1,145 @@
-# Environmental Variables
+# Ocean Node Networking
 
-Environmental variables are also tracked in `ENVIRONMENT_VARIABLES` within `src/utils/constants.ts`. Descriptions and example values are provided below:
+For other nodes (and browsers) to reach your node, it must be reachable at a stable, publicly routable address. Work through the options below in order — stop at the first one that applies to your setup.
 
-## Core
+## Option 1: Static Public IP
 
-- `PRIVATE_KEY` (Required): The private key for the node, required for node operations. Example: `"0x1d751ded5a32226054cd2e71261039b65afb9ee1c746d055dd699b1150a5befc"`
-- `CONFIG_PATH`: Absolute path to JSON config file
-- `RPCS`: JSON object defining RPC endpoints for various networks. Example: `"{ \"11155420\":{ \"rpc\":\"https://sepolia.optimism.io\", \"fallbackRPCs\": [\"https://public.stackup.sh/api/v1/node/optimism-sepolia\"], \"chainId\": 11155420, \"network\": \"optimism-sepolia\", \"chunkSize\": 1000 }}"`
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `IPFS_GATEWAY`: The gateway URL for IPFS, used for downloading files from IPFS. Example: `"https://ipfs.io/"`
-- `ARWEAVE_GATEWAY`: The gateway URL for Arweave, used for downloading files from Arweave. Example: `"https://arweave.net/"`
-- `LOAD_INITIAL_DDOS`: If set, the node will load initial DDOs from JSON files at startup. This is useful for testing or bootstrapping the network with predefined data. Example: `false`
-- `FEE_TOKENS`: Mapping of chain IDs to token addresses for setting fees in the network. Example: `"{ \"1\": \"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\", ...}"`
-- `FEE_AMOUNT`: Specifies the fee amount and unit (e.g., MB for megabytes). Example: `"{ \"amount\": 1, \"unit\": \"MB\" }"`
-- `ADDRESS_FILE`: File location where Ocean contract addresses are saved. Example: `"ADDRESS_FILE=${HOME}/.ocean/ocean-contracts/artifacts/address.json"`
-- `NODE_ENV`: Typically used to specify the environment (e.g., development, production) the node is running in. Example: `'development'`
-- `AUTHORIZED_DECRYPTERS`: A JSON array of addresses that are authorized to decrypt data. Example: `"['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']"`
-- `AUTHORIZED_DECRYPTERS_LIST`: AccessList contract addresses (per chain). If present, only accounts present on the given access lists can decrypt data. Example: `"{ \"8996\": [\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"] }"`
-- `OPERATOR_SERVICE_URL`: Configures C2D cluster URLs for the node. Example: `"[\"http://example.c2d.cluster1.com\",\"http://example.cd2.cluster2.com\"]"`
-- `INTERFACES`: Network interfaces the node supports, e.g., HTTP and P2P. By default, if not specified, both are supported. Example: `"[\"HTTP\",\"P2P\"]"`
-- `ALLOWED_VALIDATORS`: Array of addresses for allowed validators to verify asset signatures before indexing. Example: `"[\"0x123\",\"0x456\"]"`
-- `ALLOWED_VALIDATORS_LIST`: Array of access list addresses (per chain) for allowed validators to verify asset signatures before indexing. Example: `"{ \"8996\": [\"0x123\",\"0x456\"]"`
-- `INDEXER_INTERVAL`: Sets the interval in milliseconds for the indexer to crawl. The default is 30 seconds if not set. Example: `10000`
-- `INDEXER_NETWORKS`: Specifies the networks the Indexer will crawl. If not set, the Indexer will index all networks defined in the RPCS environment variable. If set to an empty string, indexing will be disabled. Example: `[1, 137]`
-- `ALLOWED_ADMINS`: Sets the public address of accounts which have access to admin endpoints e.g. shutting down the node. Example: `"[\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"]"`
-- `ALLOWED_ADMINS_LIST`: Array of access list addresses (per chain) for accounts that have access to admin endpoints. Example: `"{ \"8996\": [\"0x123\",\"0x456\"]"`
-- `RATE_DENY_LIST`: Blocked list of IPs and peer IDs. Example: `"{ \"peers\": [\"16Uiu2HAkuYfgjXoGcSSLSpRPD6XtUgV71t5RqmTmcqdbmrWY9MJo\"], \"ips\": [\"127.0.0.1\"] }"`
-- `MAX_REQ_PER_MINUTE`: Number of requests per minute allowed by the same client (IP or Peer id). Example: `30`
-- `MAX_CONNECTIONS_PER_MINUTE`: Max number of requests allowed per minute (all clients). Example: `120`
-- `MAX_CHECKSUM_LENGTH`: Define the maximum length for a file if checksum is required (Mb). Example: `10`
-- `IS_BOOTSTRAP`: Is this node to be used as bootstrap node or not. Default is `false`.
-- `AUTHORIZED_PUBLISHERS`: Authorized list of publishers. If present, Node will only index assets published by the accounts in the list. Example: `"[\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"]"`
-- `AUTHORIZED_PUBLISHERS_LIST`: AccessList contract addresses (per chain). If present, Node will only index assets published by the accounts present on the given access lists. Example: `"{ \"8996\": [\"0x967da4048cD07aB37855c090aAF366e4ce1b9F48\",\"0x388C818CA8B9251b393131C08a736A67ccB19297\"] }"`
-- `VALIDATE_UNSIGNED_DDO`: If set to `false`, the node will not validate unsigned DDOs and will request a signed message with the publisher address, nonce and signature. Default is `true`. Example: `false`
-- `JWT_SECRET`: Secret used to sign JWT tokens. Default is `ocean-node-secret`. Example: `"my-secret-jwt-token"`
-- `NODE_OWNER_INFO`: Optional JSON object returned by the root endpoint as `ownerInfo`. Example: `"{\"imprint\":{\"legalName\":\"Example Ocean Services GmbH\"},\"termsAndConditions\":{\"url\":\"https://example.com/terms\"},\"anyCustomSection\":{\"foo\":\"bar\"}}"`
+If your machine has a static public IP directly assigned to it (common in VPS/cloud environments), set `P2P_ANNOUNCE_ADDRESSES` to announce that address. The quickstart script does this automatically when you provide your IP or domain name.
 
-## Database
+Example for a node with public IP `1.2.3.4`, using ports 9000 (TCP) and 9001 (WebSocket/TLS):
 
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
-- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
-- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
-- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
-- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
-- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
-- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
-- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
-- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
-- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
-
-## Database
-
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
-- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
-- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
-- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
-- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
-- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
-- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
-- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
-- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
-- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
-
-## Database
-
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
-- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
-- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
-- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
-- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
-- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
-- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
-- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
-- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
-- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
-
-## Database
-
-- `DB_URL`: URL for connecting to the database. Required for running a database with the node. Example: `"http://localhost:8108/?apiKey=xyz"`
-- `DB_USERNAME`: Username for database authentication. Optional if not using authentication. Example: `"elastic"`
-- `DB_PASSWORD`: Password for database authentication. Optional if not using authentication. Example: `"password123"`
-- `ELASTICSEARCH_REQUEST_TIMEOUT`: Request timeout in milliseconds for Elasticsearch operations. Default is `60000`. Example: `60000`
-- `ELASTICSEARCH_PING_TIMEOUT`: Ping timeout in milliseconds for Elasticsearch health checks. Default is `5000`. Example: `5000`
-- `ELASTICSEARCH_RESURRECT_STRATEGY`: Strategy for bringing failed Elasticsearch nodes back online. Options are 'ping', 'optimistic', or 'none'. Default is `ping`. Example: `"ping"`
-- `ELASTICSEARCH_MAX_RETRIES`: Maximum number of retry attempts for failed Elasticsearch operations. Default is `5`. Example: `5`
-- `ELASTICSEARCH_SNIFF_ON_START`: Enable cluster node discovery on Elasticsearch client startup. Default is `true`. Example: `true`
-- `ELASTICSEARCH_SNIFF_INTERVAL`: Interval in milliseconds for periodic cluster health monitoring and node discovery. Set to 'false' to disable. Default is `30000`. Example: `30000`
-- `ELASTICSEARCH_SNIFF_ON_CONNECTION_FAULT`: Enable automatic cluster node discovery when connection faults occur. Default is `true`. Example: `true`
-- `ELASTICSEARCH_HEALTH_CHECK_INTERVAL`: Interval in milliseconds for proactive connection health monitoring. Default is `60000`. Example: `60000`
-
-## Payments
-
-- `ESCROW_CLAIM_TIMEOUT`: Amount of time reserved to claim a escrow payment, in seconds. Defaults to `3600`. Example: `3600`
-
-## Logs
-
-- `LOG_LEVEL`: Define the default log level. Example: `debug`
-- `LOG_CONSOLE`: Write logs to the console. Default is `false`, but becomes `true` if neither `LOG_FILES` or `LOG_DB` are set.
-- `LOG_FILES`: Write logs to files. Default is `false`
-- `LOG_DB`: Write logs to noSQL database. Default is `false`
-- `UNSAFE_URLS`: Array or regular expression URLs to be excluded from access.Example: ["^.*(169.254.169.254).*","^.*(127.0.0.1).*"]
-
-## HTTP
-
-- `HTTP_API_PORT`: Port number for the HTTP API. Example: `8000`
-- `HTTP_CERT_PATH`: Absolute path to the TLS certificate file. If provided along with `HTTP_KEY_PATH`, the node will start an HTTPS server. Example: `"/etc/letsencrypt/live/example.com/fullchain.pem"`
-- `HTTP_KEY_PATH`: Absolute path to the TLS private key file. If provided along with `HTTP_CERT_PATH`, the node will start an HTTPS server. Example: `"/etc/letsencrypt/live/example.com/privkey.pem"`
-
-## P2P
-
-- `P2P_ENABLE_IPV4`: Enable IPv4 connectivity. Defaults: `True`
-- `P2P_ENABLE_IPV6`: Enable IPv6 connectivity. Defaults: `True`
-- `P2P_ipV4BindAddress`: Bind address for IPV4. Defaults to `0.0.0.0`. Example: `"0.0.0.0"`
-- `P2P_ipV4BindTcpPort`: Port used on IPv4 TCP connections. Defaults to `0` (Use whatever port is free. When running as docker, please set it explicitly). Example: `0`
-- `P2P_ipV4BindWsPort`: Port used on IPv4 WS connections. Defaults to `0` (Use whatever port is free. When running as docker, please set it explicitly). Example: `0`
-- `P2P_ipV6BindAddress`: Bind address for IPV6. Defaults to `::1`. Example: `"::1"`
-- `P2P_ipV6BindTcpPort`: Port used on IPv6 TCP connections. Defaults to `0` (Use whatever port is free. When running as docker, please set it explicitly). Example: `0`
-- `P2P_ipV6BindWsPort`: Port used on IPv6 WS connections. Defaults to `0` (Use whatever port is free. When running as docker, please set it explicitly). Example: `0`
-- `P2P_ANNOUNCE_ADDRESSES`: List of addresses to announce to the network. Example: `"[\"/ip4/1.2.3.4/tcp/8000\"]"`
-
-  To enable SNI (Server Name Indication) with autoTLS, include `/tls/ws` or `/tls/wss` addresses:
-  - `"["/ip4/<your-ip-addr>/tcp/9001/tls/ws"]"` - TLS WebSocket
-  - `"["/ip4/<your-ip-addr>/tcp/9005/tls/wss"]"` - TLS WebSocket Secure
-
-- `P2P_ANNOUNCE_PRIVATE`: Announce private IPs. Default: `True`
-- `P2P_pubsubPeerDiscoveryInterval`: Interval (in ms) for discovery using pubsub. Defaults to `10000` (three seconds). Example: `10000`
-- `P2P_dhtMaxInboundStreams`: Maximum number of DHT inbound streams. Defaults to `500`. Example: `500`
-- `P2P_dhtMaxOutboundStreams`: Maximum number of DHT outbound streams. Defaults to `500`. Example: `500`
-- `P2P_DHT_FILTER`: Filter address in DHT. 0 = (Default) No filter 1. Filter private ddresses. 2. Filter public addresses
-- `P2P_mDNSInterval`: Interval (in ms) for discovery using mDNS. Defaults to `20000` (20 seconds). Example: `20000`
-- `P2P_connectionsMaxParallelDials`: Maximum number of parallel dials. Defaults to `150`. Example: `150`
-- `P2P_connectionsDialTimeout`: Timeout for dial commands. Defaults to `10000` (10 seconds). Example: `10000`
-- `P2P_ENABLE_UPNP`: Enable UPNP gateway discovery. Default: `True`
-- `P2P_ENABLE_AUTONAT`: Enable AutoNAT discovery. Default: `True`
-- `P2P_ENABLE_CIRCUIT_RELAY_SERVER`: Enable Circuit Relay Server. It will help the network but increase your bandwidth usage. Should be disabled for edge nodes. Default: `True`
-- `P2P_CIRCUIT_RELAYS`: Numbers of relay servers. Default: `0`
-- `P2P_BOOTSTRAP_NODES` : List of bootstrap nodes. Defults to OPF nodes. Example: ["/dns4/node3.oceanprotocol.com/tcp/9000/p2p/"]
-- `P2P_BOOTSTRAP_TIMEOUT` : How long to wait before discovering bootstrap nodes. In ms. Default: 2000 ms
-- `P2P_BOOTSTRAP_TAGNAME` : Tag a bootstrap peer with this name before "discovering" it. Default: 'bootstrap'
-- `P2P_BOOTSTRAP_TAGVALUE` : The bootstrap peer tag will have this value (default: 50)
-- `P2P_BOOTSTRAP_TTL` : Cause the bootstrap peer tag to be removed after this number of ms. Default: 120000 ms
-- `P2P_FILTER_ANNOUNCED_ADDRESSES`: CIDR filters to filter announced addresses. Default: ["172.15.0.0/24"] (docker ip range). Example: ["192.168.0.1/27"]
-- `P2P_MIN_CONNECTIONS`: The minimum number of connections below which libp2p will start to dial peers from the peer book. Setting this to 0 disables this behaviour. Default: 1
-- `P2P_MAX_CONNECTIONS`: The maximum number of connections libp2p is willing to have before it starts pruning connections to reduce resource usage. Default: 300
-- `P2P_AUTODIALPEERRETRYTHRESHOLD`: When we've failed to dial a peer, do not autodial them again within this number of ms. Default: 1000 \* 120
-- `P2P_AUTODIALCONCURRENCY`: When dialling peers from the peer book to keep the number of open connections, add dials for this many peers to the dial queue at once. Default: 5
-- `P2P_MAXPEERADDRSTODIAL`: Maximum number of addresses allowed for a given peer before giving up. Default: 5
-- `P2P_AUTODIALINTERVAL`: Auto dial interval (miliseconds). Amount of time between close and open of new peer connection. Default: 5000
-- `P2P_ENABLE_NETWORK_STATS`: Enables 'getP2pNetworkStats' http endpoint. Since this contains private informations (like your ip addresses), this is disabled by default
-
-## Policy Server
-
-- `POLICY_SERVER_URL`: URI definition of PolicyServer, if any. See [the policy server documentation for more details](docs/PolicyServer.md).
-
-## Additional Nodes (Test Environments)
-
-- `NODE1_PRIVATE_KEY`: Used on test environments, specifically CI, represents the private key for node 1. Example: `"0xfd5c1ccea015b6d663618850824154a3b3fb2882c46cefb05b9a93fea8c3d215"`
-- `NODE2_PRIVATE_KEY`: Used on test environments, specifically CI, represents the private key for node 2. Example: `"0x1263dc73bef43a9da06149c7e598f52025bf4027f1d6c13896b71e81bb9233fb"`
-
-## Cron Jobs
-
-- `CRON_DELETE_DB_LOGS`: Delete old logs from database Cron expression. Example: `0 0 * * *` (runs every day at midnight)
-- `CRON_CLEANUP_C2D_STORAGE`: Clear c2d expired resources/storage and delete old jobs. Example: `*/5 * * * *` (runs every 5 minutes)
-
-## Compute
-
-The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable is used to configure Docker-based compute environments in Ocean Node. This guide will walk you through the options available for defining `DOCKER_COMPUTE_ENVIRONMENTS` and how to set it up correctly. For configuring compute environments and setting prices for each resource (including pricing units and examples), see [Compute pricing](compute-pricing.md).
-
-Example Configuration
-The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of objects, where each object represents a Docker compute environment configuration. Below is an example configuration:
-
-`Disk` and `Ram` resources are always expressed in GB.
-
-```json
-[
-  {
-    "socketPath": "/var/run/docker.sock",
-    "imageRetentionDays": 7,
-    "imageCleanupInterval": 86400,
-    "resources": [
-      {
-        "id": "disk",
-        "total": 10
-      }
-    ],
-    "storageExpiry": 604800,
-    "maxJobDuration": 3600,
-    "minJobDuration": 60,
-    "access": {
-      "addresses": ["0x123", "0x456"],
-      "accessLists": []
-    },
-    "fees": {
-      "1": [
-        {
-          "feeToken": "0x123",
-          "prices": [
-            {
-              "id": "cpu",
-              "price": 1
-            }
-          ]
-        }
-      ]
-    },
-    "free": {
-      "maxJobDuration": 60,
-      "minJobDuration": 10,
-      "maxJobs": 3,
-      "access": {
-        "addresses": [],
-        "accessLists": ["0x789"]
-      },
-      "resources": [
-        {
-          "id": "cpu",
-          "max": 1
-        },
-        {
-          "id": "ram",
-          "max": 1
-        },
-        {
-          "id": "disk",
-          "max": 1
-        }
-      ]
-    }
-  }
-]
+```bash
+P2P_ANNOUNCE_ADDRESSES='[
+  "/ip4/1.2.3.4/tcp/9000",
+  "/ip4/1.2.3.4/tcp/9001/ws",
+  "/ip4/1.2.3.4/tcp/9001/tls/ws"
+]'
 ```
 
-#### Configuration Options
+The `/tls/ws` entry enables [AutoTLS](#tls-and-sni-server-name-indication) for node-to-browser communication. AutoTLS provisions a certificate and serves TLS at the transport layer on the WebSocket port, making it browser-compatible — no DNS setup required on your part.
 
-- **socketPath**: Path to the Docker socket (e.g., docker.sock).
-- **imageRetentionDays** - how long docker images are kept, in days. Default: 7
-- **imageCleanupInterval** - how often to run cleanup for docker images, in seconds. Min: 3600 (1hour), Default: 86400 (24 hours)
-- **paymentClaimInterval** - how often to run payment claiming, in seconds. Default: 3600 (1 hour)
-- **storageExpiry**: Amount of seconds for storage expiry.(Mandatory)
-- **maxJobDuration**: Maximum duration in seconds for a job.(Mandatory)
-- **minJobDuration**: Minimum duration in seconds for a job.(Mandatory)
-- **access**: Access control configuration for paid compute jobs. If both `addresses` and `accessLists` are empty, all addresses are allowed.
-  - **addresses**: Array of Ethereum addresses allowed to run compute jobs. If empty and no access lists are configured, all addresses are allowed.
-  - **accessLists**: Array of AccessList contract addresses. Users holding NFTs from these contracts can run compute jobs. Checked across all supported networks.
-- **fees**: Fee structure for the compute environment.
-  - **feeToken**: Token address for the fee.
-  - **prices**: Array of resource pricing information.
-    - **id**: Resource type (e.g., `cpu`, `ram`, `disk`).
-    - **price**: Price per unit of the resource.
-- **resources**: Array of resources available in the compute environment.
-  - **id**: Resource type (e.g., `cpu`, `ram`, `disk`).
-  - **total**: Total number of the resource available.
-  - **min**: Minimum number of the resource needed for a job.
-  - **max**: Maximum number of the resource for a job.
-- **free**: Optional configuration for free jobs.
-  - **storageExpiry**: Amount of seconds for storage expiry for free jobs.
-  - **maxJobDuration**: Maximum duration in seconds for a free job.
-  - **minJobDuration**: Minimum duration in seconds for a free job.
-  - **maxJobs**: Maximum number of simultaneous free jobs.
-  - **access**: Access control configuration for free compute jobs. Works the same as the main `access` field.
-    - **addresses**: Array of Ethereum addresses allowed to run free compute jobs.
-    - **accessLists**: Array of AccessList contract addresses for free compute access control.
-  - **resources**: Array of resources available for free jobs.
-    - **id**: Resource type (e.g., `cpu`, `ram`, `disk`).
-    - **total**: Total number of the resource available.
-    - **min**: Minimum number of the resource needed for a job.
-    - **max**: Maximum number of the resource for a job.
+## Option 2: Dynamic DNS (no static IP)
 
-### Docker Registry Authentication
+If your public IP changes (residential ISP, dynamic VPS), use a Dynamic DNS (DDNS) service to get a stable hostname that always resolves to your current IP.
 
-- `DOCKER_REGISTRY_AUTHS`: JSON object mapping Docker registry URLs to authentication credentials. Used for accessing private Docker/OCI registries when validating and pulling Docker images. Each registry entry must provide either `username`+`password` or `auth`. Example:
+Popular free DDNS providers: [DuckDNS](https://www.duckdns.org/), [No-IP](https://www.noip.com/), [Dynu](https://www.dynu.com/).
 
-```json
-{
-  "https://registry-1.docker.io": {
-    "username": "myuser",
-    "password": "mypassword"
-  },
-  "https://ghcr.io": {
-    "username": "myuser",
-    "password": "ghp_..."
-  },
-  "https://registry.gitlab.com": {
-    "auth": "glpat-..."
-  }
-}
+Once you have a hostname (e.g. `mynode.duckdns.org`), set up the DDNS client on your machine to keep it updated, then use the hostname in your announce addresses:
+
+```bash
+P2P_ANNOUNCE_ADDRESSES='[
+  "/dns4/mynode.duckdns.org/tcp/9000",
+  "/dns4/mynode.duckdns.org/tcp/9001/ws",
+  "/dns4/mynode.duckdns.org/tcp/9001/tls/ws"
+]'
 ```
 
-**Configuration Options:**
+## Option 3: Port Forwarding
 
-- **Registry URL** (key): The full registry URL including protocol (e.g., `https://registry-1.docker.io`, `https://ghcr.io`, `https://registry.gitlab.com`)
-- **username** (optional): Username for registry authentication. Required if using password-based auth.
-- **password** (optional): Password or personal access token for registry authentication. Required if using username-based auth.
-- **auth** (optional): Authentication token (alternative to username+password). Required if not using username+password.
+If you are behind a NAT router (home network), you need to forward the P2P ports from your router to the machine running the node.
 
-**Notes:**
+1. Find the local IP of your machine (e.g. `192.168.1.50`).
+2. Log in to your router admin panel and add port forwarding rules:
+   - External TCP port `9000` → `192.168.1.50:9000`
+   - External TCP port `9001` → `192.168.1.50:9001`
+3. Find your public IP (e.g. via `curl ifconfig.me`) or set up a DDNS hostname (see Option 2).
+4. Set `P2P_ANNOUNCE_ADDRESSES` to your public IP or DDNS hostname as shown above.
 
-- For Docker Hub (`registry-1.docker.io`), you can use your Docker Hub username and password, or a personal access token (PAT) as the password.
-- For GitHub Container Registry (GHCR), use your GitHub username with a personal access token (PAT) as the password, or use a token directly.
-- For GitLab Container Registry, use a personal access token (PAT) or deploy token.
-- The registry URL must match exactly (including protocol) with the registry used in the Docker image reference.
-- If no credentials are configured for a registry, the node will attempt unauthenticated access (works for public images only).
+If your router supports UPnP, the node can attempt to configure port forwarding automatically. Enable it with:
+
+```bash
+P2P_ENABLE_UPNP=true
+```
+
+UPnP is not reliable on all routers and should not be relied on as the sole method.
+
+## Option 4: Circuit Relay (fallback)
+
+If none of the above options are available (strict NAT, no port forwarding, no public IP), use a circuit relay. A relay node proxies traffic between peers, allowing your node to participate in the network without being directly reachable.
+
+Enable the circuit relay client:
+
+```bash
+P2P_ENABLE_CIRCUIT_RELAY_CLIENT=true
+P2P_CIRCUIT_RELAYS=1
+```
+
+Note: circuit relay increases latency and bandwidth usage on the relay node. It should be a last resort — a node running only via relay is a burden on the network and will have degraded performance.
+
+Do not enable `P2P_ENABLE_CIRCUIT_RELAY_SERVER` on edge nodes; that setting is for well-connected nodes that want to help others.
 
 ---
 
-## Private Docker Registries with Per-Job Authentication
+## TLS and SNI (Server Name Indication)
 
-In addition to node-level registry authentication via `DOCKER_REGISTRY_AUTHS`, you can provide encrypted Docker registry authentication credentials on a per-job basis. This allows different users to use different private registries or credentials for their compute jobs.
+AutoTLS provisions TLS certificates for your node automatically, enabling P2P node-to-browser communication. It is always active internally — no DNS or certificate setup required on your part. For it to work, you must include a `/tls/ws` entry in `P2P_ANNOUNCE_ADDRESSES`, which the quickstart script does automatically.
 
-### Overview
+AutoTLS serves TLS at the transport layer on the WebSocket port, making it standard browser-compatible WSS — no separate port is needed.
 
-The `encryptedDockerRegistryAuth` parameter allows you to securely provide Docker registry credentials that are:
+Example `.env` / docker-compose entry:
 
-- Encrypted using ECIES (Elliptic Curve Integrated Encryption Scheme) with the node's public key
-- Validated to ensure proper format (either `auth` string OR `username`+`password`)
-- Used only for the specific compute job, overriding node-level configuration if provided
+```bash
+P2P_ANNOUNCE_ADDRESSES='[
+  "/ip4/<your-ip>/tcp/9000",
+  "/ip4/<your-ip>/tcp/9001/ws",
+  "/ip4/<your-ip>/tcp/9001/tls/ws"
+]'
+```
 
-### Encryption Format
-
-The `encryptedDockerRegistryAuth` must be:
-
-1. A JSON object matching the Docker registry auth schema (see below)
-2. Encrypted using ECIES with the node's public key
-3. Hex-encoded as a string
-
-**Auth Schema Format:**
-
-The decrypted JSON must follow this structure:
+Or in `config.json`:
 
 ```json
 {
-  "username": "myuser",
-  "password": "mypassword"
+  "p2pConfig": {
+    "announceAddresses": [
+      "/ip4/<your-ip>/tcp/9000",
+      "/ip4/<your-ip>/tcp/9001/ws",
+      "/ip4/<your-ip>/tcp/9001/tls/ws"
+    ]
+  }
 }
 ```
 
-OR
+When a TLS certificate is provisioned successfully, you will see logs like:
+
+```
+----- A TLS certificate was provisioned -----
+----- TLS addresses: -----
+/ip4/<your-ip>/tcp/9001/sni/...
+/ip4/<your-ip>/tcp/9001/sni/...
+----- End of TLS addresses -----
+```
+
+## Verifying Connectivity
+
+### Check how your node sees itself
+
+```bash
+curl http://localhost:8000/getP2pPeer?peerId=<your-peer-id>
+```
+
+Look at the `addresses` array in the response. Are any of those IPs/hostnames reachable from outside your network?
 
 ```json
 {
-  "auth": "base64-encoded-username:password"
+  "addresses": [
+    { "multiaddr": "/ip4/1.2.3.4/tcp/9000", "isCertified": false },
+    { "multiaddr": "/ip4/1.2.3.4/tcp/9001/ws", "isCertified": false },
+    { "multiaddr": "/ip4/1.2.3.4/tcp/9001/tls/ws", "isCertified": false }
+  ]
 }
 ```
 
-OR (all fields present)
+### Check how your node is seen by the network
 
-```json
-{
-  "username": "myuser",
-  "password": "mypassword",
-  "auth": "base64-encoded-username:password"
-}
+Ask a known public node to report back what it knows about you:
+
+```bash
+curl https://cp1.oncompute.ai/getP2pPeer?peerId=<your-peer-id>
 ```
 
-**Validation Rules:**
+If the response is empty or missing your public address, the node is not reachable from the outside.
 
-- Either `auth` string must be provided (non-empty), OR
-- Both `username` AND `password` must be provided (both non-empty)
-- Empty strings are not accepted
+## All P2P Environment Variables
 
-### Usage Examples
-
-#### 1. Paid Compute Start (`POST /api/services/compute`)
-
-```json
-{
-  "command": "startCompute",
-  "consumerAddress": "0x...",
-  "signature": "...",
-  "nonce": "123",
-  "environment": "0x...",
-  "algorithm": {
-    "meta": {
-      "container": {
-        "image": "registry.example.com/myorg/myimage:latest"
-      }
-    }
-  },
-  "datasets": [],
-  "payment": { ... },
-  "encryptedDockerRegistryAuth": "0xdeadbeef..." // ECIES encrypted hex string
-}
-```
-
-#### 2. Free Compute Start (`POST /api/services/freeCompute`)
-
-```json
-{
-  "command": "freeStartCompute",
-  "consumerAddress": "0x...",
-  "signature": "...",
-  "nonce": "123",
-  "environment": "0x...",
-  "algorithm": {
-    "meta": {
-      "container": {
-        "image": "ghcr.io/myorg/myimage:latest"
-      }
-    }
-  },
-  "datasets": [],
-  "encryptedDockerRegistryAuth": "0xdeadbeef..." // ECIES encrypted hex string
-}
-```
-
-#### 3. Initialize Compute
-
-The `initialize` command accepts `encryptedDockerRegistryAuth` as part of the command payload, as it validates the image
-
-```json
-{
-  "command": "initialize",
-  "datasets": [...],
-  "algorithm": {
-    "meta": {
-      "container": {
-        "image": "registry.gitlab.com/myorg/myimage:latest"
-      }
-    }
-  },
-  "environment": "0x...",
-  "payment": { ... },
-  "consumerAddress": "0x...",
-  "maxJobDuration": 3600,
-  "encryptedDockerRegistryAuth": "0xdeadbeef..." // ECIES encrypted hex string
-}
-```
-
-### Encryption Process
-
-To create `encryptedDockerRegistryAuth`, you need to:
-
-1. **Prepare the auth JSON object:**
-
-   ```json
-   {
-     "username": "myuser",
-     "password": "mypassword"
-   }
-   ```
-
-2. **Get the node's public key** (available via the node's API or P2P interface)
-
-3. **Encrypt the JSON string** using ECIES with the node's public key
-
-4. **Hex-encode the encrypted result**
-
-### Behavior
-
-- **Priority**: If `encryptedDockerRegistryAuth` is provided, it takes precedence over node-level `DOCKER_REGISTRY_AUTHS` configuration for that specific job
-- **Validation**: The encrypted auth is decrypted and validated before the job starts. Invalid formats will result in an error
-- **Scope**: The credentials are used for:
-  - Validating the Docker image exists (during initialize)
-  - Pulling the Docker image (during job execution)
-- **Security**: Credentials are encrypted and only decrypted by the node using its private key
-
-### Error Handling
-
-If `encryptedDockerRegistryAuth` is invalid, you'll receive an error:
-
-- **Decryption failure**: `Invalid encryptedDockerRegistryAuth: failed to parse JSON - [error message]`
-- **Schema validation failure**: `Invalid encryptedDockerRegistryAuth: Either 'auth' must be provided, or both 'username' and 'password' must be provided`
-
-### Notes
-
-- The `encryptedDockerRegistryAuth` parameter is optional. If not provided, the node will use `DOCKER_REGISTRY_AUTHS` configuration or attempt unauthenticated access
-- The registry URL in the Docker image reference must match the registry you're authenticating to
-- For Docker Hub, use `registry-1.docker.io` as the registry URL
-- Credentials are stored encrypted in the job record and decrypted only when needed for image operations
+See [env.md](env.md#p2p) for the full list of P2P configuration options.
