@@ -9,13 +9,13 @@ import { C2DClusterType } from '../../@types/C2D/C2D.js'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import crypto from 'crypto'
 import { computeCodebaseHash } from '../attestation.js'
 
 import {
   getOceanArtifactsAdresses,
   OCEAN_ARTIFACTS_ADDRESSES_PER_CHAIN
 } from '../address.js'
-import { create256Hash } from '../crypt.js'
 import { CONFIG_LOGGER } from '../logging/common.js'
 import { LOG_LEVELS_STR, GENERIC_EMOJIS } from '../logging/Logger.js'
 import { OceanNodeConfigSchema } from './schemas.js'
@@ -24,6 +24,11 @@ import { fileURLToPath } from 'url'
 import lodash from 'lodash'
 
 let previousConfiguration: OceanNodeConfig = null
+
+function create256Hash(input: string): string {
+  const result = crypto.createHash('sha256').update(input).digest('hex')
+  return '0x' + result
+}
 
 function mapEnvToConfig(
   env: NodeJS.ProcessEnv,
