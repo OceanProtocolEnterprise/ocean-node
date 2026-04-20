@@ -28,12 +28,18 @@ const app: Express = express()
 
 process.on('uncaughtException', (err) => {
   OCEAN_NODE_LOGGER.error(`Uncaught exception: ${err.message}`)
+  if (err?.stack) {
+    OCEAN_NODE_LOGGER.error(`Uncaught exception stack: ${err.stack}`)
+  }
   process.exit(1)
 })
 process.on('unhandledRejection', (err) => {
   OCEAN_NODE_LOGGER.error(
     `Unhandled rejection: ${err instanceof Error ? err.message : String(err)}`
   )
+  if (err instanceof Error && err.stack) {
+    OCEAN_NODE_LOGGER.error(`Unhandled rejection stack: ${err.stack}`)
+  }
   process.exit(1)
 })
 
