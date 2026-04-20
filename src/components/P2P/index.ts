@@ -823,7 +823,7 @@ export class OceanP2P extends EventEmitter {
 
     const multiaddrs = multiAddrs?.length
       ? multiAddrs.map((addr) => multiaddr(addr))
-      : await this.getPeerMultiaddrs(peerName)
+      : (await this.getPeerMultiaddrs(peerName)) || []
 
     if (multiaddrs.length < 1) {
       const error = `Cannot find any address to dial for peer: ${peerId}`
