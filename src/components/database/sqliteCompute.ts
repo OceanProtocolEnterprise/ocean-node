@@ -6,6 +6,7 @@ import {
 } from '../../@types/C2D/C2D.js'
 import sqlite3, { RunResult } from 'sqlite3'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
+import { create256Hash } from '../../utils/crypt.js'
 
 interface ComputeDatabaseProvider {
   newJob(job: DBComputeJob): Promise<string>
@@ -46,7 +47,10 @@ function getInternalStructure(job: DBComputeJob): any {
     payment: job.payment,
     algoDuration: job.algoDuration,
     queueMaxWaitTime: job.queueMaxWaitTime,
-    output: job.output
+    output: job.output,
+    jobIdHash: job.jobIdHash,
+    buildStartTimestamp: job.buildStartTimestamp,
+    buildStopTimestamp: job.buildStopTimestamp
   }
   return internalBlob
 }
@@ -443,7 +447,8 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
     environments?: string[],
     fromTimestamp?: string,
     consumerAddrs?: string[],
-    status?: C2DStatusNumber
+    status?: C2DStatusNumber,
+    runningJobs?: boolean
   ): Promise<DBComputeJob[]> {
     let selectSQL = `SELECT * FROM ${this.schema.name}`
 
@@ -456,20 +461,28 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
       params.push(...environments)
     }
 
-    if (fromTimestamp) {
-      conditions.push(`dateFinished >= ?`)
-      params.push(fromTimestamp)
+    if (runningJobs) {
+      conditions.push(`status = ?`)
+      params.push(C2DStatusNumber.RunningAlgorithm.toString())
+      if (fromTimestamp) {
+        conditions.push(`dateCreated >= ?`)
+        params.push(fromTimestamp)
+      }
+    } else {
+      if (fromTimestamp) {
+        conditions.push(`dateFinished >= ?`)
+        params.push(fromTimestamp)
+      }
+      if (status) {
+        conditions.push(`status = ?`)
+        params.push(status.toString())
+      }
     }
 
     if (consumerAddrs && consumerAddrs.length > 0) {
       const placeholders = consumerAddrs.map(() => '?').join(',')
       conditions.push(`owner IN (${placeholders})`)
       params.push(...consumerAddrs)
-    }
-
-    if (status) {
-      conditions.push(`status = ?`)
-      params.push(status.toString())
     }
 
     if (conditions.length > 0) {
@@ -529,6 +542,9 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
               const maxJobDuration = row.expireTimestamp
               delete row.expireTimestamp
               const job: DBComputeJob = { ...row, ...body, maxJobDuration }
+              if (!job.jobIdHash && job.jobId) {
+                job.jobIdHash = create256Hash(job.jobId)
+              }
               return job
             })
             resolve(all)
