@@ -1,5 +1,6 @@
 import { MetadataAlgorithm, ConsumerParameter } from '@oceanprotocol/ddo-js'
 import type { BaseFileObject, StorageObject, EncryptMethod } from '../fileObject.js'
+import type { AccessList } from '../AccessList.js'
 export enum C2DClusterType {
   // eslint-disable-next-line no-unused-vars
   OPF_K8 = 0,
@@ -95,7 +96,7 @@ export interface RunningPlatform {
 
 export interface ComputeAccessList {
   addresses: string[]
-  accessLists: { [chainId: string]: string[] }[] | null
+  accessLists: AccessList[] | null
 }
 
 export interface ComputeEnvironmentFreeOptions {
@@ -140,6 +141,19 @@ export interface ComputeEnvironment extends ComputeEnvironmentBaseConfig {
   runMaxWaitTimeFree: number
 }
 
+export interface C2DEnvironmentConfig {
+  id?: string
+  description?: string
+  storageExpiry?: number
+  minJobDuration?: number
+  maxJobDuration?: number
+  maxJobs?: number
+  fees?: ComputeEnvFeesStructure
+  access?: ComputeAccessList
+  free?: ComputeEnvironmentFreeOptions
+  resources?: ComputeResource[]
+}
+
 export interface C2DDockerConfig {
   socketPath: string
   protocol: string
@@ -148,19 +162,12 @@ export interface C2DDockerConfig {
   caPath: string
   certPath: string
   keyPath: string
-  storageExpiry?: number
-  maxJobDuration?: number
-  minJobDuration?: number
-  maxJobs?: number
-  fees: ComputeEnvFeesStructure
-  resources?: ComputeResource[] // optional, owner can overwrite
-  free?: ComputeEnvironmentFreeOptions
-  access: ComputeAccessList
   imageRetentionDays?: number // Default: 7 days
   imageCleanupInterval?: number // Default: 86400 seconds (24 hours)
   paymentClaimInterval?: number // Default: 3600 seconds (1 hours)
   scanImages?: boolean
   scanImageDBUpdateInterval?: number // Default: 12 hours
+  environments: C2DEnvironmentConfig[]
   enableNetwork?: boolean // whether network is enabled for algorithm containers
 }
 

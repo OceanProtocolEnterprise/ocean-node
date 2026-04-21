@@ -38,7 +38,13 @@ export const PROTOCOL_COMMANDS = {
   FETCH_CONFIG: 'fetchConfig',
   PUSH_CONFIG: 'pushConfig',
   GET_LOGS: 'getLogs',
-  JOBS: 'jobs'
+  JOBS: 'jobs',
+  PERSISTENT_STORAGE_CREATE_BUCKET: 'persistentStorageCreateBucket',
+  PERSISTENT_STORAGE_GET_BUCKETS: 'persistentStorageGetBuckets',
+  PERSISTENT_STORAGE_LIST_FILES: 'persistentStorageListFiles',
+  PERSISTENT_STORAGE_UPLOAD_FILE: 'persistentStorageUploadFile',
+  PERSISTENT_STORAGE_GET_FILE_OBJECT: 'persistentStorageGetFileObject',
+  PERSISTENT_STORAGE_DELETE_FILE: 'persistentStorageDeleteFile'
 }
 // more visible, keep then close to make sure we always update both
 export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
@@ -78,7 +84,13 @@ export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
   PROTOCOL_COMMANDS.FETCH_CONFIG,
   PROTOCOL_COMMANDS.PUSH_CONFIG,
   PROTOCOL_COMMANDS.GET_LOGS,
-  PROTOCOL_COMMANDS.JOBS
+  PROTOCOL_COMMANDS.JOBS,
+  PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+  PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_BUCKETS,
+  PROTOCOL_COMMANDS.PERSISTENT_STORAGE_LIST_FILES,
+  PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+  PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_FILE_OBJECT,
+  PROTOCOL_COMMANDS.PERSISTENT_STORAGE_DELETE_FILE
 ]
 
 export const MetadataStates = {
@@ -513,6 +525,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   HTTP_KEY_PATH: {
     name: 'HTTP_KEY_PATH',
     value: process.env.HTTP_KEY_PATH,
+    required: false
+  },
+  PERSISTENT_STORAGE: {
+    name: 'PERSISTENT_STORAGE',
+    value: process.env.PERSISTENT_STORAGE,
     required: false
   }
 }

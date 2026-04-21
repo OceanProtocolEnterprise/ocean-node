@@ -485,11 +485,6 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
       params.push(...consumerAddrs)
     }
 
-    if (status) {
-      conditions.push(`status = ?`)
-      params.push(status.toString())
-    }
-
     if (conditions.length > 0) {
       selectSQL += ` WHERE ${conditions.join(' AND ')}`
     }

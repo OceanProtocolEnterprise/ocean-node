@@ -38,8 +38,8 @@ import { create256Hash } from '../../utils/crypt.js'
 import { getDatabase, isReachableConnection } from '../../utils/database.js'
 import { sleep } from '../../utils/util.js'
 import { isReindexingNeeded } from './version.js'
-import { DB_EVENTS, ES_CONNECTION_EVENTS } from '../database/ElasticsearchConfigHelper.js'
 import { getPackageVersion } from '../../utils/version.js'
+import { DB_EVENTS, ES_CONNECTION_EVENTS } from '../database/ElasticsearchConfigHelper.js'
 
 /**
  * Event emitter for DDO (Data Descriptor Object) events

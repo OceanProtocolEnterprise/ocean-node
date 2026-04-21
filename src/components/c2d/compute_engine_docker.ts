@@ -20,9 +20,17 @@ import type {
   RunningPlatform,
   ComputeEnvFeesStructure,
   ComputeResourceRequest,
-  ComputeEnvFees
+  ComputeEnvFees,
+  ComputeResource,
+  C2DEnvironmentConfig,
+  ComputeResourcesPricingInfo
 } from '../../@types/C2D/C2D.js'
-import { getConfiguration } from '../../utils/config.js'
+import {
+  BENCHMARK_MONITORING_ADDRESS,
+  getConfiguration,
+  SEPOLIA_CHAIN_ID,
+  USDC_TOKEN
+} from '../../utils/config.js'
 import { C2DEngine } from './compute_engine_base.js'
 import { C2DDatabase } from '../database/C2DDatabase.js'
 import { Escrow } from '../core/utils/escrow.js'
@@ -41,6 +49,7 @@ import {
   writeFileSync,
   appendFileSync,
   statSync,
+  statfsSync,
   createReadStream
 } from 'fs'
 import { pipeline } from 'node:stream/promises'
@@ -81,8 +90,7 @@ export class C2DEngineDocker extends C2DEngine {
   private scanImageDBUpdateInterval: number
   private trivyCachePath: string
   private cpuAllocations: Map<string, number[]> = new Map()
-  private envCpuCores: number[] = []
-  private cpuOffset: number
+  private envCpuCoresMap: Map<string, number[]> = new Map()
   private enableNetwork: boolean
 
   public constructor(
@@ -90,11 +98,9 @@ export class C2DEngineDocker extends C2DEngine {
     db: C2DDatabase,
     escrow: Escrow,
     keyManager: KeyManager,
-    dockerRegistryAuths: dockerRegistrysAuth,
-    cpuOffset: number = 0
+    dockerRegistryAuths: dockerRegistrysAuth
   ) {
     super(clusterConfig, db, escrow, keyManager, dockerRegistryAuths)
-    this.cpuOffset = cpuOffset
 
     this.docker = null
     if (clusterConfig.connection.socketPath) {
@@ -145,14 +151,107 @@ export class C2DEngineDocker extends C2DEngine {
     // envs are build on start function
   }
 
+  private processFeesForEnvironment(
+    rawFees: ComputeEnvFeesStructure | undefined,
+    supportedChains: number[]
+  ): ComputeEnvFeesStructure | null {
+    if (!rawFees || Object.keys(rawFees).length === 0) return null
+    let fees: ComputeEnvFeesStructure = null
+    for (const feeChain of Object.keys(rawFees)) {
+      if (!supportedChains.includes(parseInt(feeChain))) continue
+      if (fees === null) fees = {}
+      if (!(feeChain in fees)) fees[feeChain] = []
+      const tmpFees: ComputeEnvFees[] = []
+      for (const feeEntry of rawFees[feeChain]) {
+        if (!feeEntry.prices || feeEntry.prices.length === 0) {
+          CORE_LOGGER.error(
+            `Unable to find prices for fee ${JSON.stringify(feeEntry)} on chain ${feeChain}`
+          )
+          continue
+        }
+        if (!feeEntry.feeToken) {
+          const tokenAddress = getOceanTokenAddressForChain(parseInt(feeChain))
+          if (tokenAddress) {
+            feeEntry.feeToken = tokenAddress
+            tmpFees.push(feeEntry)
+          } else {
+            CORE_LOGGER.error(
+              `Unable to find Ocean token address for chain ${feeChain} and no custom token provided`
+            )
+          }
+        } else {
+          tmpFees.push(feeEntry)
+        }
+      }
+      fees[feeChain] = tmpFees
+    }
+    return fees
+  }
+
   public getStoragePath(): string {
     return this.getC2DConfig().tempFolder + this.getC2DConfig().hash
   }
 
+  private createBenchmarkEnvironment(sysinfo: any, envConfig: any): void {
+    const ramGB = this.physicalLimits.get('ram') || 0
+    const physicalDiskGB = this.physicalLimits.get('disk') || 0
+
+    const gpuMap = new Map<string, ComputeResource>()
+    for (const env of envConfig.environments) {
+      if (env.resources) {
+        for (const res of env.resources) {
+          if (res.id !== 'cpu' && res.id !== 'ram' && res.id !== 'disk') {
+            if (!gpuMap.has(res.id)) {
+              gpuMap.set(res.id, res)
+            }
+          }
+        }
+      }
+    }
+    const gpuResources: ComputeResource[] = Array.from(gpuMap.values())
+
+    const benchmarkPrices: ComputeResourcesPricingInfo[] = gpuResources.map((gpu) => ({
+      id: gpu.id,
+      price: 1
+    }))
+
+    const sepoliaChainId = SEPOLIA_CHAIN_ID
+    const usdcToken = USDC_TOKEN
+
+    const benchmarkFees: ComputeEnvFeesStructure = {
+      [sepoliaChainId]: [{ feeToken: usdcToken, prices: benchmarkPrices }]
+    }
+
+    const benchmarkEnv: C2DEnvironmentConfig = {
+      description: 'Auto-generated benchmark environment',
+      storageExpiry: 604800,
+      maxJobDuration: 180,
+      minJobDuration: 60,
+      resources: [
+        { id: 'cpu', total: sysinfo.NCPU, min: 1, max: sysinfo.NCPU },
+        { id: 'ram', total: ramGB, min: 1, max: ramGB },
+        { id: 'disk', total: physicalDiskGB, min: 0, max: physicalDiskGB },
+        ...gpuResources
+      ],
+      access: {
+        addresses: [BENCHMARK_MONITORING_ADDRESS],
+        accessLists: null
+      },
+      fees: benchmarkFees
+    }
+
+    envConfig.environments.push(benchmarkEnv)
+  }
+
   public override async start() {
-    // let's build the env.   Swarm and k8 will build multiple envs, based on arhitecture
     const config = await getConfiguration()
     const envConfig = await this.getC2DConfig().connection
+    if (!envConfig?.environments?.length) {
+      CORE_LOGGER.warn(
+        `Skipping C2D engine ${this.getC2DConfig().hash}: no environments configured`
+      )
+      return
+    }
     let sysinfo = null
     try {
       sysinfo = await this.docker.info()
@@ -161,186 +260,169 @@ export class C2DEngineDocker extends C2DEngine {
       // since we cannot connect to docker, we cannot start the engine -> no envs
       return
     }
-    let fees: ComputeEnvFeesStructure = null
+
+    this.physicalLimits.set('cpu', sysinfo.NCPU)
+    this.physicalLimits.set('ram', Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024))
+    try {
+      const diskStats = statfsSync(this.getC2DConfig().tempFolder)
+      const diskGB = Math.floor((diskStats.bsize * diskStats.blocks) / 1024 / 1024 / 1024)
+      this.physicalLimits.set('disk', diskGB)
+    } catch (e) {
+      CORE_LOGGER.warn('Could not detect physical disk size: ' + e.message)
+    }
+
+    // Determine supported chains
     const supportedChains: number[] = []
     if (config.supportedNetworks) {
       for (const chain of Object.keys(config.supportedNetworks)) {
         supportedChains.push(parseInt(chain))
       }
     }
-    if (envConfig.fees && Object.keys(envConfig.fees).length > 0) {
-      for (const feeChain of Object.keys(envConfig.fees)) {
-        // for (const feeConfig of envConfig.fees) {
-        if (supportedChains.includes(parseInt(feeChain))) {
-          if (fees === null) fees = {}
-          if (!(feeChain in fees)) fees[feeChain] = []
-          const tmpFees: ComputeEnvFees[] = []
-          for (let i = 0; i < envConfig.fees[feeChain].length; i++) {
-            if (
-              envConfig.fees[feeChain][i].prices &&
-              envConfig.fees[feeChain][i].prices.length > 0
-            ) {
-              if (!envConfig.fees[feeChain][i].feeToken) {
-                const tokenAddress = getOceanTokenAddressForChain(parseInt(feeChain))
-                if (tokenAddress) {
-                  envConfig.fees[feeChain][i].feeToken = tokenAddress
-                  tmpFees.push(envConfig.fees[feeChain][i])
-                } else {
-                  CORE_LOGGER.error(
-                    `Unable to find Ocean token address for chain ${feeChain} and no custom token provided`
-                  )
-                }
-              } else {
-                tmpFees.push(envConfig.fees[feeChain][i])
-              }
-            } else {
-              CORE_LOGGER.error(
-                `Unable to find prices for fee ${JSON.stringify(
-                  envConfig.fees[feeChain][i]
-                )} on chain ${feeChain}`
-              )
-            }
+
+    const platform: RunningPlatform = {
+      architecture: sysinfo.Architecture,
+      os: sysinfo.OSType
+    }
+    const consumerAddress = this.getKeyManager().getEthAddress()
+
+    if (config.enableBenchmark) {
+      this.createBenchmarkEnvironment(sysinfo, envConfig)
+    }
+
+    for (let envIdx = 0; envIdx < envConfig.environments.length; envIdx++) {
+      const envDef: C2DEnvironmentConfig = envConfig.environments[envIdx]
+
+      const fees = this.processFeesForEnvironment(envDef.fees, supportedChains)
+
+      const envResources: ComputeResource[] = []
+      const cpuResources = {
+        id: 'cpu',
+        type: 'cpu',
+        total: sysinfo.NCPU,
+        max: sysinfo.NCPU,
+        min: 1,
+        description: os.cpus()[0].model
+      }
+      const ramResources = {
+        id: 'ram',
+        type: 'ram',
+        total: Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024),
+        max: Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024),
+        min: 1
+      }
+      const physicalDiskGB = this.physicalLimits.get('disk') || 0
+      const diskResources = {
+        id: 'disk',
+        type: 'disk',
+        total: physicalDiskGB,
+        max: physicalDiskGB,
+        min: 0
+      }
+
+      if (envDef.resources) {
+        for (const res of envDef.resources) {
+          // allow user to add other resources
+          if (res.id === 'cpu') {
+            if (res.total) cpuResources.total = res.total
+            if (res.max) cpuResources.max = res.max
+            if (res.min) cpuResources.min = res.min
           }
-          fees[feeChain] = tmpFees
-        }
-      }
+          if (res.id === 'ram') {
+            if (res.total) ramResources.total = res.total
+            if (res.max) ramResources.max = res.max
+            if (res.min) ramResources.min = res.min
+          }
+          if (res.id === 'disk') {
+            if (res.total) diskResources.total = res.total
+            if (res.max) diskResources.max = res.max
+            if (res.min !== undefined) diskResources.min = res.min
+          }
 
-      /* for (const chain of Object.keys(config.supportedNetworks)) {
-        const chainId = parseInt(chain)
-        if (task.chainId && task.chainId !== chainId) continue
-        result[chainId] = await computeEngines.fetchEnvironments(chainId)
-      } */
-    }
-    this.envs.push({
-      id: '', // this.getC2DConfig().hash + '-' + create256Hash(JSON.stringify(this.envs[i])),
-      runningJobs: 0,
-      consumerAddress: this.getKeyManager().getEthAddress(),
-      platform: {
-        architecture: sysinfo.Architecture,
-        os: sysinfo.OSType
-      },
-      access: {
-        addresses: [],
-        accessLists: null
-      },
-      fees,
-      queuedJobs: 0,
-      queuedFreeJobs: 0,
-      queMaxWaitTime: 0,
-      queMaxWaitTimeFree: 0,
-      runMaxWaitTime: 0,
-      runMaxWaitTimeFree: 0
-    })
-    if (`access` in envConfig) this.envs[0].access = envConfig.access
-
-    if (`storageExpiry` in envConfig) this.envs[0].storageExpiry = envConfig.storageExpiry
-    if (`minJobDuration` in envConfig)
-      this.envs[0].minJobDuration = envConfig.minJobDuration
-    if (`maxJobDuration` in envConfig)
-      this.envs[0].maxJobDuration = envConfig.maxJobDuration
-    if (`maxJobs` in envConfig) this.envs[0].maxJobs = envConfig.maxJobs
-    // let's add resources
-    this.envs[0].resources = []
-    const cpuResources = {
-      id: 'cpu',
-      type: 'cpu',
-      total: sysinfo.NCPU,
-      max: sysinfo.NCPU,
-      min: 1,
-      description: os.cpus()[0].model
-    }
-    const ramResources = {
-      id: 'ram',
-      type: 'ram',
-      total: Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024),
-      max: Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024),
-      min: 1
-    }
-
-    if (envConfig.resources) {
-      for (const res of envConfig.resources) {
-        // allow user to add other resources
-        if (res.id === 'cpu') {
-          if (res.total) cpuResources.total = res.total
-          if (res.max) cpuResources.max = res.max
-          if (res.min) cpuResources.min = res.min
-        }
-        if (res.id === 'ram') {
-          if (res.total) ramResources.total = res.total
-          if (res.max) ramResources.max = res.max
-          if (res.min) ramResources.min = res.min
-        }
-
-        if (res.id !== 'cpu' && res.id !== 'ram') {
-          if (!res.max) res.max = res.total
-          if (!res.min) res.min = 0
-          this.envs[0].resources.push(res)
-        }
-      }
-    }
-    this.envs[0].resources.push(cpuResources)
-    this.envs[0].resources.push(ramResources)
-    // Build the list of physical CPU core indices for this environment
-    this.envCpuCores = Array.from(
-      { length: cpuResources.total },
-      (_, i) => this.cpuOffset + i
-    )
-    CORE_LOGGER.info(
-      `CPU affinity: environment cores ${this.envCpuCores[0]}-${this.envCpuCores[this.envCpuCores.length - 1]} (offset=${this.cpuOffset}, total=${cpuResources.total})`
-    )
-    /* TODO  - get namedresources & discreete one
-    if (sysinfo.GenericResources) {
-      for (const [key, value] of Object.entries(sysinfo.GenericResources)) {
-        for (const [type, val] of Object.entries(value)) {
-          // for (const resType in sysinfo.GenericResources) {
-          if (type === 'NamedResourceSpec') {
-            // if we have it, ignore it
-            const resourceId = val.Value
-            const resourceType = val.Kind
-            let found = false
-            for (const res of this.envs[0].resources) {
-              if (res.id === resourceId) {
-                found = true
-                break
-              }
-            }
-            if (!found) {
-              this.envs[0].resources.push({
-                id: resourceId,
-                kind: resourceType,
-                total: 1,
-                max: 1,
-                min: 0
-              })
-            }
+          if (res.id !== 'cpu' && res.id !== 'ram' && res.id !== 'disk') {
+            if (!res.max) res.max = res.total
+            if (!res.min) res.min = 0
+            envResources.push(res)
           }
         }
       }
+      envResources.push(cpuResources)
+      envResources.push(ramResources)
+      envResources.push(diskResources)
+
+      const env: ComputeEnvironment = {
+        id: '',
+        runningJobs: 0,
+        consumerAddress,
+        platform,
+        access: envDef.access || { addresses: [], accessLists: null },
+        fees,
+        resources: envResources,
+        queuedJobs: 0,
+        queuedFreeJobs: 0,
+        queMaxWaitTime: 0,
+        queMaxWaitTimeFree: 0,
+        runMaxWaitTime: 0,
+        runMaxWaitTimeFree: 0
+      }
+
+      if (envDef.storageExpiry !== undefined) env.storageExpiry = envDef.storageExpiry
+      if (envDef.minJobDuration !== undefined) env.minJobDuration = envDef.minJobDuration
+      if (envDef.maxJobDuration !== undefined) env.maxJobDuration = envDef.maxJobDuration
+      if (envDef.maxJobs !== undefined) env.maxJobs = envDef.maxJobs
+      if (envDef.description !== undefined) env.description = envDef.description
+
+      // Free tier config for this environment
+      if (envDef.free) {
+        env.free = {
+          access: envDef.free.access || { addresses: [], accessLists: null }
+        }
+        if (envDef.free.storageExpiry !== undefined)
+          env.free.storageExpiry = envDef.free.storageExpiry
+        if (envDef.free.minJobDuration !== undefined)
+          env.free.minJobDuration = envDef.free.minJobDuration
+        if (envDef.free.maxJobDuration !== undefined)
+          env.free.maxJobDuration = envDef.free.maxJobDuration
+        if (envDef.free.maxJobs !== undefined) env.free.maxJobs = envDef.free.maxJobs
+        if (envDef.free.resources) env.free.resources = envDef.free.resources
+      }
+
+      const envIdSuffix = envDef.id || String(envIdx)
+      env.id =
+        this.getC2DConfig().hash +
+        '-' +
+        create256Hash(JSON.stringify(env.fees) + envIdSuffix)
+
+      this.envs.push(env)
+      CORE_LOGGER.info(
+        `Engine ${this.getC2DConfig().hash}: created environment ${env.id} (index=${envIdx}, resources=${envResources.map((r) => r.id).join(',')})`
+      )
     }
-      */
-    // limits for free env
-    if ('free' in envConfig) {
-      this.envs[0].free = {
-        access: {
-          addresses: [],
-          accessLists: null
+
+    const physicalCpuCount = this.physicalLimits.get('cpu') || 0
+    let cpuOffset = 0
+    for (const env of this.envs) {
+      const cpuRes = this.getResource(env.resources ?? [], 'cpu')
+      if (cpuRes && cpuRes.total > 0) {
+        const isBenchmarkEnv = env.access?.addresses?.includes(
+          BENCHMARK_MONITORING_ADDRESS
+        )
+        if (isBenchmarkEnv) {
+          const total = physicalCpuCount > 0 ? physicalCpuCount : cpuRes.total
+          const cores = Array.from({ length: total }, (_, i) => i)
+          this.envCpuCoresMap.set(env.id, cores)
+          CORE_LOGGER.info(
+            `CPU affinity: benchmark environment ${env.id} cores 0-${cores[cores.length - 1]}`
+          )
+        } else {
+          const cores = Array.from({ length: cpuRes.total }, (_, i) => cpuOffset + i)
+          this.envCpuCoresMap.set(env.id, cores)
+          CORE_LOGGER.info(
+            `CPU affinity: environment ${env.id} cores ${cores[0]}-${cores[cores.length - 1]}`
+          )
+          cpuOffset += cpuRes.total
         }
       }
-      if (`access` in envConfig.free) this.envs[0].free.access = envConfig.free.access
-      if (`storageExpiry` in envConfig.free)
-        this.envs[0].free.storageExpiry = envConfig.free.storageExpiry
-      if (`minJobDuration` in envConfig.free)
-        this.envs[0].free.minJobDuration = envConfig.free.minJobDuration
-      if (`maxJobDuration` in envConfig.free)
-        this.envs[0].free.maxJobDuration = envConfig.free.maxJobDuration
-      if (`maxJobs` in envConfig.free) this.envs[0].free.maxJobs = envConfig.free.maxJobs
-      if ('resources' in envConfig.free) {
-        // TO DO - check if resource is also listed in this.envs[0].resources, if not, ignore it
-        this.envs[0].free.resources = envConfig.free.resources
-      }
     }
-    this.envs[0].id =
-      this.getC2DConfig().hash + '-' + create256Hash(JSON.stringify(this.envs[0].fees))
 
     // Rebuild CPU allocations from running containers (handles node restart)
     await this.rebuildCpuAllocations()
@@ -1642,12 +1724,11 @@ export class C2DEngineDocker extends C2DEngine {
       }
       // check if resources are available now
       try {
-        const env = await this.getComputeEnvironment(
-          job.payment && job.payment.chainId ? job.payment.chainId : null,
-          job.environment,
-          null
-        )
-        await this.checkIfResourcesAreAvailable(job.resources, env, job.isFree)
+        const chainId = job.payment && job.payment.chainId ? job.payment.chainId : null
+        const allEnvs = await this.getComputeEnvironments(chainId)
+        const env = allEnvs.find((e) => e.id === job.environment)
+        if (!env) throw new Error(`Environment ${job.environment} not found`)
+        await this.checkIfResourcesAreAvailable(job.resources, env, job.isFree, allEnvs)
       } catch (err) {
         // resources are still not available
         return
@@ -1703,8 +1784,9 @@ export class C2DEngineDocker extends C2DEngine {
       }
       // create the volume & create container
       // TO DO C2D:  Choose driver & size
-      // get env info
-      const envResource = this.envs[0].resources
+      // get environment-specific resources for Docker device/hardware configuration
+      const env = this.envs.find((e) => e.id === job.environment)
+      const envResource = env?.resources || []
       const volume: VolumeCreateOptions = {
         Name: job.jobId + '-volume'
       }
@@ -1763,7 +1845,7 @@ export class C2DEngineDocker extends C2DEngine {
         hostConfig.CpuPeriod = 100000 // 100 miliseconds is usually the default
         hostConfig.CpuQuota = Math.floor(cpus * hostConfig.CpuPeriod)
         // Pin the container to specific physical CPU cores
-        const cpusetStr = this.allocateCpus(job.jobId, cpus)
+        const cpusetStr = this.allocateCpus(job.jobId, cpus, job.environment)
         if (cpusetStr) {
           hostConfig.CpusetCpus = cpusetStr
         }
@@ -1820,6 +1902,64 @@ export class C2DEngineDocker extends C2DEngine {
         }
         containerInfo.Env = envVars
       }
+      // persistent Storage: bind-mount bucket files into the job container (localfs backend)
+      for (const i in job.assets) {
+        const asset = job.assets[i]
+        if (!asset.fileObject || asset.fileObject.type !== 'nodePersistentStorage') {
+          continue
+        }
+        const fo = asset.fileObject as { bucketId?: string; fileName?: string }
+        if (!fo.bucketId || !fo.fileName) {
+          CORE_LOGGER.error(
+            `Job ${job.jobId} asset ${i}: nodePersistentStorage requires bucketId and fileName`
+          )
+          job.status = C2DStatusNumber.DataProvisioningFailed
+          job.statusText = C2DStatusText.DataProvisioningFailed
+          job.isRunning = false
+          job.dateFinished = String(Date.now() / 1000)
+          await this.db.updateJob(job)
+          await this.cleanupJob(job)
+          return
+        }
+        const ps = OceanNode.getInstance().getPersistentStorage()
+        if (!ps) {
+          CORE_LOGGER.error(
+            `Job ${job.jobId} asset ${i}: persistent storage is not configured on this node`
+          )
+          job.status = C2DStatusNumber.DataProvisioningFailed
+          job.statusText = C2DStatusText.DataProvisioningFailed
+          job.isRunning = false
+          job.dateFinished = String(Date.now() / 1000)
+          await this.db.updateJob(job)
+          await this.cleanupJob(job)
+          return
+        }
+        try {
+          const bindMount = await ps.getDockerMountObject(
+            fo.bucketId,
+            fo.fileName,
+            job.owner
+          )
+          CORE_LOGGER.debug(
+            `Mounting bucket ${fo.bucketId} to folder ${bindMount.Target}`
+          )
+          hostConfig.Mounts.push(bindMount)
+          mountVols[bindMount.Target] = {}
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e)
+          CORE_LOGGER.error(
+            `Job ${job.jobId} asset ${i}: failed to resolve persistent storage bind: ${errMsg}`
+          )
+          job.status = C2DStatusNumber.DataProvisioningFailed
+          job.statusText = C2DStatusText.DataProvisioningFailed
+          job.isRunning = false
+          job.dateFinished = String(Date.now() / 1000)
+          await this.db.updateJob(job)
+          await this.cleanupJob(job)
+          return
+        }
+      }
+
       const container = await this.createDockerContainer(containerInfo, true)
       if (container) {
         job.status = C2DStatusNumber.Provisioning
@@ -1946,7 +2086,13 @@ export class C2DEngineDocker extends C2DEngine {
             job.isStarted = false
             job.status = C2DStatusNumber.PublishingResults
             job.statusText = C2DStatusText.PublishingResults
-            job.algoStopTimestamp = String(Date.now() / 1000)
+            const containerFinishedAt =
+              new Date(details.State.FinishedAt).getTime() / 1000
+            job.algoStopTimestamp = String(
+              containerFinishedAt > parseFloat(job.algoStartTimestamp)
+                ? containerFinishedAt
+                : Date.now() / 1000
+            )
             job.isRunning = false
             await this.db.updateJob(job)
             return
@@ -2067,8 +2213,9 @@ export class C2DEngineDocker extends C2DEngine {
     return cores
   }
 
-  private allocateCpus(jobId: string, count: number): string | null {
-    if (this.envCpuCores.length === 0 || count <= 0) return null
+  private allocateCpus(jobId: string, count: number, envId: string): string | null {
+    const envCores = this.envCpuCoresMap.get(envId)
+    if (!envCores || envCores.length === 0 || count <= 0) return null
     const existing = this.cpuAllocations.get(jobId)
     if (existing && existing.length > 0) {
       const cpusetStr = existing.join(',')
@@ -2086,7 +2233,7 @@ export class C2DEngineDocker extends C2DEngine {
     }
 
     const freeCores: number[] = []
-    for (const core of this.envCpuCores) {
+    for (const core of envCores) {
       if (!usedCores.has(core)) {
         freeCores.push(core)
         if (freeCores.length === count) break
@@ -2095,7 +2242,7 @@ export class C2DEngineDocker extends C2DEngine {
 
     if (freeCores.length < count) {
       CORE_LOGGER.warn(
-        `CPU affinity: not enough free cores for job ${jobId} (requested=${count}, available=${freeCores.length}/${this.envCpuCores.length})`
+        `CPU affinity: not enough free cores for job ${jobId} in env ${envId} (requested=${count}, available=${freeCores.length}/${envCores.length})`
       )
       return null
     }
@@ -2120,7 +2267,7 @@ export class C2DEngineDocker extends C2DEngine {
    * On startup, inspects running Docker containers to rebuild the CPU allocation map.
    */
   private async rebuildCpuAllocations(): Promise<void> {
-    if (this.envCpuCores.length === 0) return
+    if (this.envCpuCoresMap.size === 0) return
     try {
       const jobs = await this.db.getRunningJobs(this.getC2DConfig().hash)
       for (const job of jobs) {
@@ -2767,6 +2914,10 @@ export class C2DEngineDocker extends C2DEngine {
       if (asset.fileObject) {
         try {
           if (asset.fileObject.type) {
+            if (asset.fileObject.type === 'nodePersistentStorage') {
+              // local storage is handled later, when we start the container and create the binds
+              continue
+            }
             storage = Storage.getStorageClass(asset.fileObject, config)
           } else {
             CORE_LOGGER.info('asset file object seems to be encrypted, checking it...')

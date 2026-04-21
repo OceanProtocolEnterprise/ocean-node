@@ -13,10 +13,21 @@ export class PolicyServer {
     this.apikey = process.env.POLICY_SERVER_API_KEY
   }
 
+  private attachNodeAddress(command: Record<string, any>): Record<string, any> {
+    const node = OceanNode.getInstance()
+    const keyManager = node.getKeyManager()
+    const nodeAddress = keyManager.getEthWallet().address
+    return {
+      ...command,
+      nodeAddress
+    }
+  }
+
   private async askServer(command: any): Promise<PolicyServerResult> {
     if (!this.serverUrl) return { success: true, message: '', httpStatus: 404 }
     let response
     const commandWithNodeAddress = this.attachNodeAddress(command)
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     }
@@ -46,16 +57,6 @@ export class PolicyServer {
       }
     }
     return { success: false, message: await response.text(), httpStatus: response.status }
-  }
-
-  private attachNodeAddress(command: Record<string, any>): Record<string, any> {
-    const node = OceanNode.getInstance()
-    const keyManager = node.getKeyManager()
-    const nodeAddress = keyManager.getEthWallet().address
-    return {
-      ...command,
-      nodeAddress
-    }
   }
 
   async checknewDDO(
@@ -150,7 +151,7 @@ export class PolicyServer {
 
   async checkStartCompute(
     documentId: string,
-    ddo: DDO | Record<string, any>,
+    ddo: DDO,
     serviceId: string,
     consumerAddress: string,
     policyServer: any

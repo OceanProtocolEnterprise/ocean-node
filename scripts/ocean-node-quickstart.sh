@@ -113,6 +113,12 @@ ensure_jq() {
     fi
 }
 
+get_public_ip() {
+    if command -v curl >/dev/null 2>&1; then
+        DETECTED_PUBLIC_IP=$(curl -s ifconfig.me) 
+    fi
+}
+
 echo "Checking prerequisites (jq) are installed.."
 ensure_jq
 
@@ -170,8 +176,14 @@ if [ "$enable_upnp" == "y" ]; then
     P2P_ENABLE_UPNP='true'
 fi
 
-
-read -p "Provide the public IPv4 address or FQDN where this node will be accessible: " P2P_ANNOUNCE_ADDRESS
+get_public_ip
+if [ -n "$DETECTED_PUBLIC_IP" ]; then
+    echo -ne "Provide the public IPv4 address or FQDN where this node will be accessible (press Enter to accept detected address: "$DETECTED_PUBLIC_IP") ": 
+    read P2P_ANNOUNCE_ADDRESS
+    P2P_ANNOUNCE_ADDRESS=${P2P_ANNOUNCE_ADDRESS:-$DETECTED_PUBLIC_IP}
+else
+    read -p "Provide the public IPv4 address or FQDN where this node will be accessible: " P2P_ANNOUNCE_ADDRESS
+fi
 
 if [ -n "$P2P_ANNOUNCE_ADDRESS" ]; then
   validate_ip_or_fqdn "$P2P_ANNOUNCE_ADDRESS"
@@ -182,10 +194,10 @@ if [ -n "$P2P_ANNOUNCE_ADDRESS" ]; then
 
 if [[ "$P2P_ANNOUNCE_ADDRESS" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     # IPv4
-    P2P_ANNOUNCE_ADDRESSES='["/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/ip4/'$P2P_ANNOUNCE_ADDRESS'/ws/tcp/'$P2P_ipV4BindWsPort'"]'
+    P2P_ANNOUNCE_ADDRESSES='["/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/ws", "/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/tls/ws"]'
   elif [[ "$P2P_ANNOUNCE_ADDRESS" =~ ^[a-zA-Z0-9.-]+$ ]]; then
     # FQDN
-    P2P_ANNOUNCE_ADDRESSES='["/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/dns4/'$P2P_ANNOUNCE_ADDRESS'/ws/tcp/'$P2P_ipV4BindWsPort'"]'
+    P2P_ANNOUNCE_ADDRESSES='["/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/ws", "/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/tls/ws"]'
   fi
 else
   P2P_ANNOUNCE_ADDRESSES=''
@@ -227,47 +239,51 @@ if [ -z "$DOCKER_COMPUTE_ENVIRONMENTS" ]; then
   export DOCKER_COMPUTE_ENVIRONMENTS='[
     {
       "socketPath": "/var/run/docker.sock",
-      "resources": [
+      "environments": [
         {
-          "id": "disk",
-          "total": 10
-        }
-      ],
-      "storageExpiry": 604800,
-      "maxJobDuration": 36000,
-      "minJobDuration": 60,
-      "fees": {
-        "1": [
-          {
-            "feeToken": "0x123",
-            "prices": [
+          "storageExpiry": 604800,
+          "maxJobDuration": 36000,
+          "minJobDuration": 60,
+          "resources": [
+            {
+              "id": "disk",
+              "total": 10
+            }
+          ],
+          "fees": {
+            "1": [
+              {
+                "feeToken": "0x123",
+                "prices": [
+                  {
+                    "id": "cpu",
+                    "price": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "free": {
+            "maxJobDuration": 360000,
+            "minJobDuration": 60,
+            "maxJobs": 3,
+            "resources": [
               {
                 "id": "cpu",
-                "price": 1
+                "max": 1
+              },
+              {
+                "id": "ram",
+                "max": 1
+              },
+              {
+                "id": "disk",
+                "max": 1
               }
             ]
           }
-        ]
-      },
-      "free": {
-        "maxJobDuration": 360000,
-        "minJobDuration": 60,
-        "maxJobs": 3,
-        "resources": [
-          {
-            "id": "cpu",
-            "max": 1
-          },
-          {
-            "id": "ram",
-            "max": 1
-          },
-          {
-            "id": "disk",
-            "max": 1
-          }
-        ]
-      }
+        }
+      ]
     }
   ]'
 fi
@@ -616,7 +632,7 @@ if command -v jq &> /dev/null; then
 
   if [ "$GPU_COUNT" -gt 0 ]; then
     echo "Detected $GPU_COUNT GPU type(s). Updating configuration..."
-    DOCKER_COMPUTE_ENVIRONMENTS=$(echo "$DOCKER_COMPUTE_ENVIRONMENTS" | jq --argjson gpus "$DETECTED_GPUS" '.[0].resources += $gpus')
+    DOCKER_COMPUTE_ENVIRONMENTS=$(echo "$DOCKER_COMPUTE_ENVIRONMENTS" | jq --argjson gpus "$DETECTED_GPUS" '.[0].environments[0].resources += $gpus')
     echo "GPUs added to Compute Environment resources."
   else
     echo "No GPUs detected."
@@ -684,10 +700,10 @@ services:
 #      P2P_mDNSInterval: ''
 #      P2P_connectionsMaxParallelDials: ''
 #      P2P_connectionsDialTimeout: ''
-       P2P_ENABLE_UPNP: '$P2P_ENABLE_UPNP'
+      P2P_ENABLE_UPNP: '$P2P_ENABLE_UPNP'
 #      P2P_ENABLE_AUTONAT: ''
-#      P2P_ENABLE_CIRCUIT_RELAY_SERVER: ''
-#      P2P_ENABLE_CIRCUIT_RELAY_CLIENT: ''
+      P2P_ENABLE_CIRCUIT_RELAY_SERVER: false
+      P2P_ENABLE_CIRCUIT_RELAY_CLIENT: false
 #      P2P_BOOTSTRAP_NODES: ''
 #      P2P_FILTER_ANNOUNCED_ADDRESSES: ''
       DOCKER_COMPUTE_ENVIRONMENTS: '$DOCKER_COMPUTE_ENVIRONMENTS'
@@ -753,3 +769,7 @@ echo -e "\e[1;32mP2P IPv6 TCP Port: $P2P_ipV6BindTcpPort\e[0m"
 echo -e "\e[1;32mP2P IPv6 WebSocket Port: $P2P_ipV6BindWsPort\e[0m"
 echo ""
 echo -e "\e[1;32m4)\e[0m If using SSL/TLS with a custom domain name, make sure to listen on host port 443 for the HTTP API, or use a reverse proxy with TLS offloading"
+echo ""
+echo -e "If your node is not reachable by other peers (NAT, no public IP, port forwarding issues),"
+echo -e "refer to the networking guide for help with Dynamic DNS, port forwarding, and circuit relay:"
+echo -e "\e[1;34mhttps://github.com/oceanprotocol/ocean-node/blob/main/docs/networking.md\e[0m"
