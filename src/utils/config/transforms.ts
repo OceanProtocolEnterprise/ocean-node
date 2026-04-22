@@ -8,7 +8,7 @@ export const booleanFromString = z.union([z.boolean(), z.string()]).transform((v
   return v
 })
 
-export const jsonFromString = <T>(schema: z.ZodType<T>) =>
+export const jsonFromString = <T>(schema: z.ZodType<T>, fieldName?: string) =>
   z.union([schema, z.string(), z.undefined()]).transform((v) => {
     if (v === undefined || v === 'undefined') {
       return undefined
@@ -17,7 +17,15 @@ export const jsonFromString = <T>(schema: z.ZodType<T>) =>
       try {
         return JSON.parse(v)
       } catch (error) {
-        CONFIG_LOGGER.warn(`Failed to parse JSON: ${error.message}`)
+        const trimmed = v.trim()
+        const fieldContext = fieldName ? ` for "${fieldName}"` : ''
+        const valueDetails =
+          trimmed.length === 0
+            ? 'empty/whitespace-only string'
+            : `string length=${v.length}, startsWith=${JSON.stringify(trimmed.slice(0, 16))}`
+        CONFIG_LOGGER.warn(
+          `Failed to parse JSON${fieldContext}: ${error.message} (${valueDetails})`
+        )
         return v
       }
     }

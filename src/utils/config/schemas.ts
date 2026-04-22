@@ -88,7 +88,10 @@ export const PersistentStorageConfigSchema = z
   .object({
     enabled: z.boolean().optional().default(false),
     type: z.enum(['localfs', 's3']).optional().default('localfs'),
-    accessLists: jsonFromString(z.array(z.record(z.string(), z.array(z.string()))))
+    accessLists: jsonFromString(
+      z.array(z.record(z.string(), z.array(z.string()))),
+      'persistentStorage.accessLists'
+    )
       .optional()
       .default([]),
     options: z.any().optional()
@@ -283,9 +286,9 @@ export const C2DClusterInfoSchema = z.object({
 })
 
 export const OceanNodeP2PConfigSchema = z.object({
-  bootstrapNodes: jsonFromString(z.array(z.string())).default([
-    ...DEFAULT_BOOTSTRAP_ADDRESSES
-  ]),
+  bootstrapNodes: jsonFromString(z.array(z.string()), 'p2pConfig.bootstrapNodes').default(
+    [...DEFAULT_BOOTSTRAP_ADDRESSES]
+  ),
   bootstrapTimeout: z.coerce.number().optional().default(10000),
   bootstrapTagName: z.string().optional().default('bootstrap'),
   bootstrapTagValue: z.coerce.number().optional().default(50),
@@ -332,8 +335,13 @@ export const OceanNodeP2PConfigSchema = z.object({
   enableCircuitRelayClient: booleanFromString.optional().default(false),
   circuitRelays: z.coerce.number().optional().default(0),
   announcePrivateIp: booleanFromString.optional().default(false),
-  announceAddresses: jsonFromString(z.array(z.string())).optional().default([]),
-  filterAnnouncedAddresses: jsonFromString(z.array(z.string()))
+  announceAddresses: jsonFromString(z.array(z.string()), 'p2pConfig.announceAddresses')
+    .optional()
+    .default([]),
+  filterAnnouncedAddresses: jsonFromString(
+    z.array(z.string()),
+    'p2pConfig.filterAnnouncedAddresses'
+  )
     .optional()
     .default([...DEFAULT_FILTER_ANNOUNCED_ADDRESSES]),
   minConnections: z.coerce.number().optional().default(1),
@@ -345,34 +353,49 @@ export const OceanNodeP2PConfigSchema = z.object({
   enableNetworkStats: booleanFromString.optional().default(false)
 })
 
-const addressArrayFromString = jsonFromString(z.array(z.string())).transform(
-  (addresses) => {
-    if (!Array.isArray(addresses)) return []
-    try {
-      return addresses.map((addr) => getAddress(addr))
-    } catch (error) {
-      CONFIG_LOGGER.error(`Invalid address in list: ${error.message}`)
-      return []
-    }
+const addressArrayFromString = jsonFromString(
+  z.array(z.string()),
+  'addressArray'
+).transform((addresses) => {
+  if (!Array.isArray(addresses)) return []
+  try {
+    return addresses.map((addr) => getAddress(addr))
+  } catch (error) {
+    CONFIG_LOGGER.error(`Invalid address in list: ${error.message}`)
+    return []
   }
-)
+})
 
 export const OceanNodeConfigSchema = z
   .object({
-    dockerComputeEnvironments: jsonFromString(C2DDockerConfigSchema)
+    dockerComputeEnvironments: jsonFromString(
+      C2DDockerConfigSchema,
+      'dockerComputeEnvironments'
+    )
       .optional()
       .default([]),
 
-    dockerRegistrysAuth: jsonFromString(DockerRegistrysSchema).optional().default({}),
+    dockerRegistrysAuth: jsonFromString(DockerRegistrysSchema, 'dockerRegistrysAuth')
+      .optional()
+      .default({}),
 
     authorizedDecrypters: addressArrayFromString.optional().default([]),
-    authorizedDecryptersList: jsonFromString(AccessListContractSchema).optional(),
+    authorizedDecryptersList: jsonFromString(
+      AccessListContractSchema,
+      'authorizedDecryptersList'
+    ).optional(),
 
     allowedValidators: addressArrayFromString.optional().default([]),
-    allowedValidatorsList: jsonFromString(AccessListContractSchema).optional(),
+    allowedValidatorsList: jsonFromString(
+      AccessListContractSchema,
+      'allowedValidatorsList'
+    ).optional(),
 
     authorizedPublishers: addressArrayFromString.optional().default([]),
-    authorizedPublishersList: jsonFromString(AccessListContractSchema).optional(),
+    authorizedPublishersList: jsonFromString(
+      AccessListContractSchema,
+      'authorizedPublishersList'
+    ).optional(),
 
     keys: OceanNodeConfigKeysSchema.optional(),
 
@@ -435,11 +458,14 @@ export const OceanNodeConfigSchema = z
     ipfsGateway: z.string().nullable().optional(),
     arweaveGateway: z.string().nullable().optional(),
 
-    supportedNetworks: jsonFromString(RPCSSchema).optional(),
+    supportedNetworks: jsonFromString(RPCSSchema, 'supportedNetworks').optional(),
 
     claimDurationTimeout: z.coerce.number().default(3600),
     indexingNetworks: z
-      .union([jsonFromString(RPCSSchema), z.array(z.union([z.string(), z.number()]))])
+      .union([
+        jsonFromString(RPCSSchema, 'indexingNetworks'),
+        z.array(z.union([z.string(), z.number()]))
+      ])
       .optional(),
 
     c2dClusters: z.array(C2DClusterInfoSchema).optional(),
@@ -456,12 +482,17 @@ export const OceanNodeConfigSchema = z
         message: 'assetPurgatoryUrl must be a valid URL'
       }),
     allowedAdmins: addressArrayFromString.optional(),
-    allowedAdminsList: jsonFromString(AccessListContractSchema).optional(),
+    allowedAdminsList: jsonFromString(
+      AccessListContractSchema,
+      'allowedAdminsList'
+    ).optional(),
 
     codeHash: z.string().optional(),
     maxConnections: z.coerce.number().optional(),
-    denyList: jsonFromString(DenyListSchema).optional().default({ peers: [], ips: [] }),
-    unsafeURLs: jsonFromString(z.array(z.string()))
+    denyList: jsonFromString(DenyListSchema, 'denyList')
+      .optional()
+      .default({ peers: [], ips: [] }),
+    unsafeURLs: jsonFromString(z.array(z.string()), 'unsafeURLs')
       .optional()
       .default([...DEFAULT_UNSAFE_URLS]),
     isBootstrap: booleanFromString.optional().default(false),
