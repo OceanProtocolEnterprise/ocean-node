@@ -26,10 +26,9 @@ import type {
   ComputeResourcesPricingInfo
 } from '../../@types/C2D/C2D.js'
 import {
-  BENCHMARK_MONITORING_ADDRESS,
+  BASE_CHAIN_ID,
   getConfiguration,
-  SEPOLIA_CHAIN_ID,
-  USDC_TOKEN
+  USDC_TOKEN_ADDRESS_BASE
 } from '../../utils/config.js'
 import { C2DEngine } from './compute_engine_base.js'
 import { C2DDatabase } from '../database/C2DDatabase.js'
@@ -64,7 +63,8 @@ import { Service } from '@oceanprotocol/ddo-js'
 import { getOceanTokenAddressForChain } from '../../utils/address.js'
 import { dockerRegistrysAuth, dockerRegistryAuth } from '../../@types/OceanNode.js'
 import { EncryptMethod } from '../../@types/fileObject.js'
-import { ZeroAddress } from 'ethers'
+import { getAddress, ZeroAddress } from 'ethers'
+import { AccessList } from '../../@types/AccessList.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -215,11 +215,8 @@ export class C2DEngineDocker extends C2DEngine {
       price: 1
     }))
 
-    const sepoliaChainId = SEPOLIA_CHAIN_ID
-    const usdcToken = USDC_TOKEN
-
     const benchmarkFees: ComputeEnvFeesStructure = {
-      [sepoliaChainId]: [{ feeToken: usdcToken, prices: benchmarkPrices }]
+      [BASE_CHAIN_ID]: [{ feeToken: USDC_TOKEN_ADDRESS_BASE, prices: benchmarkPrices }]
     }
 
     const benchmarkEnv: C2DEnvironmentConfig = {
@@ -234,8 +231,10 @@ export class C2DEngineDocker extends C2DEngine {
         ...gpuResources
       ],
       access: {
-        addresses: [BENCHMARK_MONITORING_ADDRESS],
-        accessLists: null
+        addresses: [],
+        accessLists: [
+          { BASE_CHAIN_ID: [getAddress('0xcb7Db55Ca9Aa9C3b25F5Bc266da63317fa02086a')] }
+        ]
       },
       fees: benchmarkFees
     }
@@ -248,7 +247,7 @@ export class C2DEngineDocker extends C2DEngine {
     const envConfig = await this.getC2DConfig().connection
     if (!envConfig?.environments?.length) {
       CORE_LOGGER.warn(
-        `Skipping C2D engine ${this.getC2DConfig().hash}: no environments configured`
+        `Skipping C2D Engine ${this.getC2DConfig().hash}: no environments configured`
       )
       return
     }
@@ -286,7 +285,13 @@ export class C2DEngineDocker extends C2DEngine {
     const consumerAddress = this.getKeyManager().getEthAddress()
 
     if (config.enableBenchmark) {
-      this.createBenchmarkEnvironment(sysinfo, envConfig)
+      if (supportedChains.includes(parseInt(BASE_CHAIN_ID))) {
+        this.createBenchmarkEnvironment(sysinfo, envConfig)
+      } else {
+        CORE_LOGGER.warn(
+          `Skipping benchmark environment: Base chain (${BASE_CHAIN_ID}) is not in supportedNetworks`
+        )
+      }
     }
 
     for (let envIdx = 0; envIdx < envConfig.environments.length; envIdx++) {
@@ -403,9 +408,16 @@ export class C2DEngineDocker extends C2DEngine {
     for (const env of this.envs) {
       const cpuRes = this.getResource(env.resources ?? [], 'cpu')
       if (cpuRes && cpuRes.total > 0) {
-        const isBenchmarkEnv = env.access?.addresses?.includes(
-          BENCHMARK_MONITORING_ADDRESS
-        )
+        let isBenchmarkEnv = false
+        if (env.access?.accessLists) {
+          const baseAccessList = env.access?.accessLists?.[0] as AccessList
+          if (baseAccessList && baseAccessList[BASE_CHAIN_ID]) {
+            isBenchmarkEnv = baseAccessList[BASE_CHAIN_ID].includes(
+              getAddress('0xcb7Db55Ca9Aa9C3b25F5Bc266da63317fa02086a')
+            )
+          }
+        }
+
         if (isBenchmarkEnv) {
           const total = physicalCpuCount > 0 ? physicalCpuCount : cpuRes.total
           const cores = Array.from({ length: total }, (_, i) => i)
