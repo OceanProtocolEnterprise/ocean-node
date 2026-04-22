@@ -31,7 +31,29 @@ function removeExtraSlashes(req: any, res: any, next: any) {
   next()
 }
 
+function logStartupStep(step: string) {
+  const message = `[startup] ${step}`
+  console.error(message)
+  OCEAN_NODE_LOGGER.info(`Startup step: ${step}`)
+}
+
+function logStartupFailure(step: string, err: unknown) {
+  const errorMessage = err instanceof Error ? err.message : String(err)
+  console.error(`[startup] failed during "${step}": ${errorMessage}`)
+  if (err instanceof Error && err.stack) {
+    console.error(err.stack)
+  }
+  OCEAN_NODE_LOGGER.error(`Startup failed during step "${step}": ${errorMessage}`)
+  if (err instanceof Error && err.stack) {
+    OCEAN_NODE_LOGGER.error(`Startup failure stack: ${err.stack}`)
+  }
+}
+
 process.on('uncaughtException', (err) => {
+  console.error(`[uncaughtException] ${err.message}`)
+  if (err?.stack) {
+    console.error(err.stack)
+  }
   OCEAN_NODE_LOGGER.error(`Uncaught exception: ${err.message}`)
   if (err?.stack) {
     OCEAN_NODE_LOGGER.error(`Uncaught exception stack: ${err.stack}`)
@@ -39,6 +61,12 @@ process.on('uncaughtException', (err) => {
   process.exit(1)
 })
 process.on('unhandledRejection', (err) => {
+  console.error(
+    `[unhandledRejection] ${err instanceof Error ? err.message : String(err)}`
+  )
+  if (err instanceof Error && err.stack) {
+    console.error(err.stack)
+  }
   OCEAN_NODE_LOGGER.error(
     `Unhandled rejection: ${err instanceof Error ? err.message : String(err)}`
   )
@@ -79,11 +107,11 @@ let startupStep = 'initializing'
 
 try {
   startupStep = 'loading configuration'
-  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  logStartupStep(startupStep)
   const config = await getConfiguration(true, isStartup)
 
   startupStep = 'computing codebase hash'
-  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  logStartupStep(startupStep)
   const __filename = fileURLToPath(import.meta.url)
   const __dirname = path.dirname(__filename)
   config.codeHash = await computeCodebaseHash(__dirname)
@@ -100,7 +128,7 @@ try {
   let provider = null
 
   startupStep = 'initializing database'
-  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  logStartupStep(startupStep)
   // If there is no DB URL only the nonce database will be available
   const dbconn: Database = await Database.init(config.dbConfig)
   if (!dbconn) {
@@ -120,18 +148,18 @@ try {
   }
 
   startupStep = 'creating key manager'
-  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  logStartupStep(startupStep)
   // Create KeyManager and BlockchainRegistry
   // KeyManager will determine provider type from config.keys.type and initialize in constructor
   const keyManager = new KeyManager(config)
 
   startupStep = 'creating blockchain registry'
-  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  logStartupStep(startupStep)
   const blockchainRegistry = new BlockchainRegistry(keyManager, config)
 
   if (config.hasP2P) {
     startupStep = 'initializing p2p node'
-    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    logStartupStep(startupStep)
     if (dbconn) {
       node = new OceanP2P(config, keyManager, dbconn)
     } else {
@@ -139,26 +167,26 @@ try {
     }
 
     startupStep = 'starting p2p node'
-    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    logStartupStep(startupStep)
     await node.start()
     OCEAN_NODE_LOGGER.info('P2P node started')
   }
 
   if (config.hasIndexer && dbconn) {
     startupStep = 'creating indexer'
-    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    logStartupStep(startupStep)
     indexer = new OceanIndexer(dbconn, config.indexingNetworks, blockchainRegistry)
     OCEAN_NODE_LOGGER.info('Indexer initialized')
   }
   if (dbconn) {
     startupStep = 'creating provider'
-    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    logStartupStep(startupStep)
     provider = new OceanProvider(dbconn)
     OCEAN_NODE_LOGGER.info('Provider initialized')
   }
 
   startupStep = 'creating ocean node singleton'
-  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  logStartupStep(startupStep)
   // Singleton instance across application
   const oceanNode = OceanNode.getInstance(
     config,
@@ -172,12 +200,12 @@ try {
   )
 
   startupStep = 'adding c2d engines'
-  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  logStartupStep(startupStep)
   oceanNode.addC2DEngines()
 
   if (config.hasHttp) {
     startupStep = 'configuring http server'
-    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    logStartupStep(startupStep)
     // allow up to 25Mb file upload
     app.use(express.raw({ limit: '25mb' }))
     app.use(cors())
@@ -194,7 +222,7 @@ try {
     if (config.httpCertPath && config.httpKeyPath) {
       try {
         startupStep = 'starting https server'
-        OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+        logStartupStep(startupStep)
         const options = {
           cert: fs.readFileSync(config.httpCertPath),
           key: fs.readFileSync(config.httpKeyPath)
@@ -206,30 +234,25 @@ try {
         OCEAN_NODE_LOGGER.error(`Error starting HTTPS server: ${err.message}`)
         OCEAN_NODE_LOGGER.logMessage(`Falling back to HTTP`, true)
         startupStep = 'starting http server after https fallback'
-        OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+        logStartupStep(startupStep)
         app.listen(config.httpPort, () => {
           OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
         })
       }
     } else {
       startupStep = 'starting http server'
-      OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+      logStartupStep(startupStep)
       app.listen(config.httpPort, () => {
         OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
       })
     }
 
     startupStep = 'scheduling cron jobs'
-    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    logStartupStep(startupStep)
     // Call the function to schedule the cron job to delete old logs
     scheduleCronJobs(oceanNode)
   }
 } catch (err) {
-  OCEAN_NODE_LOGGER.error(
-    `Startup failed during step "${startupStep}": ${err instanceof Error ? err.message : String(err)}`
-  )
-  if (err instanceof Error && err.stack) {
-    OCEAN_NODE_LOGGER.error(`Startup failure stack: ${err.stack}`)
-  }
+  logStartupFailure(startupStep, err)
   process.exit(1)
 }
