@@ -26,6 +26,11 @@ import { hasValidDBConfiguration } from './utils/database.js'
 
 const app: Express = express()
 
+function removeExtraSlashes(req: any, res: any, next: any) {
+  req.url = req.url.replace(/\/{2,}/g, '/')
+  next()
+}
+
 process.on('uncaughtException', (err) => {
   OCEAN_NODE_LOGGER.error(`Uncaught exception: ${err.message}`)
   if (err?.stack) {
@@ -70,108 +75,161 @@ OCEAN_NODE_LOGGER.logMessageWithEmoji(
   LOG_LEVELS_STR.LEVEL_INFO
 )
 
-const config = await getConfiguration(true, isStartup)
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-config.codeHash = await computeCodebaseHash(__dirname)
+let startupStep = 'initializing'
 
-OCEAN_NODE_LOGGER.info(`Codebase hash: ${config.codeHash}`)
-if (!config) {
-  process.exit(1)
-}
-let node: OceanP2P = null
-let indexer = null
-let provider = null
-// If there is no DB URL only the nonce database will be available
-const dbconn: Database = await Database.init(config.dbConfig)
-if (!dbconn) {
-  OCEAN_NODE_LOGGER.error('Database failed to initialize')
-}
+try {
+  startupStep = 'loading configuration'
+  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  const config = await getConfiguration(true, isStartup)
 
-if (!hasValidDBConfiguration(config.dbConfig)) {
-  // once we create a database instance, we check the environment and possibly add the DB transport
-  // after that, all loggers will eventually have it too (if in production/staging environments)
-  // it creates dinamically DDO schemas
-  config.hasIndexer = false
-  OCEAN_NODE_LOGGER.warn(
-    `Missing or invalid property: "${ENVIRONMENT_VARIABLES.DB_URL.name}". This means Indexer module will not be enabled.`
+  startupStep = 'computing codebase hash'
+  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  const __filename = fileURLToPath(import.meta.url)
+  const __dirname = path.dirname(__filename)
+  config.codeHash = await computeCodebaseHash(__dirname)
+
+  OCEAN_NODE_LOGGER.info(`Codebase hash: ${config.codeHash}`)
+  OCEAN_NODE_LOGGER.info(
+    `Startup config summary: hasHttp=${config.hasHttp}, hasP2P=${config.hasP2P}, hasIndexer=${config.hasIndexer}, httpPort=${config.httpPort}`
   )
-}
-
-// Create KeyManager and BlockchainRegistry
-// KeyManager will determine provider type from config.keys.type and initialize in constructor
-const keyManager = new KeyManager(config)
-const blockchainRegistry = new BlockchainRegistry(keyManager, config)
-
-if (config.hasP2P) {
-  if (dbconn) {
-    node = new OceanP2P(config, keyManager, dbconn)
-  } else {
-    node = new OceanP2P(config, keyManager)
+  if (!config) {
+    process.exit(1)
   }
-  await node.start()
-}
-if (config.hasIndexer && dbconn) {
-  indexer = new OceanIndexer(dbconn, config.indexingNetworks, blockchainRegistry)
-}
-if (dbconn) {
-  provider = new OceanProvider(dbconn)
-}
+  let node: OceanP2P = null
+  let indexer = null
+  let provider = null
 
-// Singleton instance across application
-const oceanNode = OceanNode.getInstance(
-  config,
+  startupStep = 'initializing database'
+  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  // If there is no DB URL only the nonce database will be available
+  const dbconn: Database = await Database.init(config.dbConfig)
+  if (!dbconn) {
+    OCEAN_NODE_LOGGER.error('Database failed to initialize')
+  } else {
+    OCEAN_NODE_LOGGER.info('Database initialized')
+  }
 
-  dbconn,
-  node,
-  provider,
-  indexer,
-  keyManager,
-  blockchainRegistry
-)
-oceanNode.addC2DEngines()
+  if (!hasValidDBConfiguration(config.dbConfig)) {
+    // once we create a database instance, we check the environment and possibly add the DB transport
+    // after that, all loggers will eventually have it too (if in production/staging environments)
+    // it creates dinamically DDO schemas
+    config.hasIndexer = false
+    OCEAN_NODE_LOGGER.warn(
+      `Missing or invalid property: "${ENVIRONMENT_VARIABLES.DB_URL.name}". This means Indexer module will not be enabled.`
+    )
+  }
 
-function removeExtraSlashes(req: any, res: any, next: any) {
-  req.url = req.url.replace(/\/{2,}/g, '/')
-  next()
-}
+  startupStep = 'creating key manager'
+  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  // Create KeyManager and BlockchainRegistry
+  // KeyManager will determine provider type from config.keys.type and initialize in constructor
+  const keyManager = new KeyManager(config)
 
-if (config.hasHttp) {
-  // allow up to 25Mb file upload
-  app.use(express.raw({ limit: '25mb' }))
-  app.use(cors())
-  app.use(requestValidator, (req, res, next) => {
-    req.caller = req.headers['x-forwarded-for'] || req.socket.remoteAddress
-    req.oceanNode = oceanNode
-    next()
-  })
+  startupStep = 'creating blockchain registry'
+  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  const blockchainRegistry = new BlockchainRegistry(keyManager, config)
 
-  // Integrate static file serving middleware
-  app.use(removeExtraSlashes)
-  app.use('/', httpRoutes)
+  if (config.hasP2P) {
+    startupStep = 'initializing p2p node'
+    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    if (dbconn) {
+      node = new OceanP2P(config, keyManager, dbconn)
+    } else {
+      node = new OceanP2P(config, keyManager)
+    }
 
-  if (config.httpCertPath && config.httpKeyPath) {
-    try {
-      const options = {
-        cert: fs.readFileSync(config.httpCertPath),
-        key: fs.readFileSync(config.httpKeyPath)
+    startupStep = 'starting p2p node'
+    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    await node.start()
+    OCEAN_NODE_LOGGER.info('P2P node started')
+  }
+
+  if (config.hasIndexer && dbconn) {
+    startupStep = 'creating indexer'
+    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    indexer = new OceanIndexer(dbconn, config.indexingNetworks, blockchainRegistry)
+    OCEAN_NODE_LOGGER.info('Indexer initialized')
+  }
+  if (dbconn) {
+    startupStep = 'creating provider'
+    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    provider = new OceanProvider(dbconn)
+    OCEAN_NODE_LOGGER.info('Provider initialized')
+  }
+
+  startupStep = 'creating ocean node singleton'
+  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  // Singleton instance across application
+  const oceanNode = OceanNode.getInstance(
+    config,
+
+    dbconn,
+    node,
+    provider,
+    indexer,
+    keyManager,
+    blockchainRegistry
+  )
+
+  startupStep = 'adding c2d engines'
+  OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+  oceanNode.addC2DEngines()
+
+  if (config.hasHttp) {
+    startupStep = 'configuring http server'
+    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    // allow up to 25Mb file upload
+    app.use(express.raw({ limit: '25mb' }))
+    app.use(cors())
+    app.use(requestValidator, (req, res, next) => {
+      req.caller = req.headers['x-forwarded-for'] || req.socket.remoteAddress
+      req.oceanNode = oceanNode
+      next()
+    })
+
+    // Integrate static file serving middleware
+    app.use(removeExtraSlashes)
+    app.use('/', httpRoutes)
+
+    if (config.httpCertPath && config.httpKeyPath) {
+      try {
+        startupStep = 'starting https server'
+        OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+        const options = {
+          cert: fs.readFileSync(config.httpCertPath),
+          key: fs.readFileSync(config.httpKeyPath)
+        }
+        https.createServer(options, app).listen(config.httpPort, () => {
+          OCEAN_NODE_LOGGER.logMessage(`HTTPS port: ${config.httpPort}`, true)
+        })
+      } catch (err) {
+        OCEAN_NODE_LOGGER.error(`Error starting HTTPS server: ${err.message}`)
+        OCEAN_NODE_LOGGER.logMessage(`Falling back to HTTP`, true)
+        startupStep = 'starting http server after https fallback'
+        OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+        app.listen(config.httpPort, () => {
+          OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
+        })
       }
-      https.createServer(options, app).listen(config.httpPort, () => {
-        OCEAN_NODE_LOGGER.logMessage(`HTTPS port: ${config.httpPort}`, true)
-      })
-    } catch (err) {
-      OCEAN_NODE_LOGGER.error(`Error starting HTTPS server: ${err.message}`)
-      OCEAN_NODE_LOGGER.logMessage(`Falling back to HTTP`, true)
+    } else {
+      startupStep = 'starting http server'
+      OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
       app.listen(config.httpPort, () => {
         OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
       })
     }
-  } else {
-    app.listen(config.httpPort, () => {
-      OCEAN_NODE_LOGGER.logMessage(`HTTP port: ${config.httpPort}`, true)
-    })
-  }
 
-  // Call the function to schedule the cron job to delete old logs
-  scheduleCronJobs(oceanNode)
+    startupStep = 'scheduling cron jobs'
+    OCEAN_NODE_LOGGER.info(`Startup step: ${startupStep}`)
+    // Call the function to schedule the cron job to delete old logs
+    scheduleCronJobs(oceanNode)
+  }
+} catch (err) {
+  OCEAN_NODE_LOGGER.error(
+    `Startup failed during step "${startupStep}": ${err instanceof Error ? err.message : String(err)}`
+  )
+  if (err instanceof Error && err.stack) {
+    OCEAN_NODE_LOGGER.error(`Startup failure stack: ${err.stack}`)
+  }
+  process.exit(1)
 }

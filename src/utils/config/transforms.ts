@@ -14,6 +14,9 @@ export const jsonFromString = <T>(schema: z.ZodType<T>, fieldName?: string) =>
       return undefined
     }
     if (typeof v === 'string') {
+      if (v.trim() === '') {
+        return undefined
+      }
       try {
         return JSON.parse(v)
       } catch (error) {
