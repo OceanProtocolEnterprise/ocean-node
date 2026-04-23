@@ -7,6 +7,7 @@ export const ENV_TO_CONFIG_MAPPING = {
   DB_TYPE: 'DB_TYPE',
   FEE_AMOUNT: 'FEE_AMOUNT',
   FEE_TOKENS: 'FEE_TOKENS',
+  SKIP_FEE_TOKEN_VALIDATION: 'skipFeeTokenValidation',
   HTTP_API_PORT: 'httpPort',
   RPCS: 'supportedNetworks',
   IPFS_GATEWAY: 'ipfsGateway',

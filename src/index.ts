@@ -103,11 +103,15 @@ if (!hasValidDBConfiguration(config.dbConfig)) {
 // KeyManager will determine provider type from config.keys.type and initialize in constructor
 const keyManager = new KeyManager(config)
 const blockchainRegistry = new BlockchainRegistry(keyManager, config)
-try {
-  await assertFeeTokensSupportedByOec(config, blockchainRegistry)
-} catch (error) {
-  OCEAN_NODE_LOGGER.error(error instanceof Error ? error.message : String(error))
-  process.exit(1)
+if (config.skipFeeTokenValidation) {
+  OCEAN_NODE_LOGGER.warn('Skipping FEE_TOKENS validation against OEC contracts')
+} else {
+  try {
+    await assertFeeTokensSupportedByOec(config, blockchainRegistry)
+  } catch (error) {
+    OCEAN_NODE_LOGGER.error(error instanceof Error ? error.message : String(error))
+    process.exit(1)
+  }
 }
 
 if (config.hasP2P) {
