@@ -428,6 +428,7 @@ export const OceanNodeConfigSchema = z
     FEE_AMOUNT: z.string().optional(),
     FEE_TOKENS: z.string().optional(),
     feeStrategy: FeeStrategySchema.optional(),
+    skipFeeTokenValidation: booleanFromString.optional().default(false),
 
     httpPort: z.coerce.number().optional().default(3000),
     rateLimit: z.coerce.number().optional().default(DEFAULT_RATE_LIMIT_PER_MINUTE),
