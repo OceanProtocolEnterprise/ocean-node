@@ -138,6 +138,7 @@ export interface OceanNodeConfig {
   unsafeURLs?: string[]
   isBootstrap?: boolean
   validateUnsignedDDO?: boolean
+  skipFeeTokenValidation?: boolean
   jwtSecret?: string
   httpCertPath?: string
   httpKeyPath?: string
