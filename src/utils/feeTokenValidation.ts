@@ -49,6 +49,10 @@ export async function validateFeeTokensSupportedByOec(
       const isAllowed = await enterpriseFeeCollector.isTokenAllowed(token)
       if (isAllowed !== true) {
         unsupportedFeeTokens.push({ chain, token })
+      } else {
+        CORE_LOGGER.info(
+          `Fee token ${token} on chain ${chainId} with EnterpriseFeeCollector ${enterpriseFeeCollectorAddress} validated`
+        )
       }
     } catch {
       unsupportedFeeTokens.push({ chain, token })
