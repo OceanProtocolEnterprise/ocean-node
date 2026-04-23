@@ -1,6 +1,6 @@
 {
   "name": "ocean-node",
-  "version": "3.0.1",
+  "version": "3.0.3",
   "description": "Ocean Node is used to run all core services in the Ocean stack",
   "author": "Ocean Protocol Foundation",
   "license": "Apache-2.0",
@@ -132,7 +132,7 @@
     "mocha": "^11.1.0",
     "nyc": "^17.1.0",
     "prettier": "^3.7.4",
-    "release-it": "^19.0.6",
+    "release-it": "^20.0.0",
     "sinon": "^19.0.2",
     "tsx": "^4.19.3",
     "typescript": "^5.9.3"
