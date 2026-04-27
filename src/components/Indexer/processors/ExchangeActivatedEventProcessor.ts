@@ -58,7 +58,7 @@ export class ExchangeActivatedEventProcessor extends BaseEventProcessor {
       const did = getDid(nftAddress, chainId)
 
       const { ddo: ddoDatabase } = await this.getDatabase()
-      const ddo = await ddoDatabase.retrieve(did)
+      const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
       if (!ddo) {
         INDEXER_LOGGER.logMessage(
           `Detected ExchangeActivated changed for ${did}, but it does not exists.`
