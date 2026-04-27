@@ -23,24 +23,17 @@ import cors from 'cors'
 import { scheduleCronJobs } from './utils/cronjobs/scheduleCronJobs.js'
 import { requestValidator } from './components/httpRoutes/requestValidator.js'
 import { hasValidDBConfiguration } from './utils/database.js'
-import { assertFeeTokensSupportedByOec } from './utils/feeTokenValidation.js'
 
 const app: Express = express()
 
 process.on('uncaughtException', (err) => {
   OCEAN_NODE_LOGGER.error(`Uncaught exception: ${err.message}`)
-  if (err?.stack) {
-    OCEAN_NODE_LOGGER.error(`Uncaught exception stack: ${err.stack}`)
-  }
   process.exit(1)
 })
 process.on('unhandledRejection', (err) => {
   OCEAN_NODE_LOGGER.error(
     `Unhandled rejection: ${err instanceof Error ? err.message : String(err)}`
   )
-  if (err instanceof Error && err.stack) {
-    OCEAN_NODE_LOGGER.error(`Unhandled rejection stack: ${err.stack}`)
-  }
   process.exit(1)
 })
 
@@ -103,16 +96,6 @@ if (!hasValidDBConfiguration(config.dbConfig)) {
 // KeyManager will determine provider type from config.keys.type and initialize in constructor
 const keyManager = new KeyManager(config)
 const blockchainRegistry = new BlockchainRegistry(keyManager, config)
-if (config.skipFeeTokenValidation) {
-  OCEAN_NODE_LOGGER.warn('Skipping FEE_TOKENS validation against OEC contracts')
-} else {
-  try {
-    await assertFeeTokensSupportedByOec(config, blockchainRegistry)
-  } catch (error) {
-    OCEAN_NODE_LOGGER.error(error instanceof Error ? error.message : String(error))
-    process.exit(1)
-  }
-}
 
 if (config.hasP2P) {
   if (dbconn) {
@@ -123,7 +106,7 @@ if (config.hasP2P) {
   await node.start()
 }
 if (config.hasIndexer && dbconn) {
-  indexer = new OceanIndexer(dbconn, config.indexingNetworks, blockchainRegistry)
+  indexer = new OceanIndexer(dbconn, config, blockchainRegistry)
 }
 if (dbconn) {
   provider = new OceanProvider(dbconn)
@@ -140,7 +123,7 @@ const oceanNode = OceanNode.getInstance(
   keyManager,
   blockchainRegistry
 )
-oceanNode.addC2DEngines()
+await oceanNode.addC2DEngines()
 
 function removeExtraSlashes(req: any, res: any, next: any) {
   req.url = req.url.replace(/\/{2,}/g, '/')
@@ -149,11 +132,11 @@ function removeExtraSlashes(req: any, res: any, next: any) {
 
 if (config.hasHttp) {
   app.use(cors())
-  app.use(requestValidator, (req, res, next) => {
+  app.use((req, res, next) => {
     req.caller = req.headers['x-forwarded-for'] || req.socket.remoteAddress
     req.oceanNode = oceanNode
     next()
-  })
+  }, requestValidator)
 
   // Integrate static file serving middleware
   app.use(removeExtraSlashes)
