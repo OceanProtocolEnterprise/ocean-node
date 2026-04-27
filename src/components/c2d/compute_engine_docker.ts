@@ -91,7 +91,6 @@ export class C2DEngineDocker extends C2DEngine {
   private trivyCachePath: string
   private cpuAllocations: Map<string, number[]> = new Map()
   private envCpuCoresMap: Map<string, number[]> = new Map()
-  private enableNetwork: boolean
 
   public constructor(
     clusterConfig: C2DClusterInfo,
@@ -115,7 +114,6 @@ export class C2DEngineDocker extends C2DEngine {
     this.paymentClaimInterval = clusterConfig.connection.paymentClaimInterval || 3600 // 1 hour
     this.scanImages = clusterConfig.connection.scanImages || false // default is not to scan images for now, until it's prod ready
     this.scanImageDBUpdateInterval = clusterConfig.connection.scanImageDBUpdateInterval
-    this.enableNetwork = clusterConfig.connection.enableNetwork ?? false
     if (
       clusterConfig.connection.protocol &&
       clusterConfig.connection.host &&
@@ -210,10 +208,8 @@ export class C2DEngineDocker extends C2DEngine {
     }
     const gpuResources: ComputeResource[] = Array.from(gpuMap.values())
 
-    const benchmarkPrices: ComputeResourcesPricingInfo[] = gpuResources.map((gpu) => ({
-      id: gpu.id,
-      price: 1
-    }))
+    const benchmarkPrices: ComputeResourcesPricingInfo[] =
+      gpuResources.length > 0 ? [{ id: gpuResources[0].id, price: 1 }] : []
 
     const benchmarkFees: ComputeEnvFeesStructure = {
       [BASE_CHAIN_ID]: [{ feeToken: USDC_TOKEN_ADDRESS_BASE, prices: benchmarkPrices }]
@@ -233,10 +229,11 @@ export class C2DEngineDocker extends C2DEngine {
       access: {
         addresses: [],
         accessLists: [
-          { BASE_CHAIN_ID: [getAddress('0xcb7Db55Ca9Aa9C3b25F5Bc266da63317fa02086a')] }
+          { [BASE_CHAIN_ID]: [getAddress('0xcb7Db55Ca9Aa9C3b25F5Bc266da63317fa02086a')] }
         ]
       },
-      fees: benchmarkFees
+      fees: benchmarkFees,
+      enableNetwork: true
     }
 
     envConfig.environments.push(benchmarkEnv)
@@ -367,7 +364,8 @@ export class C2DEngineDocker extends C2DEngine {
         queMaxWaitTime: 0,
         queMaxWaitTimeFree: 0,
         runMaxWaitTime: 0,
-        runMaxWaitTimeFree: 0
+        runMaxWaitTimeFree: 0,
+        enableNetwork: envDef.enableNetwork
       }
 
       if (envDef.storageExpiry !== undefined) env.storageExpiry = envDef.storageExpiry
@@ -1259,7 +1257,7 @@ export class C2DEngineDocker extends C2DEngine {
     if (
       algorithm.meta.container &&
       algorithm.meta.container.dockerfile &&
-      !env.free.allowImageBuild
+      !env.free?.allowImageBuild
     ) {
       throw new Error(`Building image is not allowed for free jobs`)
     }
@@ -1836,7 +1834,7 @@ export class C2DEngineDocker extends C2DEngine {
           }
         ]
       }
-      if (!this.enableNetwork) {
+      if (!env.enableNetwork) {
         hostConfig.NetworkMode = 'none' // no network inside the container
       }
       // disk
