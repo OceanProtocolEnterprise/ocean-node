@@ -11,8 +11,7 @@ import {
   TransactionReceipt
 } from 'ethers'
 import { CORE_LOGGER } from './logging/common.js'
-import { ConnectionStatus } from '../@types/blockchain.js'
-
+import { ConnectionStatus, SupportedNetwork } from '../@types/blockchain.js'
 import { KeyManager } from '../components/KeyManager/index.js'
 
 export class Blockchain {
@@ -21,26 +20,23 @@ export class Blockchain {
   private provider: FallbackProvider
   private chainId: number
   private knownRPCs: string[] = []
+  private primaryRpcTimeout: number
+  private fallbackRpcTimeout: number
 
   /**
-   * Constructor overloads:
-   * 1. New pattern: (rpc, chainId, signer, fallbackRPCs?) - signer provided by KeyManager
-   * 2. Old pattern: (rpc, chainId, config, fallbackRPCs?) - for backward compatibility
+   * Creates a new Blockchain instance utilizing KeyManager and a SupportedNetwork configuration
    */
-  public constructor(
-    keyManager: KeyManager,
-    rpc: string,
-    chainId: number,
-    fallbackRPCs?: string[]
-  ) {
-    this.chainId = chainId
+  public constructor(keyManager: KeyManager, network: SupportedNetwork) {
+    this.chainId = network.chainId || 0
     this.keyManager = keyManager
-    this.knownRPCs.push(rpc)
-    if (fallbackRPCs && fallbackRPCs.length > 0) {
-      this.knownRPCs.push(...fallbackRPCs)
+    this.knownRPCs.push(network.rpc)
+    if (network.fallbackRPCs && network.fallbackRPCs.length > 0) {
+      this.knownRPCs.push(...network.fallbackRPCs)
     }
     this.provider = undefined as undefined as FallbackProvider
     this.signer = undefined as unknown as Signer
+    this.primaryRpcTimeout = network.primaryRpcTimeout || 3000
+    this.fallbackRpcTimeout = network.fallbackRpcTimeout || 1500
   }
 
   public getSupportedChain(): number {
@@ -68,45 +64,30 @@ export class Blockchain {
     }
   }
 
+  // eslint-disable-next-line require-await
   public async getProvider(force: boolean = false): Promise<FallbackProvider> {
-    if (!this.provider) {
+    if (force || !this.provider?.providerConfigs?.length) {
       const configs: {
         provider: JsonRpcProvider
         priority: number
         stallTimeout: number
       }[] = []
 
-      const PRIMARY_RPC_TIMEOUT = 3000
-      const FALLBACK_RPC_TIMEOUT = 1500
       for (let i = 0; i < this.knownRPCs.length; i++) {
         const rpc = this.knownRPCs[i]
-        const rpcProvider = new JsonRpcProvider(rpc)
-        if (!force) {
-          try {
-            const { chainId } = await rpcProvider.getNetwork()
-            if (chainId.toString() === this.chainId.toString()) {
-              // primary RPC gets lowest priority = is first to be called
-              configs.push({
-                provider: rpcProvider,
-                priority: i + 1,
-                stallTimeout: i === 0 ? PRIMARY_RPC_TIMEOUT : FALLBACK_RPC_TIMEOUT
-              })
-            }
-          } catch (error) {
-            CORE_LOGGER.error(`Error getting network for RPC ${rpc}: ${error}`)
-          }
-        } else {
-          configs.push({
-            provider: rpcProvider,
-            priority: i + 1,
-            stallTimeout: i === 0 ? PRIMARY_RPC_TIMEOUT : FALLBACK_RPC_TIMEOUT
-          })
-        }
+        const rpcProvider = new JsonRpcProvider(rpc, this.chainId, {
+          staticNetwork: true
+        })
+        configs.push({
+          provider: rpcProvider,
+          priority: i + 1,
+          stallTimeout: i === 0 ? this.primaryRpcTimeout : this.fallbackRpcTimeout
+        })
       }
       // quorum=1: accept the first response to avoid calls to all configured rpcs
       this.provider =
         configs.length > 0
-          ? new FallbackProvider(configs, undefined, { quorum: 1 })
+          ? new FallbackProvider(configs, this.chainId, { quorum: 1 })
           : new FallbackProvider([])
     }
     return this.provider
