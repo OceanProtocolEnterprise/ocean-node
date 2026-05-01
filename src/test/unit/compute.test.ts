@@ -282,6 +282,28 @@ describe('Compute Jobs Database', () => {
     expect(convertStringToArray(str)).to.deep.equal(expectedArray)
   })
 
+  // it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
+  //   const source: any = completeDBComputeJob
+  //   const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
+
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
+  //     false
+  //   )
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
+  //     false
+  //   )
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
+  //   expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
+  //     false
+  //   )
+  // })
+
   it('should check manifest platform against local platform env', () => {
     const arch = os.machine() // ex: arm
     const platform = os.platform() // ex: linux
