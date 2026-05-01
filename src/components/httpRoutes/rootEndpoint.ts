@@ -1,12 +1,11 @@
 import express from 'express'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
-import { getConfiguration } from '../../utils/index.js'
 import { getAllServiceEndpoints } from './index.js'
 import { getNodeOwnerInfo } from './utils.js'
 export const rootEndpointRoutes = express.Router()
 
-rootEndpointRoutes.get('/', async (req, res) => {
-  const config = await getConfiguration()
+rootEndpointRoutes.get('/', (req, res) => {
+  const config = req.oceanNode.getConfig()
   if (!config.supportedNetworks) {
     HTTP_LOGGER.warn(`Supported networks not defined`)
   }

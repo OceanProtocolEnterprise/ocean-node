@@ -39,11 +39,10 @@ export class BlockchainRegistry {
 
     // Get network configuration
     const networkConfig = supportedNetworks[chainId.toString()]
-    const { rpc } = networkConfig
-    const { fallbackRPCs } = networkConfig
+    if (!networkConfig.chainId) networkConfig.chainId = chainId
 
     // Create Blockchain instance with new constructor
-    const blockchain = new Blockchain(this.keyManager, rpc, chainId, fallbackRPCs)
+    const blockchain = new Blockchain(this.keyManager, networkConfig)
 
     // Cache the instance
     this.blockchains.set(chainId, blockchain)
@@ -60,6 +59,11 @@ export class BlockchainRegistry {
     return Array.from(this.blockchains.values())
   }
 
+  public stop() {
+    for (const blockchain of Array.from(this.blockchains.values())) blockchain.stop()
+    this.blockchains.clear()
+  }
+
   /**
    * Remove a Blockchain instance from the registry.
    * Useful for cleanup or when a network is no longer supported.
@@ -68,16 +72,9 @@ export class BlockchainRegistry {
    */
   removeBlockchain(chainId: number): void {
     if (this.blockchains.has(chainId)) {
+      this.getBlockchain(chainId).stop()
       this.blockchains.delete(chainId)
     }
-  }
-
-  /**
-   * Clear all Blockchain instances from the registry.
-   * Useful for cleanup or testing.
-   */
-  clear(): void {
-    this.blockchains.clear()
   }
 
   /**

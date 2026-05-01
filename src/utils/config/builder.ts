@@ -25,9 +25,8 @@ import lodash from 'lodash'
 
 let previousConfiguration: OceanNodeConfig = null
 
-function create256Hash(input: string): string {
-  const result = crypto.createHash('sha256').update(input).digest('hex')
-  return '0x' + result
+function createConfigHash(input: string): string {
+  return '0x' + crypto.createHash('sha256').update(input).digest('hex')
 }
 
 function mapEnvToConfig(
@@ -134,7 +133,7 @@ export function buildC2DClusters(
       for (const theURL of clustersURLS) {
         clusters.push({
           connection: theURL,
-          hash: create256Hash(String(count) + theURL),
+          hash: createConfigHash(String(count) + theURL),
           type: C2DClusterType.OPF_K8
         })
         count += 1
@@ -147,7 +146,7 @@ export function buildC2DClusters(
   if (dockerComputeEnvironments) {
     for (const dockerC2d of dockerComputeEnvironments) {
       if (dockerC2d.socketPath || dockerC2d.host) {
-        const hash = create256Hash(
+        const hash = createConfigHash(
           String(count) +
             JSON.stringify({
               socketPath: dockerC2d.socketPath,

@@ -6,59 +6,7 @@ For other nodes (and browsers) to reach your node, it must be reachable at a sta
 
 If your machine has a static public IP directly assigned to it (common in VPS/cloud environments), set `P2P_ANNOUNCE_ADDRESSES` to announce that address. The quickstart script does this automatically when you provide your IP or domain name.
 
-<<<<<<< HEAD
-- decide what IP version to use (IPV4 or/and IPv6). You should use both if available.
-- decide if you want to filter private ips (if you run multiple nodes in a LAN or cloud environment, leave them on)
-- if you already have an external ip configured on your machine, you are good to go.
-- if you have a private ip, but an UPNP gateway, you should be fine as well.
-- if you have a private ip and you can forward external ports from your gateway, use P2P_ANNOUNCE_ADDRESSES and let other nodes know your external IP/port.
-- if you cannot forward ports on your gateway, the only choice is to use a circuit relay server (then all traffic will go through that node and it will proxy)
-
-## TLS and SNI (Server Name Indication)
-
-AutoTLS is used to provision TLS certificates for your node in order to allow P2P node-to-browser communication.
-To enable SNI with Ocean Node's autoTLS feature, include `/tls/ws` or `/tls/wss` addresses in `P2P_ANNOUNCE_ADDRESSES`:
-
-Add to .env file
-
-```bash
-export P2P_ANNOUNCE_ADDRESSES='[
-  "/ip4/<your-ip-addr>/tcp/9000",
-  "/ip4/<your-ip-addr>/tcp/9001/tls/ws",
-  "/ip4/<your-ip-addr>/tcp/9005/tls/wss",
-]'
-```
-
-Or in config.json file:
-
-```json
-{
-  "p2pConfig": {
-    "announceAddresses": [
-      "/ip4/<your-ip-addr>/tcp/9000",
-      "/ip4/<your-ip-addr>/tcp/9001/tls/ws",
-      "/ip4/<your-ip-addr>/tcp/9005/tls/wss"
-    ]
-  }
-}
-```
-
-When TLS certificates are provisioned, you should see logs like:
-
-```
------ A TLS certificate was provisioned -----
------ TLS addresses: -----
-/ip4/<your-ip-addr>/tcp/9001/sni/...
-/ip4/<your-ip-addr>/tcp/9005/sni/...
------ End of TLS addresses -----
-```
-
-In order to check connectivity, you can do the following:
-
-### On your node, check and observe how your node sees itself:
-=======
 Example for a node with public IP `1.2.3.4`, using ports 9000 (TCP) and 9001 (WebSocket/TLS):
->>>>>>> 8719d64c2e23093acac0e30661979009d9ddadd9
 
 ```bash
 P2P_ANNOUNCE_ADDRESSES='[

@@ -18,7 +18,6 @@ import { OceanNode } from '../../../OceanNode.js'
 import { EVENT_HASHES, PROTOCOL_COMMANDS } from '../../../utils/constants.js'
 import { timestampToDateTime } from '../../../utils/conversions.js'
 import { create256Hash } from '../../../utils/crypt.js'
-import { getDatabase } from '../../../utils/database.js'
 import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { URLUtils } from '../../../utils/url.js'
@@ -28,14 +27,26 @@ import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 import { fetchTransactionReceipt } from '../../core/utils/validateOrders.js'
 import { withRetrial } from '../utils.js'
-import { createHash } from 'crypto'
+import { OceanNodeConfig } from '../../../@types/OceanNode.js'
+import { Database } from '../../../components/database/index.js'
 import { AbstractDdoDatabase } from '../../database/BaseDatabase.js'
+import { createHash } from 'crypto'
 
 export abstract class BaseEventProcessor {
   protected networkId: number
+  private config: OceanNodeConfig
 
-  constructor(chainId: number) {
+  constructor(chainId: number, config: OceanNodeConfig) {
     this.networkId = chainId
+    this.config = config
+  }
+
+  getConfig(): OceanNodeConfig {
+    return this.config
+  }
+
+  async getDatabase(): Promise<Database> {
+    return await OceanNode.getInstance().getDatabase()
   }
 
   protected isValidDtAddressFromServices(services: any[]): boolean {
@@ -157,8 +168,9 @@ export abstract class BaseEventProcessor {
   }
 
   protected async createOrUpdateDDO(ddo: VersionedDDO, method: string): Promise<any> {
+    const db = await OceanNode.getInstance().getDatabase()
     try {
-      const { ddo: ddoDatabase, ddoState } = await getDatabase()
+      const { ddo: ddoDatabase, ddoState } = db
       if (ddo instanceof DeprecatedDDO) {
         const { id, nftAddress } = ddo.getDDOFields()
         await Promise.all([ddoDatabase.delete(id), ddoState.delete(id)])
@@ -181,7 +193,7 @@ export abstract class BaseEventProcessor {
       )
       return saveDDO
     } catch (err) {
-      const { ddoState } = await getDatabase()
+      const { ddoState } = db
       const { id, nftAddress } = ddo.getDDOFields()
       const tx =
         ddo instanceof DeprecatedDDO
