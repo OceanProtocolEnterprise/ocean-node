@@ -23,6 +23,7 @@ import cors from 'cors'
 import { scheduleCronJobs } from './utils/cronjobs/scheduleCronJobs.js'
 import { requestValidator } from './components/httpRoutes/requestValidator.js'
 import { hasValidDBConfiguration } from './utils/database.js'
+import { assertConfiguredFeeTokensSupportedByOec } from './utils/feeTokenValidation.js'
 
 const app: Express = express()
 
@@ -96,6 +97,12 @@ if (!hasValidDBConfiguration(config.dbConfig)) {
 // KeyManager will determine provider type from config.keys.type and initialize in constructor
 const keyManager = new KeyManager(config)
 const blockchainRegistry = new BlockchainRegistry(keyManager, config)
+try {
+  await assertConfiguredFeeTokensSupportedByOec(config, blockchainRegistry)
+} catch (err) {
+  OCEAN_NODE_LOGGER.error(err instanceof Error ? err.message : String(err))
+  process.exit(1)
+}
 
 if (config.hasP2P) {
   if (dbconn) {
