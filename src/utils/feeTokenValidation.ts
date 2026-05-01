@@ -34,23 +34,34 @@ function dedupeFeeTokens(feeTokens: UnsupportedFeeToken[]): UnsupportedFeeToken[
   return unique
 }
 
+function addFeeTokensFromFees(
+  fees: ComputeEnvFeesStructure,
+  feeTokens: UnsupportedFeeToken[]
+): void {
+  if (!fees) return
+
+  for (const [chain, chainFees] of Object.entries(fees)) {
+    for (const fee of chainFees || []) {
+      if (fee.feeToken) {
+        feeTokens.push({ chain, token: fee.feeToken })
+      }
+    }
+  }
+}
+
 export function getDockerComputeFeeTokens(
   config: OceanNodeConfig
 ): UnsupportedFeeToken[] {
   const feeTokens: UnsupportedFeeToken[] = []
 
   for (const dockerCompute of config?.dockerComputeEnvironments || []) {
-    for (const environment of dockerCompute.environments || []) {
-      const fees = environment.fees as ComputeEnvFeesStructure
-      if (!fees) continue
+    addFeeTokensFromFees(
+      (dockerCompute as unknown as { fees?: ComputeEnvFeesStructure }).fees,
+      feeTokens
+    )
 
-      for (const [chain, chainFees] of Object.entries(fees)) {
-        for (const fee of chainFees || []) {
-          if (fee.feeToken) {
-            feeTokens.push({ chain, token: fee.feeToken })
-          }
-        }
-      }
+    for (const environment of dockerCompute.environments || []) {
+      addFeeTokensFromFees(environment.fees as ComputeEnvFeesStructure, feeTokens)
     }
   }
 
