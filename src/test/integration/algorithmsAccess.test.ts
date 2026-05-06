@@ -410,17 +410,13 @@ describe('**********         Trusted algorithms Flow', () => {
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
     await depositTx.wait()
-    const latestBlock = await provider.getBlock('latest')
-    assert(latestBlock, 'Failed to get latest block')
-    const lockExpiry =
-      Number(latestBlock.timestamp) + initializeResponse.payment.minLockSeconds
     const authorizeTx = await escrowContract
       .connect(consumerAccount)
       .authorize(
         initializeResponse.payment.token,
         firstEnv.consumerAddress,
         balance,
-        lockExpiry,
+        initializeResponse.payment.minLockSeconds,
         10
       )
     await authorizeTx.wait()
@@ -498,16 +494,21 @@ describe('**********         Trusted algorithms Flow', () => {
       BigInt(auth[0].maxLockCounts.toString()) > BigInt(0),
       ' Should have maxLockCounts in auth'
     )
-    const originalGetMinLockTime = oceanNode.escrow.getMinLockTime.bind(oceanNode.escrow)
-    oceanNode.escrow.getMinLockTime = () => lockExpiry
+    const environmentHash = firstEnv.id.slice(0, firstEnv.id.indexOf('-'))
+    const engine = await oceanNode.getC2DEngines().getC2DByHash(environmentHash)
+    const originalCreateLock = engine.escrow.createLock.bind(engine.escrow)
+    engine.escrow.createLock = () => Promise.resolve(`0x${'1'.padStart(64, '0')}`)
     let response
     try {
       response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
     } finally {
-      oceanNode.escrow.getMinLockTime = originalGetMinLockTime
+      engine.escrow.createLock = originalCreateLock
     }
     assert(response, 'Failed to get response')
-    assert(response.status.httpStatus === 200, 'Failed to get 200 response')
+    assert(
+      response.status.httpStatus === 200,
+      `Expected 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+    )
     assert(response.stream, 'Failed to get stream')
     expect(response.stream).to.be.instanceOf(Readable)
 
