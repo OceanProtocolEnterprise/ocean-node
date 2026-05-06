@@ -454,45 +454,27 @@ describe('**********         Trusted algorithms Flow', () => {
       balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     }
     assert(BigInt(balance.toString()) > BigInt(0), 'Consumer has no Ocean tokens')
-    const consumerAddress = await consumerAccount.getAddress()
-    const escrowContractAddress = await escrowContract.getAddress()
-    console.log('Trusted algorithms escrow debug:', {
-      consumerAddress,
-      paymentEscrowAddress: initializeResponse.payment.escrowAddress,
-      configuredEscrowAddress: artifactsAddresses.development.Escrow,
-      escrowContractAddress,
-      paymentToken: initializeResponse.payment.token,
-      balance: balance.toString()
-    })
+    const paymentEscrowContract = new ethers.Contract(
+      initializeResponse.payment.escrowAddress,
+      EscrowJson.abi,
+      consumerAccount
+    )
     const approveTx = await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
     await approveTx.wait()
-    const approvedPaymentEscrow = await paymentTokenContract.allowance(
-      consumerAddress,
-      initializeResponse.payment.escrowAddress
+    const depositTx = await paymentEscrowContract.deposit(
+      initializeResponse.payment.token,
+      balance
     )
-    const approvedDepositEscrow = await paymentTokenContract.allowance(
-      consumerAddress,
-      escrowContractAddress
-    )
-    console.log('Trusted algorithms escrow allowance debug:', {
-      approvedPaymentEscrow: approvedPaymentEscrow.toString(),
-      approvedDepositEscrow: approvedDepositEscrow.toString()
-    })
-    const depositTx = await escrowContract
-      .connect(consumerAccount)
-      .deposit(initializeResponse.payment.token, balance)
     await depositTx.wait()
-    const authorizeTx = await escrowContract
-      .connect(consumerAccount)
-      .authorize(
-        initializeResponse.payment.token,
-        firstEnv.consumerAddress,
-        balance,
-        initializeResponse.payment.minLockSeconds,
-        10
-      )
+    const authorizeTx = await paymentEscrowContract.authorize(
+      initializeResponse.payment.token,
+      firstEnv.consumerAddress,
+      balance,
+      initializeResponse.payment.minLockSeconds,
+      10
+    )
     await authorizeTx.wait()
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
