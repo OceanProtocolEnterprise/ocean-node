@@ -272,6 +272,11 @@ jobs:
             sleep 10
             [ -f "$HOME/.ocean/ocean-contracts/artifacts/ready" ] && break
           done
+      - name: Use regular Escrow for system tests
+        run: |
+          SYSTEM_TEST_ADDRESS_FILE="${RUNNER_TEMP}/address.system-tests.json"
+          jq 'del(.development.EnterpriseEscrow)' "${HOME}/.ocean/ocean-contracts/artifacts/address.json" > "${SYSTEM_TEST_ADDRESS_FILE}"
+          echo "ADDRESS_FILE=${SYSTEM_TEST_ADDRESS_FILE}" >> "$GITHUB_ENV"
 
       - name: docker logs
         run: docker logs ocean-contracts-1 && docker logs ocean-typesense-1
