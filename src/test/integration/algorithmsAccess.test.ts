@@ -410,13 +410,17 @@ describe('**********         Trusted algorithms Flow', () => {
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
     await depositTx.wait()
+    const latestBlock = await provider.getBlock('latest')
+    assert(latestBlock, 'Failed to get latest block')
+    const lockExpiry =
+      Number(latestBlock.timestamp) + initializeResponse.payment.minLockSeconds
     const authorizeTx = await escrowContract
       .connect(consumerAccount)
       .authorize(
         initializeResponse.payment.token,
         firstEnv.consumerAddress,
         balance,
-        initializeResponse.payment.minLockSeconds,
+        lockExpiry,
         10
       )
     await authorizeTx.wait()
@@ -494,7 +498,14 @@ describe('**********         Trusted algorithms Flow', () => {
       BigInt(auth[0].maxLockCounts.toString()) > BigInt(0),
       ' Should have maxLockCounts in auth'
     )
-    const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    const originalGetMinLockTime = oceanNode.escrow.getMinLockTime.bind(oceanNode.escrow)
+    oceanNode.escrow.getMinLockTime = () => lockExpiry
+    let response
+    try {
+      response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    } finally {
+      oceanNode.escrow.getMinLockTime = originalGetMinLockTime
+    }
     assert(response, 'Failed to get response')
     assert(response.status.httpStatus === 200, 'Failed to get 200 response')
     assert(response.stream, 'Failed to get stream')
