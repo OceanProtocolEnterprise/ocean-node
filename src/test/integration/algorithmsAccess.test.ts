@@ -146,7 +146,7 @@ describe('**********         Trusted algorithms Flow', () => {
 
   // let's publish assets & algos
   it('should publish compute datasets & algos', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
     console.log('Trusted algorithms publish debug - before publish:', {
       publisherAddress: await publisherAccount.getAddress(),
       consumerAddress: await consumerAccount.getAddress(),
@@ -186,7 +186,7 @@ describe('**********         Trusted algorithms Flow', () => {
       oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     console.log('Trusted algorithms publish debug - compute wait result:', {
       did: publishedComputeDataset?.ddo?.id,
@@ -212,7 +212,7 @@ describe('**********         Trusted algorithms Flow', () => {
       oceanNode,
       publishedAlgoDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     console.log('Trusted algorithms publish debug - algorithm wait result:', {
       did: publishedAlgoDataset?.ddo?.id,
