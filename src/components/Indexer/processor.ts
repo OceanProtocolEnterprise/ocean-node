@@ -17,6 +17,9 @@ import {
   ExchangeActivatedEventProcessor,
   ExchangeDeactivatedEventProcessor,
   ExchangeRateChangedEventProcessor,
+  NewAccessListEventProcessor,
+  AddressAddedEventProcessor,
+  AddressRemovedEventProcessor,
   ProcessorConstructor
 } from './processors/index.js'
 import { findEventByKey } from './utils.js'
@@ -36,7 +39,10 @@ const EVENT_PROCESSOR_MAP: Record<string, ProcessorConstructor> = {
   [EVENTS.EXCHANGE_CREATED]: ExchangeCreatedEventProcessor,
   [EVENTS.EXCHANGE_ACTIVATED]: ExchangeActivatedEventProcessor,
   [EVENTS.EXCHANGE_DEACTIVATED]: ExchangeDeactivatedEventProcessor,
-  [EVENTS.EXCHANGE_RATE_CHANGED]: ExchangeRateChangedEventProcessor
+  [EVENTS.EXCHANGE_RATE_CHANGED]: ExchangeRateChangedEventProcessor,
+  [EVENTS.NEW_ACCESS_LIST]: NewAccessListEventProcessor,
+  [EVENTS.ADDRESS_ADDED]: AddressAddedEventProcessor,
+  [EVENTS.ADDRESS_REMOVED]: AddressRemovedEventProcessor
 }
 
 const processorInstances = new Map<string, BaseEventProcessor>()
@@ -83,6 +89,7 @@ export const processChunkLogs = async (
       (allowedValidatorsList && Object.keys(allowedValidatorsList).length > 0)
     for (const log of logs) {
       const event = findEventByKey(log.topics[0])
+
       if (event && Object.values(EVENTS).includes(event.type)) {
         // only log & process the ones we support
         INDEXER_LOGGER.logMessage(
@@ -188,6 +195,7 @@ export const processChunkLogs = async (
         }
       }
     }
+
     return storeEvents
   }
 
@@ -208,6 +216,7 @@ export const processBlocks = async (
       blockLogs && blockLogs.length > 0
         ? await processChunkLogs(blockLogs, signer, provider, network, config)
         : []
+
     return {
       lastBlock: lastIndexedBlock + count,
       foundEvents: events
