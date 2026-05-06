@@ -147,17 +147,60 @@ describe('**********         Trusted algorithms Flow', () => {
   // let's publish assets & algos
   it('should publish compute datasets & algos', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    console.log('Trusted algorithms publish debug - before publish:', {
+      publisherAddress: await publisherAccount.getAddress(),
+      consumerAddress: await consumerAccount.getAddress(),
+      network: (await provider.getNetwork()).toJSON(),
+      blockNumber: await provider.getBlockNumber(),
+      supportedNetworks: indexer.getSupportedNetworks(),
+      indexingQueue: indexer.getIndexingQueue(),
+      jobsPool: indexer.getJobsPool()
+    })
     publishedComputeDataset = await publishAsset(
       computeAssetWithNoAccess,
       publisherAccount
     )
+    console.log('Trusted algorithms publish debug - compute dataset:', {
+      publishReturned: Boolean(publishedComputeDataset),
+      did: publishedComputeDataset?.ddo?.id,
+      nftAddress: publishedComputeDataset?.nftAddress,
+      datatokenAddress: publishedComputeDataset?.datatokenAddress,
+      txHash: publishedComputeDataset?.trxReceipt?.hash,
+      txStatus: publishedComputeDataset?.trxReceipt?.status,
+      blockNumber: publishedComputeDataset?.trxReceipt?.blockNumber,
+      logsCount: publishedComputeDataset?.trxReceipt?.logs?.length
+    })
     publishedAlgoDataset = await publishAsset(algoAsset, publisherAccount)
+    console.log('Trusted algorithms publish debug - algorithm:', {
+      publishReturned: Boolean(publishedAlgoDataset),
+      did: publishedAlgoDataset?.ddo?.id,
+      nftAddress: publishedAlgoDataset?.nftAddress,
+      datatokenAddress: publishedAlgoDataset?.datatokenAddress,
+      txHash: publishedAlgoDataset?.trxReceipt?.hash,
+      txStatus: publishedAlgoDataset?.trxReceipt?.status,
+      blockNumber: publishedAlgoDataset?.trxReceipt?.blockNumber,
+      logsCount: publishedAlgoDataset?.trxReceipt?.logs?.length,
+      currentBlockNumber: await provider.getBlockNumber()
+    })
     const computeDatasetResult = await waitToIndex(
       oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT
     )
+    console.log('Trusted algorithms publish debug - compute wait result:', {
+      did: publishedComputeDataset?.ddo?.id,
+      wasTimeout: computeDatasetResult.wasTimeout,
+      found: Boolean(computeDatasetResult.ddo),
+      currentBlockNumber: await provider.getBlockNumber(),
+      indexingQueue: indexer.getIndexingQueue(),
+      jobsPool: indexer.getJobsPool(),
+      directDbFound: Boolean(
+        await (
+          await oceanNode.getDatabase()
+        ).ddo.retrieve(publishedComputeDataset?.ddo?.id)
+      )
+    })
     // Fail the test if compute dataset DDO was not indexed - subsequent tests depend on it
     assert(
       computeDatasetResult.ddo,
@@ -171,6 +214,17 @@ describe('**********         Trusted algorithms Flow', () => {
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT
     )
+    console.log('Trusted algorithms publish debug - algorithm wait result:', {
+      did: publishedAlgoDataset?.ddo?.id,
+      wasTimeout: algoDatasetResult.wasTimeout,
+      found: Boolean(algoDatasetResult.ddo),
+      currentBlockNumber: await provider.getBlockNumber(),
+      indexingQueue: indexer.getIndexingQueue(),
+      jobsPool: indexer.getJobsPool(),
+      directDbFound: Boolean(
+        await (await oceanNode.getDatabase()).ddo.retrieve(publishedAlgoDataset?.ddo?.id)
+      )
+    })
     // Fail the test if algorithm DDO was not indexed - subsequent tests depend on it
     assert(
       algoDatasetResult.ddo,
