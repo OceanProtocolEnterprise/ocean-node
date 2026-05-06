@@ -77,6 +77,25 @@ describe('**********         Trusted algorithms Flow', () => {
   let artifactsAddresses: any
   let initializeResponse: ProviderComputeInitializeResults
 
+  const stringifyForDebug = (value: unknown) =>
+    JSON.stringify(
+      value,
+      (_key, nestedValue) =>
+        typeof nestedValue === 'bigint' ? nestedValue.toString() : nestedValue,
+      2
+    )
+
+  const logEthersError = (label: string, error: any) => {
+    console.log(`[algorithmsAccess][${label}] error`, {
+      message: error?.message,
+      code: error?.code,
+      action: error?.action,
+      reason: error?.reason,
+      data: error?.data,
+      transaction: error?.transaction
+    })
+  }
+
   before(async () => {
     artifactsAddresses = getOceanArtifactsAdresses()
     paymentToken = artifactsAddresses.development.Ocean
@@ -389,41 +408,152 @@ describe('**********         Trusted algorithms Flow', () => {
   it('should start a compute job', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 10)
     // let's put funds in escrow & create an auth
-    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    const consumerAddress = await consumerAccount.getAddress()
+    console.log('[algorithmsAccess][compute-start] setup', {
+      consumerAddress,
+      computeEnvConsumerAddress: firstEnv.consumerAddress,
+      environmentId: firstEnv.id,
+      paymentToken,
+      escrowAddress: initializeResponse.payment.escrowAddress,
+      initializePayment: initializeResponse.payment,
+      datasetOrderTxId,
+      algoOrderTxId
+    })
+
+    let balance = await paymentTokenContract.balanceOf(consumerAddress)
+    console.log('[algorithmsAccess][compute-start] initial token balance', {
+      consumerAddress,
+      balance: balance.toString()
+    })
+
     if (BigInt(balance.toString()) === BigInt(0)) {
       const mintAmount = ethers.parseUnits('1000', 18)
-      const mintTx = await paymentTokenContract.mint(
-        await consumerAccount.getAddress(),
-        mintAmount
-      )
-      await mintTx.wait()
-      balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+      console.log('[algorithmsAccess][compute-start] minting test tokens', {
+        consumerAddress,
+        mintAmount: mintAmount.toString()
+      })
+      const mintTx = await paymentTokenContract.mint(consumerAddress, mintAmount)
+      const mintReceipt = await mintTx.wait()
+      console.log('[algorithmsAccess][compute-start] mint receipt', {
+        hash: mintReceipt?.hash,
+        status: mintReceipt?.status,
+        blockNumber: mintReceipt?.blockNumber
+      })
+      balance = await paymentTokenContract.balanceOf(consumerAddress)
     }
     assert(BigInt(balance.toString()) > BigInt(0), 'Consumer has no Ocean tokens')
-    const approveTx = await paymentTokenContract
-      .connect(consumerAccount)
-      .approve(initializeResponse.payment.escrowAddress, balance)
-    await approveTx.wait()
-    const depositTx = await escrowContract
-      .connect(consumerAccount)
-      .deposit(initializeResponse.payment.token, balance)
-    await depositTx.wait()
-    const authorizeTx = await escrowContract
-      .connect(consumerAccount)
-      .authorize(
-        initializeResponse.payment.token,
-        firstEnv.consumerAddress,
-        balance,
-        initializeResponse.payment.minLockSeconds,
-        10
+    console.log('[algorithmsAccess][compute-start] token balance before escrow', {
+      consumerAddress,
+      balance: balance.toString()
+    })
+
+    try {
+      const approveGas = await paymentTokenContract
+        .connect(consumerAccount)
+        .approve.estimateGas(initializeResponse.payment.escrowAddress, balance)
+      console.log('[algorithmsAccess][compute-start] approve estimateGas', {
+        approveGas: approveGas.toString()
+      })
+      const approveTx = await paymentTokenContract
+        .connect(consumerAccount)
+        .approve(initializeResponse.payment.escrowAddress, balance)
+      const approveReceipt = await approveTx.wait()
+      const allowance = await paymentTokenContract.allowance(
+        consumerAddress,
+        initializeResponse.payment.escrowAddress
       )
-    await authorizeTx.wait()
+      console.log('[algorithmsAccess][compute-start] approve receipt', {
+        hash: approveReceipt?.hash,
+        status: approveReceipt?.status,
+        blockNumber: approveReceipt?.blockNumber,
+        allowance: allowance.toString()
+      })
+    } catch (e) {
+      logEthersError('approve', e)
+      throw e
+    }
+
+    try {
+      const escrowBalanceBefore = await escrowContract.getUserFunds(
+        initializeResponse.payment.token,
+        consumerAddress
+      )
+      const depositGas = await escrowContract
+        .connect(consumerAccount)
+        .deposit.estimateGas(initializeResponse.payment.token, balance)
+      console.log('[algorithmsAccess][compute-start] deposit estimateGas', {
+        depositGas: depositGas.toString(),
+        escrowBalanceBefore: escrowBalanceBefore.toString(),
+        token: initializeResponse.payment.token,
+        amount: balance.toString()
+      })
+      const depositTx = await escrowContract
+        .connect(consumerAccount)
+        .deposit(initializeResponse.payment.token, balance)
+      const depositReceipt = await depositTx.wait()
+      const escrowBalanceAfter = await escrowContract.getUserFunds(
+        initializeResponse.payment.token,
+        consumerAddress
+      )
+      console.log('[algorithmsAccess][compute-start] deposit receipt', {
+        hash: depositReceipt?.hash,
+        status: depositReceipt?.status,
+        blockNumber: depositReceipt?.blockNumber,
+        escrowBalanceAfter: escrowBalanceAfter.toString()
+      })
+    } catch (e) {
+      logEthersError('deposit', e)
+      throw e
+    }
+
+    try {
+      const authorizeGas = await escrowContract
+        .connect(consumerAccount)
+        .authorize.estimateGas(
+          initializeResponse.payment.token,
+          firstEnv.consumerAddress,
+          balance,
+          initializeResponse.payment.minLockSeconds,
+          10
+        )
+      console.log('[algorithmsAccess][compute-start] authorize estimateGas', {
+        authorizeGas: authorizeGas.toString(),
+        token: initializeResponse.payment.token,
+        payee: firstEnv.consumerAddress,
+        amount: balance.toString(),
+        minLockSeconds: initializeResponse.payment.minLockSeconds,
+        maxLockCounts: 10
+      })
+      const authorizeTx = await escrowContract
+        .connect(consumerAccount)
+        .authorize(
+          initializeResponse.payment.token,
+          firstEnv.consumerAddress,
+          balance,
+          initializeResponse.payment.minLockSeconds,
+          10
+        )
+      const authorizeReceipt = await authorizeTx.wait()
+      console.log('[algorithmsAccess][compute-start] authorize receipt', {
+        hash: authorizeReceipt?.hash,
+        status: authorizeReceipt?.status,
+        blockNumber: authorizeReceipt?.blockNumber
+      })
+    } catch (e) {
+      logEthersError('authorize', e)
+      throw e
+    }
+
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
+    console.log('[algorithmsAccess][compute-start] existing locks', {
+      count: locks.length,
+      locks: stringifyForDebug(locks)
+    })
 
     if (locks.length > 0) {
       // cancel all locks
@@ -437,20 +567,22 @@ describe('**********         Trusted algorithms Flow', () => {
               lock.payer,
               firstEnv.consumerAddress
             )
-        } catch (e) {}
+        } catch (e) {
+          logEthersError('cancelExpiredLock', e)
+        }
       }
     }
     const nonce = Date.now().toString()
 
     const messageHashBytes = createHashForSignature(
-      await consumerAccount.getAddress(),
+      consumerAddress,
       nonce,
       PROTOCOL_COMMANDS.COMPUTE_START
     )
     const signature = await safeSign(consumerAccount, messageHashBytes)
     const startComputeTask: PaidComputeStartCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_START,
-      consumerAddress: await consumerAccount.getAddress(),
+      consumerAddress,
       signature,
       nonce,
       environment: firstEnv.id,
@@ -479,9 +611,13 @@ describe('**********         Trusted algorithms Flow', () => {
     const auth = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
+    console.log('[algorithmsAccess][compute-start] authorizations', {
+      count: auth.length,
+      auth: stringifyForDebug(auth)
+    })
     assert(auth.length > 0, 'Should have authorization')
     assert(
       BigInt(auth[0].maxLockedAmount.toString()) > BigInt(0),
@@ -491,6 +627,18 @@ describe('**********         Trusted algorithms Flow', () => {
       BigInt(auth[0].maxLockCounts.toString()) > BigInt(0),
       ' Should have maxLockCounts in auth'
     )
+    console.log('[algorithmsAccess][compute-start] start task', {
+      consumerAddress: startComputeTask.consumerAddress,
+      environment: startComputeTask.environment,
+      payment: startComputeTask.payment,
+      maxJobDuration: startComputeTask.maxJobDuration,
+      datasets: startComputeTask.datasets,
+      algorithm: {
+        documentId: startComputeTask.algorithm.documentId,
+        serviceId: startComputeTask.algorithm.serviceId,
+        transferTxId: startComputeTask.algorithm.transferTxId
+      }
+    })
     const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
     console.log(`response: ${response.status.httpStatus}`)
     console.log(`response: ${JSON.stringify(response)}`)
