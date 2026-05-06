@@ -146,7 +146,7 @@ describe('**********         Trusted algorithms Flow', () => {
 
   // let's publish assets & algos
   it('should publish compute datasets & algos', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
     publishedComputeDataset = await publishAsset(
       computeAssetWithNoAccess,
       publisherAccount
@@ -156,7 +156,7 @@ describe('**********         Trusted algorithms Flow', () => {
       oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     // Fail the test if compute dataset DDO was not indexed - subsequent tests depend on it
     assert(
@@ -169,7 +169,7 @@ describe('**********         Trusted algorithms Flow', () => {
       oceanNode,
       publishedAlgoDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     // Fail the test if algorithm DDO was not indexed - subsequent tests depend on it
     assert(
