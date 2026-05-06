@@ -3060,10 +3060,28 @@ describe('**********         Compute Access Restrictions', () => {
     let escrowContract: any
     let paymentTokenContract: any
     let artifactsAddresses: any
+    let testAddressFile: string
 
     before(async function () {
       this.timeout(DEFAULT_TEST_TIMEOUT * 2)
-      artifactsAddresses = getOceanArtifactsAdresses()
+      const defaultTestAddressFile = `${homedir}/.ocean/ocean-contracts/artifacts/address.json`
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      if (existsSync(defaultTestAddressFile)) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename
+        const addressFileContent = await fsp.readFile(defaultTestAddressFile, 'utf8')
+        artifactsAddresses = JSON.parse(addressFileContent)
+      } else {
+        artifactsAddresses = getOceanArtifactsAdresses()
+      }
+      if (artifactsAddresses?.development?.EnterpriseEscrow) {
+        delete artifactsAddresses.development.EnterpriseEscrow
+        testAddressFile = path.join(
+          tmpdir(),
+          `ocean-node-test-addresses-${Date.now()}.json`
+        )
+        // eslint-disable-next-line security/detect-non-literal-fs-filename
+        await fsp.writeFile(testAddressFile, JSON.stringify(artifactsAddresses))
+      }
       paymentToken = artifactsAddresses.development.Ocean
       previousConfiguration = await setupEnvironment(
         TEST_ENV_CONFIG_FILE,
@@ -3079,7 +3097,7 @@ describe('**********         Compute Access Restrictions', () => {
             JSON.stringify(mockSupportedNetworks),
             JSON.stringify([DEVELOPMENT_CHAIN_ID]),
             '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
-            `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
+            testAddressFile || defaultTestAddressFile,
             '[{"socketPath":"/var/run/docker.sock","paymentClaimInterval":60,"environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
               DEVELOPMENT_CHAIN_ID +
               '":[{"feeToken":"' +
@@ -3139,6 +3157,9 @@ describe('**********         Compute Access Restrictions', () => {
     after(async () => {
       await oceanNode.tearDownAll()
       await tearDownEnvironment(previousConfiguration)
+      if (testAddressFile) {
+        await fsp.rm(testAddressFile, { force: true })
+      }
     })
 
     it('should transition job to JobSettle status when PublishingResults completes', async function () {
