@@ -462,6 +462,12 @@ describe('**********         Compute', () => {
     assert(resultParsed.providerFee.validUntil, 'algorithm validUntil does not exist')
     assert(result.datasets[0].validOrder === false, 'incorrect validOrder') // expect false because tx id was not provided and no start order was called before
     assert(result.payment, ' Payment structure does not exists')
+    console.log('Compute initialize escrow debug:', {
+      paymentEscrowAddress: result.payment.escrowAddress,
+      configuredEscrowAddress: artifactsAddresses.development.Escrow,
+      selectedEscrowAddress:
+        oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID)
+    })
     assert(
       result.payment.escrowAddress === artifactsAddresses.development.Escrow,
       'Incorrect escrow address'
@@ -698,9 +704,31 @@ describe('**********         Compute', () => {
       await mintTx.wait()
       balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     }
+    const consumerAddress = await consumerAccount.getAddress()
+    const escrowContractAddress = await escrowContract.getAddress()
+    console.log('Compute output escrow debug:', {
+      consumerAddress,
+      paymentEscrowAddress: initializeResponse.payment.escrowAddress,
+      configuredEscrowAddress: artifactsAddresses.development.Escrow,
+      escrowContractAddress,
+      paymentToken: initializeResponse.payment.token,
+      balance: balance.toString()
+    })
     await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
+    const outputApprovedPaymentEscrow = await paymentTokenContract.allowance(
+      consumerAddress,
+      initializeResponse.payment.escrowAddress
+    )
+    const outputApprovedDepositEscrow = await paymentTokenContract.allowance(
+      consumerAddress,
+      escrowContractAddress
+    )
+    console.log('Compute output escrow allowance debug:', {
+      approvedPaymentEscrow: outputApprovedPaymentEscrow.toString(),
+      approvedDepositEscrow: outputApprovedDepositEscrow.toString()
+    })
     await escrowContract
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
@@ -891,9 +919,31 @@ describe('**********         Compute', () => {
       await mintTx.wait()
       balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     }
+    const consumerAddress = await consumerAccount.getAddress()
+    const escrowContractAddress = await escrowContract.getAddress()
+    console.log('Compute maxed resources escrow debug:', {
+      consumerAddress,
+      paymentEscrowAddress: initializeResponse.payment.escrowAddress,
+      configuredEscrowAddress: artifactsAddresses.development.Escrow,
+      escrowContractAddress,
+      paymentToken: initializeResponse.payment.token,
+      balance: balance.toString()
+    })
     await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
+    const maxedApprovedPaymentEscrow = await paymentTokenContract.allowance(
+      consumerAddress,
+      initializeResponse.payment.escrowAddress
+    )
+    const maxedApprovedDepositEscrow = await paymentTokenContract.allowance(
+      consumerAddress,
+      escrowContractAddress
+    )
+    console.log('Compute maxed resources escrow allowance debug:', {
+      approvedPaymentEscrow: maxedApprovedPaymentEscrow.toString(),
+      approvedDepositEscrow: maxedApprovedDepositEscrow.toString()
+    })
     await escrowContract
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
@@ -3249,6 +3299,23 @@ describe('**********         Compute Access Restrictions', () => {
         .connect(consumerAccount)
         .approve(artifactsAddresses.development.Escrow, balance)
       await approveTx.wait()
+      const escrowContractAddress = await escrowContract.getAddress()
+      console.log('Compute escrow helper setup debug:', {
+        consumerAddress: await consumerAccount.getAddress(),
+        providerAddress,
+        configuredEscrowAddress: artifactsAddresses.development.Escrow,
+        selectedEscrowAddress:
+          oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID),
+        escrowContractAddress,
+        paymentToken,
+        balance: balance.toString(),
+        approvedConfiguredEscrow: (
+          await paymentTokenContract.allowance(
+            await consumerAccount.getAddress(),
+            artifactsAddresses.development.Escrow
+          )
+        ).toString()
+      })
 
       const depositTx = await escrowContract
         .connect(consumerAccount)

@@ -400,10 +400,32 @@ describe('**********         Trusted algorithms Flow', () => {
       balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     }
     assert(BigInt(balance.toString()) > BigInt(0), 'Consumer has no Ocean tokens')
+    const consumerAddress = await consumerAccount.getAddress()
+    const escrowContractAddress = await escrowContract.getAddress()
+    console.log('Trusted algorithms escrow debug:', {
+      consumerAddress,
+      paymentEscrowAddress: initializeResponse.payment.escrowAddress,
+      configuredEscrowAddress: artifactsAddresses.development.Escrow,
+      escrowContractAddress,
+      paymentToken: initializeResponse.payment.token,
+      balance: balance.toString()
+    })
     const approveTx = await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
     await approveTx.wait()
+    const approvedPaymentEscrow = await paymentTokenContract.allowance(
+      consumerAddress,
+      initializeResponse.payment.escrowAddress
+    )
+    const approvedDepositEscrow = await paymentTokenContract.allowance(
+      consumerAddress,
+      escrowContractAddress
+    )
+    console.log('Trusted algorithms escrow allowance debug:', {
+      approvedPaymentEscrow: approvedPaymentEscrow.toString(),
+      approvedDepositEscrow: approvedDepositEscrow.toString()
+    })
     const depositTx = await escrowContract
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
