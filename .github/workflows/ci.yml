@@ -279,6 +279,11 @@ jobs:
           echo "ADDRESS_FILE=${SYSTEM_TEST_ADDRESS_FILE}" >> "$GITHUB_ENV"
       - name: Configure escrow timeout for system tests
         run: echo "ESCROW_CLAIM_TIMEOUT=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Use separate consumer key for ocean-cli paid compute system test
+        working-directory: ${{ github.workspace }}/ocean-cli
+        run: |
+          perl -0pi -e 's/0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58/0x1d751ded5a32226054cd2e71261039b65afb9ee1c746d055dd699b1150a5befc/g' test/paidComputeFlow.test.ts
+          grep -n "PRIVATE_KEY" test/paidComputeFlow.test.ts
 
       - name: docker logs
         run: docker logs ocean-contracts-1 && docker logs ocean-typesense-1
