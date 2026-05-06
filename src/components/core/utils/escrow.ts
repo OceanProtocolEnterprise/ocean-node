@@ -205,6 +205,28 @@ export class Escrow {
     ) {
       throw new Error(`No valid escrow auths found(too many active locks)`)
     }
+    CORE_LOGGER.debug(
+      `Escrow createLock debug: ${JSON.stringify({
+        chain,
+        contract: await contract.getAddress(),
+        signerAddress,
+        jobId,
+        token,
+        payer,
+        amount,
+        wei,
+        expiry: expiry.toString(),
+        userBalance: userBalance.toString(),
+        auth: {
+          address: auths[0].address,
+          maxLockedAmount: auths[0].maxLockedAmount.toString(),
+          currentLockedAmount: auths[0].currentLockedAmount.toString(),
+          maxLockSeconds: auths[0].maxLockSeconds.toString(),
+          maxLockCounts: auths[0].maxLockCounts.toString(),
+          currentLocks: auths[0].currentLocks.toString()
+        }
+      })}`
+    )
     try {
       const gas = await contract.createLock.estimateGas(jobId, token, payer, wei, expiry)
       const gasOptions = await blockchain.getGasOptions(gas, 1.2)

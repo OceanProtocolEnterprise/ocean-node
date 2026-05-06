@@ -476,10 +476,43 @@ describe('**********         Trusted algorithms Flow', () => {
       10
     )
     await authorizeTx.wait()
+    const consumerAddress = await consumerAccount.getAddress()
+    const paymentEscrowAddress = await paymentEscrowContract.getAddress()
+    const paymentEscrowFunds = await paymentEscrowContract.getUserFunds(
+      consumerAddress,
+      initializeResponse.payment.token
+    )
+    const paymentEscrowAuths = await paymentEscrowContract.getAuthorizations(
+      initializeResponse.payment.token,
+      consumerAddress,
+      firstEnv.consumerAddress
+    )
+    console.log('Trusted algorithms payment escrow setup debug:', {
+      consumerAddress,
+      paymentEscrowAddress,
+      configuredEscrowAddress: artifactsAddresses.development.Escrow,
+      selectedEscrowAddress:
+        oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID),
+      paymentToken: initializeResponse.payment.token,
+      balance: balance.toString(),
+      minLockSeconds: initializeResponse.payment.minLockSeconds,
+      funds: {
+        available: paymentEscrowFunds.available.toString(),
+        locked: paymentEscrowFunds.locked.toString()
+      },
+      auths: paymentEscrowAuths.map((auth: any) => ({
+        payee: auth.payee,
+        maxLockedAmount: auth.maxLockedAmount.toString(),
+        currentLockedAmount: auth.currentLockedAmount.toString(),
+        maxLockSeconds: auth.maxLockSeconds.toString(),
+        maxLockCounts: auth.maxLockCounts.toString(),
+        currentLocks: auth.currentLocks.toString()
+      }))
+    })
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
 
@@ -501,14 +534,14 @@ describe('**********         Trusted algorithms Flow', () => {
     const nonce = Date.now().toString()
 
     const messageHashBytes = createHashForSignature(
-      await consumerAccount.getAddress(),
+      consumerAddress,
       nonce,
       PROTOCOL_COMMANDS.COMPUTE_START
     )
     const signature = await safeSign(consumerAccount, messageHashBytes)
     const startComputeTask: PaidComputeStartCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_START,
-      consumerAddress: await consumerAccount.getAddress(),
+      consumerAddress,
       signature,
       nonce,
       environment: firstEnv.id,
@@ -537,9 +570,32 @@ describe('**********         Trusted algorithms Flow', () => {
     const auth = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
+    const fundsBeforeStart = await oceanNode.escrow.getUserAvailableFunds(
+      DEVELOPMENT_CHAIN_ID,
+      consumerAddress,
+      paymentToken
+    )
+    console.log('Trusted algorithms oceanNode escrow before start debug:', {
+      consumerAddress,
+      selectedEscrowAddress:
+        oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID),
+      payee: firstEnv.consumerAddress,
+      paymentToken,
+      availableFunds: fundsBeforeStart?.toString(),
+      auths: auth.map((entry: any) => ({
+        payee: entry.payee,
+        maxLockedAmount: entry.maxLockedAmount.toString(),
+        currentLockedAmount: entry.currentLockedAmount.toString(),
+        maxLockSeconds: entry.maxLockSeconds.toString(),
+        maxLockCounts: entry.maxLockCounts.toString(),
+        currentLocks: entry.currentLocks.toString()
+      })),
+      startMaxJobDuration: startComputeTask.maxJobDuration,
+      initializeMinLockSeconds: initializeResponse.payment.minLockSeconds
+    })
     assert(auth.length > 0, 'Should have authorization')
     assert(
       BigInt(auth[0].maxLockedAmount.toString()) > BigInt(0),
