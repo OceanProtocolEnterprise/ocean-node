@@ -462,8 +462,11 @@ describe('**********         Compute', () => {
     assert(resultParsed.providerFee.validUntil, 'algorithm validUntil does not exist')
     assert(result.datasets[0].validOrder === false, 'incorrect validOrder') // expect false because tx id was not provided and no start order was called before
     assert(result.payment, ' Payment structure does not exists')
+    const expectedEscrowAddress =
+      oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID)
+    assert(expectedEscrowAddress, 'Expected escrow address does not exist')
     assert(
-      result.payment.escrowAddress === artifactsAddresses.development.Escrow,
+      result.payment.escrowAddress.toLowerCase() === expectedEscrowAddress.toLowerCase(),
       'Incorrect escrow address'
     )
     assert(result.payment.payee === firstEnv.consumerAddress, 'Incorrect payee address')
