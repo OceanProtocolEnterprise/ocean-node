@@ -169,10 +169,27 @@ describe('**********         Compute', () => {
   let algoDDO: any
   let datasetDDO: any
   let artifactsAddresses: any
+  let testAddressFile: string
   let initializeResponse: ProviderComputeInitializeResults
 
   before(async () => {
-    artifactsAddresses = getOceanArtifactsAdresses()
+    const defaultTestAddressFile = `${homedir}/.ocean/ocean-contracts/artifacts/address.json`
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    if (existsSync(defaultTestAddressFile)) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      artifactsAddresses = JSON.parse(await fsp.readFile(defaultTestAddressFile, 'utf8'))
+    } else {
+      artifactsAddresses = getOceanArtifactsAdresses()
+    }
+    if (artifactsAddresses?.development?.EnterpriseEscrow) {
+      delete artifactsAddresses.development.EnterpriseEscrow
+      testAddressFile = path.join(
+        tmpdir(),
+        `ocean-node-test-addresses-${Date.now()}.json`
+      )
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      await fsp.writeFile(testAddressFile, JSON.stringify(artifactsAddresses))
+    }
     paymentToken = artifactsAddresses.development.Ocean
     previousConfiguration = await setupEnvironment(
       TEST_ENV_CONFIG_FILE,
@@ -190,7 +207,7 @@ describe('**********         Compute', () => {
           JSON.stringify([DEVELOPMENT_CHAIN_ID]),
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
           JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
-          `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
+          testAddressFile || defaultTestAddressFile,
           '[{"socketPath":"/var/run/docker.sock","environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
             DEVELOPMENT_CHAIN_ID +
             '":[{"feeToken":"' +
@@ -200,8 +217,6 @@ describe('**********         Compute', () => {
       )
     )
     config = await getConfiguration(true)
-    config.claimDurationTimeout =
-      Math.floor(Date.now() / 1000) + config.claimDurationTimeout
     dbconn = await Database.init(config.dbConfig)
 
     const staleJobs = await dbconn.c2d.getRunningJobs()
@@ -242,6 +257,9 @@ describe('**********         Compute', () => {
   after(async () => {
     await oceanNode.tearDownAll()
     await tearDownEnvironment(previousConfiguration)
+    if (testAddressFile) {
+      await fsp.rm(testAddressFile, { force: true })
+    }
   })
   it('Sets up compute envs', () => {
     assert(oceanNode, 'Failed to instantiate OceanNode')
