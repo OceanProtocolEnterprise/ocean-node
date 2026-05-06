@@ -277,6 +277,8 @@ jobs:
           SYSTEM_TEST_ADDRESS_FILE="${RUNNER_TEMP}/address.system-tests.json"
           jq 'del(.development.EnterpriseEscrow)' "${HOME}/.ocean/ocean-contracts/artifacts/address.json" > "${SYSTEM_TEST_ADDRESS_FILE}"
           echo "ADDRESS_FILE=${SYSTEM_TEST_ADDRESS_FILE}" >> "$GITHUB_ENV"
+      - name: Configure escrow timeout for system tests
+        run: echo "ESCROW_CLAIM_TIMEOUT=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: docker logs
         run: docker logs ocean-contracts-1 && docker logs ocean-typesense-1
