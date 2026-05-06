@@ -200,6 +200,8 @@ describe('**********         Compute', () => {
       )
     )
     config = await getConfiguration(true)
+    config.claimDurationTimeout =
+      Math.floor(Date.now() / 1000) + config.claimDurationTimeout
     dbconn = await Database.init(config.dbConfig)
 
     const staleJobs = await dbconn.c2d.getRunningJobs()
