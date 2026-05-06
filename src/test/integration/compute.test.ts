@@ -691,6 +691,11 @@ describe('**********         Compute', () => {
   })
   it('should start a compute job with output to URL storage at 172.15.0.7', async () => {
     // deposit funds and create auth in escrow
+    escrowContract = new ethers.Contract(
+      initializeResponse.payment.escrowAddress,
+      EscrowJson.abi,
+      publisherAccount
+    )
     let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     if (BigInt(balance.toString()) === BigInt(0)) {
       const mintAmount = ethers.parseUnits('1000', 18)
@@ -883,6 +888,11 @@ describe('**********         Compute', () => {
   it('should start a compute job with maxed resources', async function () {
     this.timeout(130_000) // waitForAllJobsToFinish can take up to 120s
     await waitForAllJobsToFinish(oceanNode)
+    escrowContract = new ethers.Contract(
+      initializeResponse.payment.escrowAddress,
+      EscrowJson.abi,
+      publisherAccount
+    )
     let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     if (BigInt(balance.toString()) === BigInt(0)) {
       console.log('Minting')
@@ -3077,16 +3087,15 @@ describe('**********         Compute Access Restrictions', () => {
       const provider = new JsonRpcProvider('http://127.0.0.1:8545')
       const publisherAccount = (await provider.getSigner(0)) as Signer
       consumerAccount = (await provider.getSigner(1)) as Signer
-      escrowContract = new ethers.Contract(
-        artifactsAddresses.development.Escrow,
-        EscrowJson.abi,
-        consumerAccount
-      )
       paymentTokenContract = new ethers.Contract(
         paymentToken,
         OceanToken.abi,
         publisherAccount
       )
+      const escrowAddress =
+        oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID)
+      assert(escrowAddress, 'Expected escrow address does not exist')
+      escrowContract = new ethers.Contract(escrowAddress, EscrowJson.abi, consumerAccount)
 
       // Get the Docker engine
       const c2dEngines = oceanNode.getC2DEngines()
@@ -3250,7 +3259,7 @@ describe('**********         Compute Access Restrictions', () => {
 
       const approveTx = await paymentTokenContract
         .connect(consumerAccount)
-        .approve(artifactsAddresses.development.Escrow, balance)
+        .approve(await escrowContract.getAddress(), balance)
       await approveTx.wait()
 
       const depositTx = await escrowContract
