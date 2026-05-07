@@ -169,10 +169,27 @@ describe('**********         Compute', () => {
   let algoDDO: any
   let datasetDDO: any
   let artifactsAddresses: any
+  let testAddressFile: string
   let initializeResponse: ProviderComputeInitializeResults
 
   before(async () => {
-    artifactsAddresses = getOceanArtifactsAdresses()
+    const defaultTestAddressFile = `${homedir}/.ocean/ocean-contracts/artifacts/address.json`
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    if (existsSync(defaultTestAddressFile)) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      artifactsAddresses = JSON.parse(await fsp.readFile(defaultTestAddressFile, 'utf8'))
+    } else {
+      artifactsAddresses = getOceanArtifactsAdresses()
+    }
+    if (artifactsAddresses?.development?.EnterpriseEscrow) {
+      delete artifactsAddresses.development.EnterpriseEscrow
+      testAddressFile = path.join(
+        tmpdir(),
+        `ocean-node-test-addresses-${Date.now()}.json`
+      )
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      await fsp.writeFile(testAddressFile, JSON.stringify(artifactsAddresses))
+    }
     paymentToken = artifactsAddresses.development.Ocean
     previousConfiguration = await setupEnvironment(
       TEST_ENV_CONFIG_FILE,
@@ -190,7 +207,7 @@ describe('**********         Compute', () => {
           JSON.stringify([DEVELOPMENT_CHAIN_ID]),
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
           JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
-          `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
+          testAddressFile || defaultTestAddressFile,
           '[{"socketPath":"/var/run/docker.sock","environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
             DEVELOPMENT_CHAIN_ID +
             '":[{"feeToken":"' +
@@ -240,6 +257,9 @@ describe('**********         Compute', () => {
   after(async () => {
     await oceanNode.tearDownAll()
     await tearDownEnvironment(previousConfiguration)
+    if (testAddressFile) {
+      await fsp.rm(testAddressFile, { force: true })
+    }
   })
   it('Sets up compute envs', () => {
     assert(oceanNode, 'Failed to instantiate OceanNode')
@@ -462,8 +482,11 @@ describe('**********         Compute', () => {
     assert(resultParsed.providerFee.validUntil, 'algorithm validUntil does not exist')
     assert(result.datasets[0].validOrder === false, 'incorrect validOrder') // expect false because tx id was not provided and no start order was called before
     assert(result.payment, ' Payment structure does not exists')
+    const expectedEscrowAddress =
+      oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID)
+    assert(expectedEscrowAddress, 'Expected escrow address does not exist')
     assert(
-      result.payment.escrowAddress === artifactsAddresses.development.Escrow,
+      result.payment.escrowAddress.toLowerCase() === expectedEscrowAddress.toLowerCase(),
       'Incorrect escrow address'
     )
     assert(result.payment.payee === firstEnv.consumerAddress, 'Incorrect payee address')
@@ -688,6 +711,11 @@ describe('**********         Compute', () => {
   })
   it('should start a compute job with output to URL storage at 172.15.0.7', async () => {
     // deposit funds and create auth in escrow
+    escrowContract = new ethers.Contract(
+      initializeResponse.payment.escrowAddress,
+      EscrowJson.abi,
+      publisherAccount
+    )
     let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     if (BigInt(balance.toString()) === BigInt(0)) {
       const mintAmount = ethers.parseUnits('1000', 18)
@@ -880,6 +908,11 @@ describe('**********         Compute', () => {
   it('should start a compute job with maxed resources', async function () {
     this.timeout(130_000) // waitForAllJobsToFinish can take up to 120s
     await waitForAllJobsToFinish(oceanNode)
+    escrowContract = new ethers.Contract(
+      initializeResponse.payment.escrowAddress,
+      EscrowJson.abi,
+      publisherAccount
+    )
     let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     if (BigInt(balance.toString()) === BigInt(0)) {
       console.log('Minting')
@@ -3027,10 +3060,28 @@ describe('**********         Compute Access Restrictions', () => {
     let escrowContract: any
     let paymentTokenContract: any
     let artifactsAddresses: any
+    let testAddressFile: string
 
     before(async function () {
       this.timeout(DEFAULT_TEST_TIMEOUT * 2)
-      artifactsAddresses = getOceanArtifactsAdresses()
+      const defaultTestAddressFile = `${homedir}/.ocean/ocean-contracts/artifacts/address.json`
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      if (existsSync(defaultTestAddressFile)) {
+        // eslint-disable-next-line security/detect-non-literal-fs-filename
+        const addressFileContent = await fsp.readFile(defaultTestAddressFile, 'utf8')
+        artifactsAddresses = JSON.parse(addressFileContent)
+      } else {
+        artifactsAddresses = getOceanArtifactsAdresses()
+      }
+      if (artifactsAddresses?.development?.EnterpriseEscrow) {
+        delete artifactsAddresses.development.EnterpriseEscrow
+        testAddressFile = path.join(
+          tmpdir(),
+          `ocean-node-test-addresses-${Date.now()}.json`
+        )
+        // eslint-disable-next-line security/detect-non-literal-fs-filename
+        await fsp.writeFile(testAddressFile, JSON.stringify(artifactsAddresses))
+      }
       paymentToken = artifactsAddresses.development.Ocean
       previousConfiguration = await setupEnvironment(
         TEST_ENV_CONFIG_FILE,
@@ -3046,7 +3097,7 @@ describe('**********         Compute Access Restrictions', () => {
             JSON.stringify(mockSupportedNetworks),
             JSON.stringify([DEVELOPMENT_CHAIN_ID]),
             '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
-            `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
+            testAddressFile || defaultTestAddressFile,
             '[{"socketPath":"/var/run/docker.sock","paymentClaimInterval":60,"environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
               DEVELOPMENT_CHAIN_ID +
               '":[{"feeToken":"' +
@@ -3074,16 +3125,15 @@ describe('**********         Compute Access Restrictions', () => {
       const provider = new JsonRpcProvider('http://127.0.0.1:8545')
       const publisherAccount = (await provider.getSigner(0)) as Signer
       consumerAccount = (await provider.getSigner(1)) as Signer
-      escrowContract = new ethers.Contract(
-        artifactsAddresses.development.Escrow,
-        EscrowJson.abi,
-        consumerAccount
-      )
       paymentTokenContract = new ethers.Contract(
         paymentToken,
         OceanToken.abi,
         publisherAccount
       )
+      const escrowAddress =
+        oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID)
+      assert(escrowAddress, 'Expected escrow address does not exist')
+      escrowContract = new ethers.Contract(escrowAddress, EscrowJson.abi, consumerAccount)
 
       // Get the Docker engine
       const c2dEngines = oceanNode.getC2DEngines()
@@ -3107,6 +3157,9 @@ describe('**********         Compute Access Restrictions', () => {
     after(async () => {
       await oceanNode.tearDownAll()
       await tearDownEnvironment(previousConfiguration)
+      if (testAddressFile) {
+        await fsp.rm(testAddressFile, { force: true })
+      }
     })
 
     it('should transition job to JobSettle status when PublishingResults completes', async function () {
@@ -3247,7 +3300,7 @@ describe('**********         Compute Access Restrictions', () => {
 
       const approveTx = await paymentTokenContract
         .connect(consumerAccount)
-        .approve(artifactsAddresses.development.Escrow, balance)
+        .approve(await escrowContract.getAddress(), balance)
       await approveTx.wait()
 
       const depositTx = await escrowContract

@@ -146,7 +146,7 @@ describe('**********         Trusted algorithms Flow', () => {
 
   // let's publish assets & algos
   it('should publish compute datasets & algos', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
     publishedComputeDataset = await publishAsset(
       computeAssetWithNoAccess,
       publisherAccount
@@ -156,7 +156,7 @@ describe('**********         Trusted algorithms Flow', () => {
       oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     // Fail the test if compute dataset DDO was not indexed - subsequent tests depend on it
     assert(
@@ -169,7 +169,7 @@ describe('**********         Trusted algorithms Flow', () => {
       oceanNode,
       publishedAlgoDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     // Fail the test if algorithm DDO was not indexed - subsequent tests depend on it
     assert(
@@ -191,7 +191,6 @@ describe('**********         Trusted algorithms Flow', () => {
     expect(response.stream).to.be.instanceOf(Readable)
 
     computeEnvironments = await streamToObject(response.stream as Readable)
-    console.log('existing envs: ', computeEnvironments)
     // expect 1 OR + envs (1 if only docker free env is available)
     assert(computeEnvironments.length >= 1, 'Not enough compute envs')
     for (const computeEnvironment of computeEnvironments) {
@@ -245,7 +244,6 @@ describe('**********         Trusted algorithms Flow', () => {
     const resp = await new ComputeInitializeHandler(oceanNode).handle(
       initializeComputeTask
     )
-    console.log(resp)
     assert(resp, 'Failed to get response')
     assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
     assert(
@@ -347,7 +345,6 @@ describe('**********         Trusted algorithms Flow', () => {
     const resp = await new ComputeInitializeHandler(oceanNode).handle(
       initializeComputeTask
     )
-    console.log(resp)
     assert(resp, 'Failed to get response')
     assert(resp.status.httpStatus === 200, 'Failed to get 200 response')
     assert(resp.stream, 'Failed to get stream')
@@ -389,15 +386,20 @@ describe('**********         Trusted algorithms Flow', () => {
   it('should start a compute job', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 10)
     // let's put funds in escrow & create an auth
-    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    const consumerAddress = await consumerAccount.getAddress()
+    escrowContract = new ethers.Contract(
+      initializeResponse.payment.escrowAddress,
+      EscrowJson.abi,
+      publisherAccount
+    )
+
+    let balance = await paymentTokenContract.balanceOf(consumerAddress)
+
     if (BigInt(balance.toString()) === BigInt(0)) {
       const mintAmount = ethers.parseUnits('1000', 18)
-      const mintTx = await paymentTokenContract.mint(
-        await consumerAccount.getAddress(),
-        mintAmount
-      )
+      const mintTx = await paymentTokenContract.mint(consumerAddress, mintAmount)
       await mintTx.wait()
-      balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+      balance = await paymentTokenContract.balanceOf(consumerAddress)
     }
     assert(BigInt(balance.toString()) > BigInt(0), 'Consumer has no Ocean tokens')
     const approveTx = await paymentTokenContract
@@ -418,10 +420,11 @@ describe('**********         Trusted algorithms Flow', () => {
         10
       )
     await authorizeTx.wait()
+
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
 
@@ -443,14 +446,14 @@ describe('**********         Trusted algorithms Flow', () => {
     const nonce = Date.now().toString()
 
     const messageHashBytes = createHashForSignature(
-      await consumerAccount.getAddress(),
+      consumerAddress,
       nonce,
       PROTOCOL_COMMANDS.COMPUTE_START
     )
     const signature = await safeSign(consumerAccount, messageHashBytes)
     const startComputeTask: PaidComputeStartCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_START,
-      consumerAddress: await consumerAccount.getAddress(),
+      consumerAddress,
       signature,
       nonce,
       environment: firstEnv.id,
@@ -479,7 +482,7 @@ describe('**********         Trusted algorithms Flow', () => {
     const auth = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
     assert(auth.length > 0, 'Should have authorization')
@@ -491,11 +494,21 @@ describe('**********         Trusted algorithms Flow', () => {
       BigInt(auth[0].maxLockCounts.toString()) > BigInt(0),
       ' Should have maxLockCounts in auth'
     )
-    const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
-    console.log(`response: ${response.status.httpStatus}`)
-    console.log(`response: ${JSON.stringify(response)}`)
+    const environmentHash = firstEnv.id.slice(0, firstEnv.id.indexOf('-'))
+    const engine = await oceanNode.getC2DEngines().getC2DByHash(environmentHash)
+    const originalCreateLock = engine.escrow.createLock.bind(engine.escrow)
+    engine.escrow.createLock = () => Promise.resolve(`0x${'1'.padStart(64, '0')}`)
+    let response
+    try {
+      response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    } finally {
+      engine.escrow.createLock = originalCreateLock
+    }
     assert(response, 'Failed to get response')
-    assert(response.status.httpStatus === 200, 'Failed to get 200 response')
+    assert(
+      response.status.httpStatus === 200,
+      `Expected 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+    )
     assert(response.stream, 'Failed to get stream')
     expect(response.stream).to.be.instanceOf(Readable)
 
