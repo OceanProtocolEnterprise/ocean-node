@@ -217,7 +217,7 @@ export class C2DEngineDocker extends C2DEngine {
       description: 'Auto-generated benchmark environment',
       storageExpiry: 604800,
       maxJobDuration: 180,
-      minJobDuration: 60,
+      minJobDuration: 0,
       resources: [
         { id: 'cpu', total: sysinfo.NCPU, min: 1, max: sysinfo.NCPU },
         { id: 'ram', total: ramGB, min: 1, max: ramGB },
@@ -385,6 +385,8 @@ export class C2DEngineDocker extends C2DEngine {
           env.free.maxJobDuration = envDef.free.maxJobDuration
         if (envDef.free.maxJobs !== undefined) env.free.maxJobs = envDef.free.maxJobs
         if (envDef.free.resources) env.free.resources = envDef.free.resources
+        if (envDef.free.allowImageBuild !== undefined)
+          env.free.allowImageBuild = envDef.free.allowImageBuild
       }
 
       const envIdSuffix = envDef.id || String(envIdx)
