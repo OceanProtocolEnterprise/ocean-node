@@ -9,7 +9,7 @@ import { deleteIndexedMetadataIfExists } from '../../../utils/asset.js'
 
 import { checkCredentialOnAccessList } from '../../../utils/credentials.js'
 
-import { CORE_LOGGER, INDEXER_LOGGER } from '../../../utils/logging/common.js'
+import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { asyncCallWithTimeout, streamToString } from '../../../utils/util.js'
 import { PolicyServer } from '../../policyServer/index.js'
@@ -135,9 +135,6 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       const isRemoteMetadata = isRemoteDDO(decryptDDO)
       const isEncryptedMetadata = (parseInt(flag) & 2) !== 0
       let ddo = await this.processDDO(decryptDDO)
-      CORE_LOGGER.logMessage(
-        `Processed DDO for event ${event.transactionHash}: ${JSON.stringify(ddo)}`
-      )
       if (!isEncryptedMetadata && !this.checkDdoHash(ddo, metadataHash)) {
         return
       }
@@ -155,9 +152,6 @@ export class MetadataEventProcessor extends BaseEventProcessor {
               '',
               ddo.encryptedData
             )
-            CORE_LOGGER.logMessage(
-              `Decrypted IPFS payload for event ${event.transactionHash}: ${JSON.stringify(decryptedIpfsPayload)}`
-            )
             encryptedData = decryptedIpfsPayload.encryptedData || encryptedData
           } catch (error) {
             INDEXER_LOGGER.log(
@@ -174,15 +168,9 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           owner,
           encryptedData
         )
-        CORE_LOGGER.logMessage(
-          `Decrypted proof payload for event ${event.transactionHash}: ${JSON.stringify(proof)}`
-        )
         const data = typeof proof === 'string' ? this.getDataFromProof(proof) : null
 
         const ddoObj = data?.ddoObj || (this.isDDO(proof) ? proof : null)
-        CORE_LOGGER.logMessage(
-          `Processed ddoOBJ for event ${event.transactionHash}: ${JSON.stringify(ddoObj)}`
-        )
         if (!ddoObj) {
           throw new Error(
             'IPFS encryptedData payload is neither a DDO nor a supported DDO proof.'
@@ -196,9 +184,6 @@ export class MetadataEventProcessor extends BaseEventProcessor {
               })
             : ddoInstance.getDDOData()
       }
-      CORE_LOGGER.logMessage(
-        `Processed DDO final for event ${event.transactionHash}: ${JSON.stringify(ddo)}`
-      )
       const clonedDdo = structuredClone(ddo)
       const updatedDdo = deleteIndexedMetadataIfExists(clonedDdo)
       const ddoInstance = DDOManager.getDDOClass(updatedDdo)
