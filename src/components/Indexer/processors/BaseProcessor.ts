@@ -317,6 +317,9 @@ export abstract class BaseEventProcessor {
               chainId,
               decrypterAddress: ethAddress,
               dataNftAddress: contractAddress,
+              encryptedDocument: txId ? undefined : metadata,
+              flags: parseInt(flag),
+              documentHash: metadataHash || undefined,
               signature,
               nonce
             }
@@ -383,7 +386,7 @@ export abstract class BaseEventProcessor {
             ddo = JSON.parse(response.data)
             responseHash = create256Hash(ddo)
           }
-          if (responseHash !== metadataHash) {
+          if (metadataHash && responseHash !== metadataHash) {
             const msg = `Hash check failed: response=${ddo}, decrypted ddo hash=${responseHash}\n metadata hash=${metadataHash}`
             INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, msg)
             throw new Error(msg)
@@ -429,6 +432,7 @@ export abstract class BaseEventProcessor {
             decrypterAddress: ethAddress,
             chainId,
             encryptedDocument: metadata,
+            flags: parseInt(flag),
             documentHash: metadataHash,
             dataNftAddress: contractAddress,
             signature,
@@ -491,6 +495,7 @@ export abstract class BaseEventProcessor {
               decrypterAddress: ethAddress,
               chainId,
               encryptedDocument: metadata,
+              flags: parseInt(flag),
               documentHash: metadataHash,
               dataNftAddress: contractAddress,
               signature,

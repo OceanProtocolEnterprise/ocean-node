@@ -9,7 +9,7 @@ import { deleteIndexedMetadataIfExists } from '../../../utils/asset.js'
 
 import { checkCredentialOnAccessList } from '../../../utils/credentials.js'
 
-import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
+import { CORE_LOGGER, INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { asyncCallWithTimeout, streamToString } from '../../../utils/util.js'
 import { PolicyServer } from '../../policyServer/index.js'
@@ -23,6 +23,16 @@ import { getConfiguration } from '../../../utils/config.js'
 import { isRemoteDDO } from '../../core/utils/validateDdoHandler.js'
 
 export class MetadataEventProcessor extends BaseEventProcessor {
+  private isDDO(data: any): data is Record<string, any> {
+    return (
+      data &&
+      typeof data === 'object' &&
+      !Array.isArray(data) &&
+      typeof data.id === 'string' &&
+      typeof data.version === 'string'
+    )
+  }
+
   async processEvent(
     event: ethers.Log,
     chainId: number,
@@ -123,6 +133,9 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadata
       )
       let ddo = await this.processDDO(decryptDDO)
+      CORE_LOGGER.logMessage(
+        `Processed DDO for event ${event.transactionHash}: ${JSON.stringify(ddo)}`
+      )
       if (
         !isRemoteDDO(decryptDDO) &&
         parseInt(flag) !== 2 &&
@@ -131,17 +144,63 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         return
       }
       if (ddo.encryptedData) {
+        let { encryptedData } = ddo
+        if ((parseInt(flag) & 2) !== 0) {
+          try {
+            const decryptedIpfsPayload = await this.decryptDDO(
+              decodedEventData.args[2],
+              flag,
+              owner,
+              event.address,
+              chainId,
+              '',
+              '',
+              ddo.encryptedData
+            )
+            CORE_LOGGER.logMessage(
+              `Decrypted IPFS payload for event ${event.transactionHash}: ${JSON.stringify(decryptedIpfsPayload)}`
+            )
+            encryptedData = decryptedIpfsPayload.encryptedData || encryptedData
+          } catch (error) {
+            INDEXER_LOGGER.log(
+              LOG_LEVELS_STR.LEVEL_ERROR,
+              `Unable to decrypt encrypted IPFS DDO payload, trying plaintext payload fallback: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            )
+          }
+        }
+
         const proof = await this.decryptDDOIPFS(
           decodedEventData.args[2],
           owner,
-          ddo.encryptedData
+          encryptedData
         )
-        const data = this.getDataFromProof(proof)
-        const ddoInstance = DDOManager.getDDOClass(data.ddoObj)
-        ddo = ddoInstance.updateFields({
-          proof: { signature: data.signature, header: data.header }
-        })
+        CORE_LOGGER.logMessage(
+          `Decrypted proof payload for event ${event.transactionHash}: ${JSON.stringify(proof)}`
+        )
+        const data = typeof proof === 'string' ? this.getDataFromProof(proof) : null
+
+        const ddoObj = data?.ddoObj || (this.isDDO(proof) ? proof : null)
+        CORE_LOGGER.logMessage(
+          `Processed ddoOBJ for event ${event.transactionHash}: ${JSON.stringify(ddoObj)}`
+        )
+        if (!ddoObj) {
+          throw new Error(
+            'IPFS encryptedData payload is neither a DDO nor a supported DDO proof.'
+          )
+        }
+        const ddoInstance = DDOManager.getDDOClass(ddoObj)
+        ddo =
+          data?.signature && data?.header
+            ? ddoInstance.updateFields({
+                proof: { signature: data.signature, header: data.header }
+              })
+            : ddoInstance.getDDOData()
       }
+      CORE_LOGGER.logMessage(
+        `Processed DDO final for event ${event.transactionHash}: ${JSON.stringify(ddo)}`
+      )
       const clonedDdo = structuredClone(ddo)
       const updatedDdo = deleteIndexedMetadataIfExists(clonedDdo)
       const ddoInstance = DDOManager.getDDOClass(updatedDdo)
