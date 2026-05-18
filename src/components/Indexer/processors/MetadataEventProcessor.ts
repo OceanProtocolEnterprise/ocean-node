@@ -132,15 +132,13 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadataHash,
         metadata
       )
+      const isRemoteMetadata = isRemoteDDO(decryptDDO)
+      const isEncryptedMetadata = (parseInt(flag) & 2) !== 0
       let ddo = await this.processDDO(decryptDDO)
       CORE_LOGGER.logMessage(
         `Processed DDO for event ${event.transactionHash}: ${JSON.stringify(ddo)}`
       )
-      if (
-        !isRemoteDDO(decryptDDO) &&
-        parseInt(flag) !== 2 &&
-        !this.checkDdoHash(ddo, metadataHash)
-      ) {
+      if (!isEncryptedMetadata && !this.checkDdoHash(ddo, metadataHash)) {
         return
       }
       if (ddo.encryptedData) {
@@ -218,8 +216,12 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         )
         return
       }
-      // for unencrypted DDOs
-      if ((parseInt(flag) & 2) === 0 && !this.checkDdoHash(updatedDdo, metadataHash)) {
+      // for unencrypted inline DDOs
+      if (
+        !isRemoteMetadata &&
+        !isEncryptedMetadata &&
+        !this.checkDdoHash(updatedDdo, metadataHash)
+      ) {
         INDEXER_LOGGER.error('Unencrypted DDO hash does not match metadata hash.')
         await ddoState.update(
           this.networkId,
