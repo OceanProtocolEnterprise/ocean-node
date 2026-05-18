@@ -210,9 +210,14 @@ export abstract class BaseEventProcessor {
   }
 
   protected checkDdoHash(decryptedDocument: any, documentHashFromContract: any): boolean {
-    const utf8Bytes = toUtf8Bytes(JSON.stringify(decryptedDocument))
+    const documentString = JSON.stringify(decryptedDocument)
+    const utf8Bytes = toUtf8Bytes(documentString)
     const expectedMetadata = hexlify(utf8Bytes)
-    if (create256Hash(expectedMetadata.toString()) !== documentHashFromContract) {
+    const validHashes = [
+      create256Hash(expectedMetadata.toString()),
+      create256Hash(documentString)
+    ]
+    if (!validHashes.includes(documentHashFromContract)) {
       INDEXER_LOGGER.error(`DDO checksum does not match.`)
       return false
     }
@@ -317,6 +322,9 @@ export abstract class BaseEventProcessor {
               chainId,
               decrypterAddress: ethAddress,
               dataNftAddress: contractAddress,
+              encryptedDocument: txId ? undefined : metadata,
+              flags: parseInt(flag),
+              documentHash: metadataHash || undefined,
               signature,
               nonce
             }
@@ -383,7 +391,7 @@ export abstract class BaseEventProcessor {
             ddo = JSON.parse(response.data)
             responseHash = create256Hash(ddo)
           }
-          if (responseHash !== metadataHash) {
+          if (metadataHash && responseHash !== metadataHash) {
             const msg = `Hash check failed: response=${ddo}, decrypted ddo hash=${responseHash}\n metadata hash=${metadataHash}`
             INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, msg)
             throw new Error(msg)
@@ -429,6 +437,7 @@ export abstract class BaseEventProcessor {
             decrypterAddress: ethAddress,
             chainId,
             encryptedDocument: metadata,
+            flags: parseInt(flag),
             documentHash: metadataHash,
             dataNftAddress: contractAddress,
             signature,
@@ -491,6 +500,7 @@ export abstract class BaseEventProcessor {
               decrypterAddress: ethAddress,
               chainId,
               encryptedDocument: metadata,
+              flags: parseInt(flag),
               documentHash: metadataHash,
               dataNftAddress: contractAddress,
               signature,
