@@ -357,7 +357,7 @@ export class DecryptDdoHandler extends CommandHandler {
       } else {
         // checksum matches
         const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
-        if (decryptedDocumentHash !== documentHash) {
+        if (documentHash && decryptedDocumentHash !== documentHash) {
           return {
             stream: null,
             status: {

@@ -23,6 +23,16 @@ import { getConfiguration } from '../../../utils/config.js'
 import { isRemoteDDO } from '../../core/utils/validateDdoHandler.js'
 
 export class MetadataEventProcessor extends BaseEventProcessor {
+  private isDDO(data: any): data is Record<string, any> {
+    return (
+      data &&
+      typeof data === 'object' &&
+      !Array.isArray(data) &&
+      typeof data.id === 'string' &&
+      typeof data.version === 'string'
+    )
+  }
+
   async processEvent(
     event: ethers.Log,
     chainId: number,
@@ -122,25 +132,57 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         metadataHash,
         metadata
       )
+      const isRemoteMetadata = isRemoteDDO(decryptDDO)
+      const isEncryptedMetadata = (parseInt(flag) & 2) !== 0
       let ddo = await this.processDDO(decryptDDO)
-      if (
-        !isRemoteDDO(decryptDDO) &&
-        parseInt(flag) !== 2 &&
-        !this.checkDdoHash(ddo, metadataHash)
-      ) {
+      if (!isEncryptedMetadata && !this.checkDdoHash(ddo, metadataHash)) {
         return
       }
       if (ddo.encryptedData) {
+        let { encryptedData } = ddo
+        if ((parseInt(flag) & 2) !== 0) {
+          try {
+            const decryptedIpfsPayload = await this.decryptDDO(
+              decodedEventData.args[2],
+              flag,
+              owner,
+              event.address,
+              chainId,
+              '',
+              '',
+              ddo.encryptedData
+            )
+            encryptedData = decryptedIpfsPayload.encryptedData || encryptedData
+          } catch (error) {
+            INDEXER_LOGGER.log(
+              LOG_LEVELS_STR.LEVEL_ERROR,
+              `Unable to decrypt encrypted IPFS DDO payload, trying plaintext payload fallback: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            )
+          }
+        }
+
         const proof = await this.decryptDDOIPFS(
           decodedEventData.args[2],
           owner,
-          ddo.encryptedData
+          encryptedData
         )
-        const data = this.getDataFromProof(proof)
-        const ddoInstance = DDOManager.getDDOClass(data.ddoObj)
-        ddo = ddoInstance.updateFields({
-          proof: { signature: data.signature, header: data.header }
-        })
+        const data = typeof proof === 'string' ? this.getDataFromProof(proof) : null
+
+        const ddoObj = data?.ddoObj || (this.isDDO(proof) ? proof : null)
+        if (!ddoObj) {
+          throw new Error(
+            'IPFS encryptedData payload is neither a DDO nor a supported DDO proof.'
+          )
+        }
+        const ddoInstance = DDOManager.getDDOClass(ddoObj)
+        ddo =
+          data?.signature && data?.header
+            ? ddoInstance.updateFields({
+                proof: { signature: data.signature, header: data.header }
+              })
+            : ddoInstance.getDDOData()
       }
       const clonedDdo = structuredClone(ddo)
       const updatedDdo = deleteIndexedMetadataIfExists(clonedDdo)
@@ -159,8 +201,12 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         )
         return
       }
-      // for unencrypted DDOs
-      if ((parseInt(flag) & 2) === 0 && !this.checkDdoHash(updatedDdo, metadataHash)) {
+      // for unencrypted inline DDOs
+      if (
+        !isRemoteMetadata &&
+        !isEncryptedMetadata &&
+        !this.checkDdoHash(updatedDdo, metadataHash)
+      ) {
         INDEXER_LOGGER.error('Unencrypted DDO hash does not match metadata hash.')
         await ddoState.update(
           this.networkId,
