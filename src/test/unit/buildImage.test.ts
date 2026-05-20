@@ -110,8 +110,9 @@ describe('C2DEngineDocker.buildImage', () => {
     const { engine, db } = await makeEngine({ tempFolder })
 
     const job = makeJob()
-    mkdirSync(path.join(tempFolder, job.jobId, 'data', 'logs'), { recursive: true })
-
+    mkdirSync(path.join((engine as any).getStoragePath(), job.jobId, 'data', 'logs'), {
+      recursive: true
+    })
     const buildStream = new Readable({ read() {} })
     ;(engine as any).docker = {
       buildImage: sinon.stub().resolves(buildStream),
@@ -135,8 +136,9 @@ describe('C2DEngineDocker.buildImage', () => {
     const { engine, db } = await makeEngine({ tempFolder })
 
     const job = makeJob({ containerImage: 'ocean-node-test:job-123-success' })
-    mkdirSync(path.join(tempFolder, job.jobId, 'data', 'logs'), { recursive: true })
-
+    mkdirSync(path.join((engine as any).getStoragePath(), job.jobId, 'data', 'logs'), {
+      recursive: true
+    })
     const buildStream = new Readable({ read() {} })
     ;(engine as any).docker = {
       buildImage: sinon.stub().resolves(buildStream),
