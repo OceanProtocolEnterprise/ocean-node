@@ -10,6 +10,7 @@ export type KernelAccountContext = {
   address: string
   signerAddress: string
   isDeployed: boolean
+  getBalanceWei: () => Promise<bigint>
   deployIfNeeded: () => Promise<{
     deployed: boolean
     userOperationHash?: string
@@ -67,6 +68,9 @@ export async function createKernelAccountForNodeWallet(
     const bytecode = await publicClient.getBytecode({ address: account.address })
     return Boolean(bytecode && bytecode.length > 2)
   }
+  const getBalanceWei = async () => {
+    return await publicClient.getBalance({ address: account.address })
+  }
 
   const contract = new ethers.Contract(
     account.address,
@@ -78,13 +82,21 @@ export async function createKernelAccountForNodeWallet(
     address: account.address,
     signerAddress: signer.address,
     isDeployed: await getIsDeployed(),
+    getBalanceWei,
     deployIfNeeded: async () => {
       if (await getIsDeployed()) {
         return { deployed: false }
       }
 
+      const balanceWei = await getBalanceWei()
+      if (balanceWei === 0n) {
+        throw new Error(
+          `Kernel account ${account.address} is not deployed and has 0 Sepolia ETH. Fund this counterfactual smart account address before deployment, or configure a paymaster.`
+        )
+      }
+
       options.log?.(
-        `Kernel account ${account.address} is not deployed; sending deployment user operation`
+        `Kernel account ${account.address} is not deployed; balance=${balanceWei.toString()} wei; sending deployment user operation`
       )
       const userOperationHash = await kernelClient.sendTransaction({
         to: account.address,

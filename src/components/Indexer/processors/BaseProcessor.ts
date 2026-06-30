@@ -63,8 +63,9 @@ export abstract class BaseEventProcessor {
     this.kernelAccountContext = createKernelAccountForNodeWallet(wallet.privateKey, {
       log: (message) => INDEXER_LOGGER.debug(`decryptDDO: ${message}`)
     }).then(async (context) => {
+      const balanceWei = await context.getBalanceWei()
       INDEXER_LOGGER.debug(
-        `decryptDDO: Kernel account derived for node signer ${context.signerAddress}: ${context.address}; deployed=${context.isDeployed}`
+        `decryptDDO: Kernel account derived for node signer ${context.signerAddress}: ${context.address}; deployed=${context.isDeployed}; balance=${balanceWei.toString()} wei`
       )
       const deployment = await context.deployIfNeeded()
       if (deployment.deployed) {
