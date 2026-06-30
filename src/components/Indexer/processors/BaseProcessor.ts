@@ -31,16 +31,15 @@ import { OceanNodeConfig } from '../../../@types/OceanNode.js'
 import { Database } from '../../../components/database/index.js'
 import { AbstractDdoDatabase } from '../../database/BaseDatabase.js'
 import { createHash } from 'crypto'
-import { createRequire } from 'module'
-
-const moduleRequire = createRequire(import.meta.url)
-const TEST_KERNEL_DECRYPTER_ADDRESS = '0x0a7bdd00bA61cF17CFeD71aae77abf88740024Dc'
-const TEST_ZERODEV_RPC =
-  'https://rpc.zerodev.app/api/v3/d09b9d4e-ce67-41e6-850a-a0f2eb772c37/chain/11155111'
+import {
+  createKernelAccountForNodeWallet,
+  type KernelAccountContext
+} from '../../core/utils/kernelAccount.js'
 
 export abstract class BaseEventProcessor {
   protected networkId: number
   private config: OceanNodeConfig
+  private kernelAccountContext?: Promise<KernelAccountContext>
 
   constructor(chainId: number, config: OceanNodeConfig) {
     this.networkId = chainId
@@ -55,59 +54,28 @@ export abstract class BaseEventProcessor {
     return await OceanNode.getInstance().getDatabase()
   }
 
-  private async signMessageWithTestKernelAccount(message: string): Promise<string> {
-    const { createKernelAccount, constants } = moduleRequire('@zerodev/sdk')
-    const { signerToEcdsaValidator } = moduleRequire('@zerodev/ecdsa-validator')
-    const { createPublicClient, http } = moduleRequire('viem')
-    const { privateKeyToAccount } = moduleRequire('viem/accounts')
-    const { sepolia } = moduleRequire('viem/chains')
-    const entryPoint = constants.getEntryPoint('0.7')
-    const kernelVersion = constants.KERNEL_V3_1
-    const wallet = OceanNode.getInstance().getKeyManager().getEthWallet()
-    const signer = privateKeyToAccount(wallet.privateKey)
-    const publicClient = createPublicClient({
-      chain: sepolia,
-      transport: http(TEST_ZERODEV_RPC)
-    })
-
-    const validator = await signerToEcdsaValidator(publicClient, {
-      signer,
-      entryPoint,
-      kernelVersion
-    })
-
-    const account = await createKernelAccount(publicClient, {
-      address: TEST_KERNEL_DECRYPTER_ADDRESS,
-      plugins: { sudo: validator },
-      entryPoint,
-      kernelVersion
-    })
-
-    const eip191Hash = ethers.hashMessage(message)
-    const provider = new ethers.JsonRpcProvider(TEST_ZERODEV_RPC)
-    const contract = new ethers.Contract(
-      TEST_KERNEL_DECRYPTER_ADDRESS,
-      ['function isValidSignature(bytes32, bytes) view returns (bytes4)'],
-      provider
-    )
-
-    for (const useReplayableSignature of [false, true]) {
-      const signature = await account.signMessage({ message, useReplayableSignature })
-      const result = await contract.isValidSignature(eip191Hash, signature)
-      if (result === '0x1626ba7e') {
-        INDEXER_LOGGER.debug(
-          `decryptDDO: Kernel ERC-1271 signature accepted for ${TEST_KERNEL_DECRYPTER_ADDRESS}; replayable=${useReplayableSignature}`
-        )
-        return signature
-      }
-      INDEXER_LOGGER.debug(
-        `decryptDDO: Kernel ERC-1271 signature rejected for ${TEST_KERNEL_DECRYPTER_ADDRESS}; replayable=${useReplayableSignature}; result=${result}`
-      )
+  private async getKernelAccountContext(): Promise<KernelAccountContext> {
+    if (this.kernelAccountContext) {
+      return await this.kernelAccountContext
     }
 
-    throw new Error(
-      `Kernel account ${TEST_KERNEL_DECRYPTER_ADDRESS} did not accept the generated ERC-1271 signature`
-    )
+    const wallet = OceanNode.getInstance().getKeyManager().getEthWallet()
+    this.kernelAccountContext = createKernelAccountForNodeWallet(wallet.privateKey, {
+      log: (message) => INDEXER_LOGGER.debug(`decryptDDO: ${message}`)
+    }).then(async (context) => {
+      INDEXER_LOGGER.debug(
+        `decryptDDO: Kernel account derived for node signer ${context.signerAddress}: ${context.address}; deployed=${context.isDeployed}`
+      )
+      const deployment = await context.deployIfNeeded()
+      if (deployment.deployed) {
+        INDEXER_LOGGER.debug(
+          `decryptDDO: Kernel account deployed; userOp=${deployment.userOperationHash}; tx=${deployment.transactionHash}`
+        )
+      }
+      return context
+    })
+
+    return await this.kernelAccountContext
   }
 
   protected isValidDtAddressFromServices(services: any[]): boolean {
@@ -362,7 +330,8 @@ export abstract class BaseEventProcessor {
       const oceanNode = OceanNode.getInstance()
       const keyManager = oceanNode.getKeyManager()
       const nodeId = keyManager.getPeerId().toString()
-      const ethAddress = TEST_KERNEL_DECRYPTER_ADDRESS
+      const kernelAccount = await this.getKernelAccountContext()
+      const ethAddress = kernelAccount.address
 
       if (URLUtils.isValidUrl(decryptorURL)) {
         try {
@@ -375,7 +344,7 @@ export abstract class BaseEventProcessor {
             const message = String(
               String(ethAddress) + String(nonce) + String(PROTOCOL_COMMANDS.DECRYPT_DDO)
             )
-            const signature = await this.signMessageWithTestKernelAccount(message)
+            const signature = await kernelAccount.signMessage(message)
 
             const payload = {
               transactionId: txId,
@@ -489,7 +458,7 @@ export abstract class BaseEventProcessor {
           const message = String(
             String(ethAddress) + String(nonceP2p) + String(PROTOCOL_COMMANDS.DECRYPT_DDO)
           )
-          const signature = await this.signMessageWithTestKernelAccount(message)
+          const signature = await kernelAccount.signMessage(message)
 
           const decryptDDOTask: DecryptDDOCommand = {
             command: PROTOCOL_COMMANDS.DECRYPT_DDO,
@@ -552,7 +521,7 @@ export abstract class BaseEventProcessor {
                 String(remoteNonce) +
                 String(PROTOCOL_COMMANDS.DECRYPT_DDO)
             )
-            const signature = await this.signMessageWithTestKernelAccount(messageToSign)
+            const signature = await kernelAccount.signMessage(messageToSign)
 
             const message = {
               command: PROTOCOL_COMMANDS.DECRYPT_DDO,
