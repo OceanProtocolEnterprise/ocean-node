@@ -215,30 +215,61 @@ async function validateNonceAndSignature(
       return { valid: true }
     }
   } catch (error) {
-    // Continue to smart account check
+    CORE_LOGGER.debug(
+      `Nonce validation: EOA signature recovery failed for ${consumer}: ${
+        error instanceof Error ? error.message : String(error)
+      }. Trying ERC-1271.`
+    )
   }
 
   // Try ERC-1271 (smart account) validation
   try {
-    const targetChainId = chainId || Object.keys(config?.supportedNetworks || {})[0]
-    if (targetChainId && config?.supportedNetworks?.[targetChainId]) {
-      const provider = new ethers.JsonRpcProvider(
-        config.supportedNetworks[targetChainId].rpc
+    const configuredChainIds = Object.keys(config?.supportedNetworks || {})
+    const targetChainIds =
+      chainId && config?.supportedNetworks?.[chainId] ? [chainId] : configuredChainIds
+
+    if (targetChainIds.length) {
+      CORE_LOGGER.debug(
+        `Nonce validation: trying ERC-1271 for ${consumer} on chain(s) ${targetChainIds.join(
+          ', '
+        )}`
       )
+      for (const targetChainId of targetChainIds) {
+        const provider = new ethers.JsonRpcProvider(
+          config.supportedNetworks[targetChainId].rpc
+        )
 
-      // Try custom hash format (for backward compatibility)
-      if (await isERC1271Valid(consumer, consumerMessage, signature, provider)) {
-        return { valid: true }
-      }
+        // Try custom hash format (for backward compatibility)
+        if (await isERC1271Valid(consumer, consumerMessage, signature, provider)) {
+          CORE_LOGGER.debug(
+            `Nonce validation: ERC-1271 custom hash accepted for ${consumer} on chain ${targetChainId}`
+          )
+          return { valid: true }
+        }
 
-      // Try EIP-191 prefixed hash (standard for smart wallets)
-      const eip191Hash = ethers.hashMessage(message)
-      if (await isERC1271Valid(consumer, eip191Hash, signature, provider)) {
-        return { valid: true }
+        // Try EIP-191 prefixed hash (standard for smart wallets)
+        const eip191Hash = ethers.hashMessage(message)
+        if (await isERC1271Valid(consumer, eip191Hash, signature, provider)) {
+          CORE_LOGGER.debug(
+            `Nonce validation: ERC-1271 EIP-191 hash accepted for ${consumer} on chain ${targetChainId}`
+          )
+          return { valid: true }
+        }
+        CORE_LOGGER.debug(
+          `Nonce validation: ERC-1271 rejected both hash formats for ${consumer} on chain ${targetChainId}`
+        )
       }
+    } else {
+      CORE_LOGGER.debug(
+        `Nonce validation: no supported network config found for ERC-1271 validation`
+      )
     }
   } catch (error) {
-    // Smart account validation failed
+    CORE_LOGGER.debug(
+      `Nonce validation: ERC-1271 validation failed for ${consumer}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
   }
 
   return {
@@ -263,7 +294,12 @@ export async function isERC1271Valid(
     const hashToUse = typeof hash === 'string' ? hash : ethers.hexlify(hash)
     const result = await contract.isValidSignature(hashToUse, signature)
     return result === '0x1626ba7e' // ERC-1271 magic value
-  } catch {
+  } catch (error) {
+    CORE_LOGGER.debug(
+      `Nonce validation: isValidSignature call failed for ${address}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
     return false
   }
 }
