@@ -56,8 +56,7 @@ export abstract class BaseEventProcessor {
   }
 
   private async signMessageWithTestKernelAccount(message: string): Promise<string> {
-    const { createKernelAccount, createKernelAccountClient, constants } =
-      moduleRequire('@zerodev/sdk')
+    const { createKernelAccount, constants } = moduleRequire('@zerodev/sdk')
     const { signerToEcdsaValidator } = moduleRequire('@zerodev/ecdsa-validator')
     const { createPublicClient, http } = moduleRequire('viem')
     const { privateKeyToAccount } = moduleRequire('viem/accounts')
@@ -84,14 +83,31 @@ export abstract class BaseEventProcessor {
       kernelVersion
     })
 
-    const kernelClient = createKernelAccountClient({
-      account,
-      chain: sepolia,
-      bundlerTransport: http(TEST_ZERODEV_RPC),
-      client: publicClient
-    })
+    const eip191Hash = ethers.hashMessage(message)
+    const provider = new ethers.JsonRpcProvider(TEST_ZERODEV_RPC)
+    const contract = new ethers.Contract(
+      TEST_KERNEL_DECRYPTER_ADDRESS,
+      ['function isValidSignature(bytes32, bytes) view returns (bytes4)'],
+      provider
+    )
 
-    return await kernelClient.signMessage({ account, message })
+    for (const useReplayableSignature of [false, true]) {
+      const signature = await account.signMessage({ message, useReplayableSignature })
+      const result = await contract.isValidSignature(eip191Hash, signature)
+      if (result === '0x1626ba7e') {
+        INDEXER_LOGGER.debug(
+          `decryptDDO: Kernel ERC-1271 signature accepted for ${TEST_KERNEL_DECRYPTER_ADDRESS}; replayable=${useReplayableSignature}`
+        )
+        return signature
+      }
+      INDEXER_LOGGER.debug(
+        `decryptDDO: Kernel ERC-1271 signature rejected for ${TEST_KERNEL_DECRYPTER_ADDRESS}; replayable=${useReplayableSignature}; result=${result}`
+      )
+    }
+
+    throw new Error(
+      `Kernel account ${TEST_KERNEL_DECRYPTER_ADDRESS} did not accept the generated ERC-1271 signature`
+    )
   }
 
   protected isValidDtAddressFromServices(services: any[]): boolean {
