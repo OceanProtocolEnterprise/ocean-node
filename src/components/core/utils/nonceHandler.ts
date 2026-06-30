@@ -189,7 +189,13 @@ async function validateNonceAndSignature(
   config: OceanNodeConfig,
   chainId?: string | null
 ): Promise<NonceResponse> {
+  CORE_LOGGER.debug(
+    `Nonce validation: validating consumer ${consumer}, nonce ${nonce}, existing nonce ${existingNonce}, command ${command}, requested chain ${chainId || 'not provided'}`
+  )
   if (nonce <= existingNonce) {
+    CORE_LOGGER.debug(
+      `Nonce validation: rejected nonce ${nonce} for ${consumer}; existing nonce is ${existingNonce}`
+    )
     return {
       valid: false,
       error: 'nonce: ' + nonce + ' is not a valid nonce'
@@ -201,11 +207,18 @@ async function validateNonceAndSignature(
     [ethers.hexlify(ethers.toUtf8Bytes(message))]
   )
   const messageHashBytes = ethers.toBeArray(consumerMessage)
+  const eip191Hash = ethers.hashMessage(message)
+  CORE_LOGGER.debug(
+    `Nonce validation: message hash details for ${consumer}: customHash=${consumerMessage}, eip191Hash=${eip191Hash}, messageLength=${message.length}`
+  )
 
   // Try EOA signature validation
   try {
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
+    CORE_LOGGER.debug(
+      `Nonce validation: EOA recovered addresses for ${consumer}: hash=${addressFromHashSignature}, bytes=${addressFromBytesSignature}`
+    )
     if (
       ethers.getAddress(addressFromHashSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase() ||
@@ -240,7 +253,12 @@ async function validateNonceAndSignature(
         )
 
         // Try custom hash format (for backward compatibility)
-        if (await isERC1271Valid(consumer, consumerMessage, signature, provider)) {
+        if (
+          await isERC1271Valid(consumer, consumerMessage, signature, provider, {
+            chainId: targetChainId,
+            hashVariant: 'custom'
+          })
+        ) {
           CORE_LOGGER.debug(
             `Nonce validation: ERC-1271 custom hash accepted for ${consumer} on chain ${targetChainId}`
           )
@@ -248,8 +266,12 @@ async function validateNonceAndSignature(
         }
 
         // Try EIP-191 prefixed hash (standard for smart wallets)
-        const eip191Hash = ethers.hashMessage(message)
-        if (await isERC1271Valid(consumer, eip191Hash, signature, provider)) {
+        if (
+          await isERC1271Valid(consumer, eip191Hash, signature, provider, {
+            chainId: targetChainId,
+            hashVariant: 'eip191'
+          })
+        ) {
           CORE_LOGGER.debug(
             `Nonce validation: ERC-1271 EIP-191 hash accepted for ${consumer} on chain ${targetChainId}`
           )
@@ -283,20 +305,44 @@ export async function isERC1271Valid(
   address: string,
   hash: string | Uint8Array,
   signature: string,
-  provider: ethers.Provider
+  provider: ethers.Provider,
+  context?: {
+    chainId?: string
+    hashVariant?: string
+  }
 ): Promise<boolean> {
+  const chainLog = context?.chainId ? ` on chain ${context.chainId}` : ''
+  const hashVariantLog = context?.hashVariant ? ` using ${context.hashVariant} hash` : ''
+  const hashToUse = typeof hash === 'string' ? hash : ethers.hexlify(hash)
+
   try {
+    const bytecode = await provider.getCode(address)
+    if (bytecode === '0x') {
+      CORE_LOGGER.debug(
+        `Nonce validation: no contract bytecode at ${address}${chainLog}; skipping ERC-1271${hashVariantLog}`
+      )
+      return false
+    }
+    CORE_LOGGER.debug(
+      `Nonce validation: contract bytecode found at ${address}${chainLog}; bytecode length ${
+        (bytecode.length - 2) / 2
+      } bytes; calling isValidSignature${hashVariantLog} with hash ${hashToUse}`
+    )
+
     const contract = new ethers.Contract(
       address,
       ['function isValidSignature(bytes32, bytes) view returns (bytes4)'],
       provider
     )
-    const hashToUse = typeof hash === 'string' ? hash : ethers.hexlify(hash)
     const result = await contract.isValidSignature(hashToUse, signature)
-    return result === '0x1626ba7e' // ERC-1271 magic value
+    const valid = result === '0x1626ba7e' // ERC-1271 magic value
+    CORE_LOGGER.debug(
+      `Nonce validation: isValidSignature returned ${result} for ${address}${chainLog}${hashVariantLog}; valid=${valid}`
+    )
+    return valid
   } catch (error) {
     CORE_LOGGER.debug(
-      `Nonce validation: isValidSignature call failed for ${address}: ${
+      `Nonce validation: isValidSignature call failed for ${address}${chainLog}${hashVariantLog} with hash ${hashToUse}: ${
         error instanceof Error ? error.message : String(error)
       }`
     )
