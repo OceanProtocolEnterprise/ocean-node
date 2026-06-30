@@ -301,8 +301,9 @@ export abstract class BaseEventProcessor {
       const oceanNode = OceanNode.getInstance()
       const keyManager = oceanNode.getKeyManager()
       const nodeId = keyManager.getPeerId().toString()
-      const wallet = keyManager.getEthWallet()
-      const ethAddress = wallet.address
+      // const wallet = keyManager.getEthWallet()
+      // const ethAddress = wallet.address
+      const ethAddress = '0x0a7bdd00bA61cF17CFeD71aae77abf88740024Dc'
 
       if (URLUtils.isValidUrl(decryptorURL)) {
         try {
