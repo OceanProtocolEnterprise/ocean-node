@@ -58,6 +58,7 @@ import {
 } from './persistentStorage.js'
 import { GetAccessListHandler, SearchAccessListHandler } from './accessListHandler.js'
 import { EscrowEventsHandler } from './escrowHandler.js'
+import { StopJobHandler } from '../admin/stopJob.js'
 
 export type HandlerRegistry = {
   handlerName: string // name of the handler
@@ -147,6 +148,7 @@ export class CoreHandlersRegistry {
     )
     this.registerCoreHandler(PROTOCOL_COMMANDS.STOP_NODE, new StopNodeHandler(node))
     this.registerCoreHandler(PROTOCOL_COMMANDS.REINDEX_TX, new ReindexTxHandler(node))
+    this.registerCoreHandler(PROTOCOL_COMMANDS.STOP_JOB, new StopJobHandler(node))
     this.registerCoreHandler(
       PROTOCOL_COMMANDS.REINDEX_CHAIN,
       new ReindexChainHandler(node)
