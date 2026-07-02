@@ -30,11 +30,18 @@ import {
 } from '../utils/utils.js'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
-import { dockerImageManifest } from '../data/assets.js'
-import { C2DEngine } from '../../components/c2d/index.js'
+import { completeDBComputeJob, dockerImageManifest } from '../data/assets.js'
+import {
+  C2DEngine,
+  omitDBComputeFieldsFromComputeJob
+} from '../../components/c2d/index.js'
 import { checkManifestPlatform } from '../../components/c2d/compute_engine_docker.js'
 import { ValidateParams } from '../../components/httpRoutes/validateCommands.js'
 import { Readable } from 'stream'
+import sinon from 'sinon'
+import { getAlgoChecksums } from '../../components/core/compute/utils.js'
+import { FindDdoHandler } from '../../components/core/handler/ddoHandler.js'
+import { CORE_LOGGER } from '../../utils/logging/common.js'
 
 /* eslint-disable require-await */
 class TestC2DEngine extends C2DEngine {
@@ -282,27 +289,27 @@ describe('Compute Jobs Database', () => {
     expect(convertStringToArray(str)).to.deep.equal(expectedArray)
   })
 
-  // it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
-  //   const source: any = completeDBComputeJob
-  //   const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
+  it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
+    const source: any = completeDBComputeJob
+    const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
 
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
-  //     false
-  //   )
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
-  //     false
-  //   )
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
-  //     false
-  //   )
-  // })
+    expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
+      false
+    )
+    expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
+      false
+    )
+    expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
+    expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
+      false
+    )
+  })
 
   it('should check manifest platform against local platform env', () => {
     const arch = os.machine() // ex: arm
@@ -512,5 +519,35 @@ describe('Compute Jobs Database', () => {
 
   after(async () => {
     await tearDownEnvironment(envOverrides)
+  })
+})
+
+describe('getAlgoChecksums', () => {
+  let findDdoStub: sinon.SinonStub
+  let loggerErrorSpy: sinon.SinonSpy
+
+  beforeEach(() => {
+    findDdoStub = sinon.stub(FindDdoHandler.prototype, 'findAndFormatDdo')
+    loggerErrorSpy = sinon.spy(CORE_LOGGER, 'error')
+  })
+
+  afterEach(() => {
+    findDdoStub.restore()
+    loggerErrorSpy.restore()
+  })
+
+  it('returns empty checksums without a DDO lookup for raw-code algorithms (no documentId)', async () => {
+    const checksums = await getAlgoChecksums(
+      undefined,
+      undefined,
+      null as any,
+      null as any
+    )
+
+    expect(checksums).to.deep.equal({ files: '', container: '', serviceId: undefined })
+    // no DDO lookup must be attempted when there is no algorithm documentId
+    expect(findDdoStub.called).to.equal(false)
+    // and therefore no "Algorithm with id: undefined not found!" error is logged
+    expect(loggerErrorSpy.called).to.equal(false)
   })
 })
