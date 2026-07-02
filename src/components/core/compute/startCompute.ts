@@ -11,7 +11,8 @@ import {
   generateUniqueID,
   getAlgoChecksums,
   validateAlgoForDataset,
-  validateOutput
+  validateOutput,
+  validateOutputBucket
 } from './utils.js'
 import {
   ValidateParams,
@@ -395,7 +396,7 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
 
           // let's see if we can access this asset
           // check if oasis evm or similar
-          const confidentialEVM = isConfidentialChainDDO(BigInt(ddoChainId), service)
+          const confidentialEVM = isConfidentialChainDDO(BigInt(ddo.chainId), service)
           let canDecrypt = false
           try {
             if (!confidentialEVM) {
@@ -466,11 +467,9 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
                 stream: null,
                 status: {
                   httpStatus: 400,
-                  error: `Algorithm ${task.algorithm.documentId} with serviceId ${
-                    task.algorithm.serviceId
-                  } not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${
-                    task.datasets[safeIndex].serviceId
-                  }`
+                  error: `Algorithm ${
+                    task.algorithm.documentId
+                  } not allowed to run on the dataset: ${ddoInstance.getDid()}`
                 }
               }
             }
@@ -514,8 +513,8 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
           }
           result.validOrder = elem.transferTxId
 
-          if (!('meta' in algorithm) && metadata.type === 'algorithm') {
-            const { entrypoint, image, tag, checksum } = metadata.algorithm.container
+          if (!('meta' in algorithm) && ddo.metadata.type === 'algorithm') {
+            const { entrypoint, image, tag, checksum } = ddo.metadata.algorithm.container
             const container = { entrypoint, image, tag, checksum }
             algorithm.meta = {
               language: metadata.algorithm.language,
@@ -609,6 +608,15 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
           }
         }
       }
+      const isValidOutputBucket = await validateOutputBucket(
+        node,
+        task.outputBucketId,
+        task.output,
+        task.consumerAddress
+      )
+      if (isValidOutputBucket.status.httpStatus !== 200) {
+        return isValidOutputBucket
+      }
       const isValidOutput = await validateOutput(node, task.output, node.getConfig())
       if (isValidOutput.status.httpStatus !== 200) {
         return isValidOutput
@@ -634,7 +642,8 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
           task.metadata,
           task.additionalViewers,
           task.queueMaxWaitTime,
-          task.encryptedDockerRegistryAuth
+          task.encryptedDockerRegistryAuth,
+          task.outputBucketId
         )
         CORE_LOGGER.logMessage(
           'ComputeStartCommand Response: ' + JSON.stringify(response, null, 2),
@@ -764,6 +773,15 @@ export class FreeComputeStartHandler extends CommonComputeHandler {
         }
       }
       const node = this.getOceanNode()
+      const isValidOutputBucket = await validateOutputBucket(
+        node,
+        task.outputBucketId,
+        task.output,
+        task.consumerAddress
+      )
+      if (isValidOutputBucket.status.httpStatus !== 200) {
+        return isValidOutputBucket
+      }
       const isValidOutput = await validateOutput(node, task.output, node.getConfig())
       if (isValidOutput.status.httpStatus !== 200) {
         return isValidOutput
@@ -1018,7 +1036,8 @@ export class FreeComputeStartHandler extends CommonComputeHandler {
         task.metadata,
         task.additionalViewers,
         task.queueMaxWaitTime,
-        task.encryptedDockerRegistryAuth
+        task.encryptedDockerRegistryAuth,
+        task.outputBucketId
       )
 
       CORE_LOGGER.logMessage(
