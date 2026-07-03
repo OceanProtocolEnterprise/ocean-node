@@ -18,7 +18,9 @@ export class EscrowEventProcessor extends BaseEventProcessor {
 
   constructor(chainId: number, config: OceanNodeConfig) {
     super(chainId, config)
-    this.escrowAddress = getContractAddress(chainId, 'Escrow')
+    this.escrowAddress =
+      getContractAddress(chainId, 'EnterpriseEscrow') ||
+      getContractAddress(chainId, 'Escrow')
   }
 
   async processEvent(

@@ -69,7 +69,7 @@ import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/add
 import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' with { type: 'json' }
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
 import { createHash, randomBytes } from 'crypto'
 import { EncryptMethod } from '../../@types/fileObject.js'
 import {
@@ -237,7 +237,7 @@ describe('**********         Compute', () => {
     )
     escrowContract = new ethers.Contract(
       artifactsAddresses.development.EnterpriseEscrow,
-      EscrowJson.abi,
+      EnterpriseEscrowJson.abi,
       publisherAccount
     )
   })
@@ -3618,7 +3618,7 @@ describe('**********         Compute Access Restrictions', () => {
       consumerAccount = (await provider.getSigner(1)) as Signer
       escrowContract = new ethers.Contract(
         artifactsAddresses.development.EnterpriseEscrow,
-        EscrowJson.abi,
+        EnterpriseEscrowJson.abi,
         consumerAccount
       )
       paymentTokenContract = new ethers.Contract(

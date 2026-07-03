@@ -45,7 +45,7 @@ import { homedir } from 'os'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
 import { createHash } from 'crypto'
 import { getAlgoChecksums } from '../../components/core/compute/utils.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
@@ -131,7 +131,7 @@ describe('**********         Trusted algorithms Flow', () => {
     )
     escrowContract = new ethers.Contract(
       artifactsAddresses.development.EnterpriseEscrow,
-      EscrowJson.abi,
+      EnterpriseEscrowJson.abi,
       publisherAccount
     )
   })
@@ -389,7 +389,7 @@ describe('**********         Trusted algorithms Flow', () => {
     const consumerAddress = await consumerAccount.getAddress()
     escrowContract = new ethers.Contract(
       initializeResponse.payment.escrowAddress,
-      EscrowJson.abi,
+      EnterpriseEscrowJson.abi,
       publisherAccount
     )
 

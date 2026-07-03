@@ -1,6 +1,8 @@
 import { Blockchain, getDatatokenDecimals } from '../../../utils/blockchain.js'
 import { ethers, parseUnits, formatUnits, BigNumberish } from 'ethers'
 import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
+import EnterpriseFeeCollectorJson from '@oceanprotocol/contracts/artifacts/contracts/communityFee/EnterpriseFeeCollector.sol/EnterpriseFeeCollector.json' with { type: 'json' }
 import { EscrowAuthorization, EscrowLock } from '../../../@types/Escrow.js'
 import { getOceanArtifactsAdressesByChainId } from '../../../utils/address.js'
 import { RPCS } from '../../../@types/blockchain.js'
@@ -87,9 +89,18 @@ export class Escrow {
 
   // eslint-disable-next-line require-await
   getContract(chainId: number, signer: ethers.Signer): ethers.Contract | null {
-    const address = this.getEscrowContractAddressForChain(chainId)
-    if (!address) return null
-    return new ethers.Contract(address, EscrowJson.abi, signer)
+    const addresses = getOceanArtifactsAdressesByChainId(chainId)
+    if (addresses?.EnterpriseEscrow) {
+      return new ethers.Contract(
+        addresses.EnterpriseEscrow,
+        EnterpriseEscrowJson.abi,
+        signer
+      )
+    }
+    if (addresses?.Escrow) {
+      return new ethers.Contract(addresses.Escrow, EscrowJson.abi, signer)
+    }
+    return null
   }
 
   async getUserAvailableFunds(
@@ -231,6 +242,50 @@ export class Escrow {
       const tx = await contract.createLock(jobId, token, payer, wei, expiry, gasOptions)
       return tx.hash
     } catch (e) {
+      let enterpriseDiagnostics = null
+      const addresses = getOceanArtifactsAdressesByChainId(chain)
+      if (addresses?.EnterpriseEscrow) {
+        try {
+          const collectorAddress = await contract.opcCollector()
+          if (collectorAddress !== ethers.ZeroAddress) {
+            const collector = new ethers.Contract(
+              collectorAddress,
+              EnterpriseFeeCollectorJson.abi,
+              signer
+            )
+            const [isTokenAllowed, tokenConfig, calculatedFee, existingLocks] =
+              await Promise.all([
+                collector.isTokenAllowed(token),
+                collector.getToken(token),
+                collector.calculateFee(token, wei),
+                contract.getLocks(token, payer, signerAddress)
+              ])
+            const duplicateJob = existingLocks.some(
+              (lock: EscrowLock) =>
+                lock.payer.toLowerCase() === payer.toLowerCase() &&
+                BigInt(lock.jobId.toString()) === BigInt(jobId)
+            )
+            enterpriseDiagnostics = {
+              collectorAddress,
+              isTokenAllowed,
+              tokenConfig: {
+                allowed: tokenConfig.allowed,
+                minFee: tokenConfig.minFee.toString(),
+                maxFee: tokenConfig.maxFee.toString(),
+                feePercentage: tokenConfig.feePercentage.toString()
+              },
+              calculatedFee: calculatedFee.toString(),
+              lockAmount: wei,
+              feeIsLessThanLockAmount: BigInt(calculatedFee.toString()) < BigInt(wei),
+              duplicateJob
+            }
+          }
+        } catch (diagnosticError) {
+          enterpriseDiagnostics = {
+            diagnosticError: diagnosticError?.message || String(diagnosticError)
+          }
+        }
+      }
       console.error('[escrow.createLock] contract call failed', {
         message: e?.message,
         shortMessage: e?.shortMessage,
@@ -240,7 +295,8 @@ export class Escrow {
         data: e?.data,
         transaction: e?.transaction,
         revert: e?.revert,
-        invocation: e?.invocation
+        invocation: e?.invocation,
+        enterpriseDiagnostics
       })
       CORE_LOGGER.error('Failed to create lock: ' + e.message)
       throw new Error(String(e.message))
