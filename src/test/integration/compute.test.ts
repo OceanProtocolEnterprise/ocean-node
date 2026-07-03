@@ -233,7 +233,7 @@ describe('**********         Compute', () => {
     )
     console.log(
       'initializeResponse.payment.escrowAddress:',
-      initializeResponse.payment.escrowAddress
+      artifactsAddresses.development.escrowAddress
     )
     escrowContract = new ethers.Contract(
       artifactsAddresses.development.EnterpriseEscrow,
