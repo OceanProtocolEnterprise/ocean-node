@@ -63,15 +63,6 @@ export async function ensureEnterpriseFeeTokenAllowed(
   const writeContract = readContract.connect(ownerSigner) as Contract
   const tx = await writeContract.updateToken(token, minFee, maxFee, feePercentage, true)
   await tx.wait()
-
-  console.log('[enterprise fee setup] token enabled', {
-    enterpriseFeeCollectorAddress,
-    token,
-    owner,
-    minFee: minFee.toString(),
-    maxFee: maxFee.toString(),
-    feePercentage: feePercentage.toString()
-  })
 }
 /**
  * Create new Access List Contract
