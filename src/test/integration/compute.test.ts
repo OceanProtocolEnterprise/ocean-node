@@ -693,29 +693,42 @@ describe('**********         Compute', () => {
   })
   it('should start a compute job with output to URL storage at 172.15.0.7', async () => {
     // deposit funds and create auth in escrow
-    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    const consumerAddress = await consumerAccount.getAddress()
+    let balance = await paymentTokenContract.balanceOf(consumerAddress)
     if (BigInt(balance.toString()) === BigInt(0)) {
       const mintAmount = ethers.parseUnits('1000', 18)
-      const mintTx = await paymentTokenContract.mint(
-        await consumerAccount.getAddress(),
-        mintAmount
-      )
+      console.log('[compute escrow setup] minting', {
+        consumerAddress,
+        token: await paymentTokenContract.getAddress(),
+        amount: mintAmount.toString()
+      })
+      const mintTx = await paymentTokenContract.mint(consumerAddress, mintAmount)
       await mintTx.wait()
-      balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+      balance = await paymentTokenContract.balanceOf(consumerAddress)
     }
-    console.log(
-      'approve escrow from initialize:',
-      initializeResponse.payment.escrowAddress
-    )
-    console.log('escrow address:', escrowContract)
-    await paymentTokenContract
+    console.log('[compute escrow setup] parameters', {
+      consumerAddress,
+      nodeAddress: firstEnv.consumerAddress,
+      token: initializeResponse.payment.token,
+      escrowFromInitialize: initializeResponse.payment.escrowAddress,
+      escrowContract: await escrowContract.getAddress(),
+      balance: balance.toString(),
+      minLockSeconds: initializeResponse.payment.minLockSeconds,
+      maxLockCounts: 10
+    })
+    const approveTx = await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
-    await escrowContract
+    console.log('[compute escrow setup] approve submitted', approveTx.hash)
+    await approveTx.wait()
+
+    const depositTx = await escrowContract
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
+    console.log('[compute escrow setup] deposit submitted', depositTx.hash)
+    await depositTx.wait()
 
-    await escrowContract
+    const authorizeTx = await escrowContract
       .connect(consumerAccount)
       .authorize(
         initializeResponse.payment.token,
@@ -724,12 +737,30 @@ describe('**********         Compute', () => {
         initializeResponse.payment.minLockSeconds,
         10
       )
+    console.log('[compute escrow setup] authorize submitted', authorizeTx.hash)
+    await authorizeTx.wait()
 
     const fundsBefore = await oceanNode.escrow.getUserAvailableFunds(
       DEVELOPMENT_CHAIN_ID,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       paymentToken
     )
+    const authorizationsBefore = await oceanNode.escrow.getAuthorizations(
+      DEVELOPMENT_CHAIN_ID,
+      paymentToken,
+      consumerAddress,
+      firstEnv.consumerAddress
+    )
+    console.log('[compute escrow setup] state before compute start', {
+      availableFunds: fundsBefore?.toString(),
+      authorizations: authorizationsBefore?.map((authorization) => ({
+        currentLockedAmount: authorization.currentLockedAmount.toString(),
+        maxLockedAmount: authorization.maxLockedAmount.toString(),
+        maxLockSeconds: authorization.maxLockSeconds.toString(),
+        currentLocks: authorization.currentLocks.toString(),
+        maxLockCounts: authorization.maxLockCounts.toString()
+      }))
+    })
     assert(BigInt(fundsBefore.toString()) > BigInt(0), 'Should have funds in escrow')
 
     const computeOutput = {
