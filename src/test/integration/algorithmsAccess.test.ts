@@ -130,7 +130,7 @@ describe('**********         Trusted algorithms Flow', () => {
       publisherAccount
     )
     escrowContract = new ethers.Contract(
-      artifactsAddresses.development.Escrow,
+      artifactsAddresses.development.EnterpriseEscrow,
       EscrowJson.abi,
       publisherAccount
     )

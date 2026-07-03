@@ -232,7 +232,7 @@ describe('**********         Compute', () => {
       publisherAccount
     )
     escrowContract = new ethers.Contract(
-      artifactsAddresses.development.Escrow,
+      artifactsAddresses.development.EnterpriseEscrow,
       EscrowJson.abi,
       publisherAccount
     )
@@ -3577,7 +3577,7 @@ describe('**********         Compute Access Restrictions', () => {
       const publisherAccount = (await provider.getSigner(0)) as Signer
       consumerAccount = (await provider.getSigner(1)) as Signer
       escrowContract = new ethers.Contract(
-        artifactsAddresses.development.Escrow,
+        artifactsAddresses.development.EnterpriseEscrow,
         EscrowJson.abi,
         consumerAccount
       )
@@ -3749,7 +3749,7 @@ describe('**********         Compute Access Restrictions', () => {
 
       const approveTx = await paymentTokenContract
         .connect(consumerAccount)
-        .approve(artifactsAddresses.development.Escrow, balance)
+        .approve(artifactsAddresses.development.EnterpriseEscrow, balance)
       await approveTx.wait()
 
       const depositTx = await escrowContract
