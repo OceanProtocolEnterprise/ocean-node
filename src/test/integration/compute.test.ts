@@ -462,6 +462,7 @@ describe('**********         Compute', () => {
     assert(resultParsed.providerFee.validUntil, 'algorithm validUntil does not exist')
     assert(result.datasets[0].validOrder === false, 'incorrect validOrder') // expect false because tx id was not provided and no start order was called before
     assert(result.payment, ' Payment structure does not exists')
+    console.log('artifactsAddresses.development', artifactsAddresses.development)
     assert(
       result.payment.escrowAddress === artifactsAddresses.development.Escrow,
       'Incorrect escrow address'
