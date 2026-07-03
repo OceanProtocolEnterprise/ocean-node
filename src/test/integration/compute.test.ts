@@ -90,7 +90,10 @@ import {
   PersistentStorageCreateBucketHandler,
   PersistentStorageUploadFileHandler
 } from '../../components/core/handler/persistentStorage.js'
-import { deployAndGetAccessListConfig } from '../utils/contracts.js'
+import {
+  deployAndGetAccessListConfig,
+  ensureEnterpriseFeeTokenAllowed
+} from '../utils/contracts.js'
 import * as tar from 'tar'
 
 /**
@@ -217,6 +220,11 @@ describe('**********         Compute', () => {
     consumerAccount = (await provider.getSigner(1)) as Signer
     additionalViewerAccount = (await provider.getSigner(2)) as Signer
     nonAllowedAccount = (await provider.getSigner(3)) as Signer
+    await ensureEnterpriseFeeTokenAllowed(
+      provider,
+      artifactsAddresses.development.EnterpriseFeeCollector,
+      paymentToken
+    )
 
     publisherAddress = await publisherAccount.getAddress()
     algoDDO = { ...publishAlgoDDO }

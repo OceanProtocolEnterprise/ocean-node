@@ -49,6 +49,7 @@ import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/e
 import { createHash } from 'crypto'
 import { getAlgoChecksums } from '../../components/core/compute/utils.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
+import { ensureEnterpriseFeeTokenAllowed } from '../utils/contracts.js'
 
 describe('**********         Trusted algorithms Flow', () => {
   let previousConfiguration: OverrideEnvConfig[]
@@ -124,6 +125,11 @@ describe('**********         Trusted algorithms Flow', () => {
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
     consumerAccount = (await provider.getSigner(1)) as Signer
+    await ensureEnterpriseFeeTokenAllowed(
+      provider,
+      artifactsAddresses.development.EnterpriseFeeCollector,
+      paymentToken
+    )
     paymentTokenContract = new ethers.Contract(
       paymentToken,
       OceanToken.abi,

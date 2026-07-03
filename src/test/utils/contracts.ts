@@ -7,6 +7,7 @@ import {
 } from '../../utils/address.js'
 import AccessListFactory from '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessListFactory.sol/AccessListFactory.json' with { type: 'json' }
 import AccessList from '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessList.sol/AccessList.json' with { type: 'json' }
+import EnterpriseFeeCollector from '@oceanprotocol/contracts/artifacts/contracts/communityFee/EnterpriseFeeCollector.sol/EnterpriseFeeCollector.json' with { type: 'json' }
 
 export const EXISTING_ACCESSLISTS: Map<string, AccessListContract> = new Map<
   string,
@@ -27,6 +28,50 @@ export function getEventFromTx(txReceipt: { logs: any[] }, eventName: string) {
   return txReceipt?.logs?.filter((log) => {
     return log.fragment?.name === eventName
   })[0]
+}
+
+export async function ensureEnterpriseFeeTokenAllowed(
+  provider: JsonRpcProvider,
+  enterpriseFeeCollectorAddress: string,
+  token: string
+): Promise<void> {
+  const readContract = new Contract(
+    enterpriseFeeCollectorAddress,
+    EnterpriseFeeCollector.abi,
+    provider
+  )
+  if (await readContract.isTokenAllowed(token)) return
+
+  const owner = await readContract.owner()
+  let ownerSigner: Signer | null = null
+  for (let index = 0; index < 10; index++) {
+    const signer = await provider.getSigner(index)
+    if ((await signer.getAddress()).toLowerCase() === owner.toLowerCase()) {
+      ownerSigner = signer
+      break
+    }
+  }
+  if (!ownerSigner) {
+    throw new Error(
+      `Enterprise fee token ${token} is not allowed and collector owner ${owner} is not an unlocked test account`
+    )
+  }
+
+  const minFee = 1n
+  const maxFee = ethers.parseUnits('1000', 18)
+  const feePercentage = ethers.parseUnits('0.001', 18)
+  const writeContract = readContract.connect(ownerSigner) as Contract
+  const tx = await writeContract.updateToken(token, minFee, maxFee, feePercentage, true)
+  await tx.wait()
+
+  console.log('[enterprise fee setup] token enabled', {
+    enterpriseFeeCollectorAddress,
+    token,
+    owner,
+    minFee: minFee.toString(),
+    maxFee: maxFee.toString(),
+    feePercentage: feePercentage.toString()
+  })
 }
 /**
  * Create new Access List Contract
