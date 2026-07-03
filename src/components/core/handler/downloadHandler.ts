@@ -406,7 +406,7 @@ export class DownloadHandler extends CommandHandler {
           }
         }
       }
-      const environments = await c2dEngines.fetchEnvironments(ddo.chainId)
+      const environments = await c2dEngines.fetchEnvironments(ddoChainId)
       for (const env of environments)
         computeAddrs.push(env.consumerAddress?.toLowerCase())
 
