@@ -231,6 +231,10 @@ describe('**********         Compute', () => {
       OceanToken.abi,
       publisherAccount
     )
+    console.log(
+      'initializeResponse.payment.escrowAddress:',
+      initializeResponse.payment.escrowAddress
+    )
     escrowContract = new ethers.Contract(
       artifactsAddresses.development.EnterpriseEscrow,
       EscrowJson.abi,
@@ -703,7 +707,7 @@ describe('**********         Compute', () => {
       'approve escrow from initialize:',
       initializeResponse.payment.escrowAddress
     )
-    console.log('escrow address:', escrowContract.address)
+    console.log('escrow address:', escrowContract)
     await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
