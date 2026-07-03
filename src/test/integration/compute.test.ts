@@ -464,7 +464,7 @@ describe('**********         Compute', () => {
     assert(result.payment, ' Payment structure does not exists')
     console.log('artifactsAddresses.development', artifactsAddresses.development)
     assert(
-      result.payment.escrowAddress === artifactsAddresses.development.Escrow,
+      result.payment.escrowAddress === artifactsAddresses.development.EnterpriseEscrow,
       'Incorrect escrow address'
     )
     assert(result.payment.payee === firstEnv.consumerAddress, 'Incorrect payee address')
