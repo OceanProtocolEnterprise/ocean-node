@@ -2252,6 +2252,23 @@ describe('**********         Compute', () => {
     const jobReachedSuccessfulTerminalStatus = (status: number) =>
       status === C2DStatusNumber.JobFinished || status === C2DStatusNumber.JobSettle
 
+    const getJobConfigurationLog = async (fullJobId: string): Promise<string> => {
+      if (!psDockerEngine) return 'configuration log unavailable: no Docker engine'
+      const innerJobId = fullJobId.slice(fullJobId.indexOf('-') + 1)
+      const configurationLog = path.join(
+        (psDockerEngine as any).getStoragePath(),
+        innerJobId,
+        'data/logs/configuration.log'
+      )
+      try {
+        return await fsp.readFile(configurationLog, 'utf8')
+      } catch (error) {
+        return `configuration log unavailable at ${configurationLog}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      }
+    }
+
     const waitForComputeJobFinished = async (
       node: OceanNode,
       fullJobId: string,
@@ -2276,8 +2293,10 @@ describe('**********         Compute', () => {
           return j
         }
         if (j.dateFinished && !jobReachedSuccessfulTerminalStatus(j.status)) {
+          const configurationLog = await getJobConfigurationLog(fullJobId)
           assert.fail(
-            `Job ended with status ${j.status} (${j.statusText}) instead of JobFinished or JobSettle`
+            `Job ended with status ${j.status} (${j.statusText}) instead of JobFinished or JobSettle.\n` +
+              `Configuration log:\n${configurationLog}`
           )
         }
         await sleep(3000)
