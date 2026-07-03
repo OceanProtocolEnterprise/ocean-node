@@ -699,6 +699,11 @@ describe('**********         Compute', () => {
       await mintTx.wait()
       balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
     }
+    console.log(
+      'approve escrow from initialize:',
+      initializeResponse.payment.escrowAddress
+    )
+    console.log('escrow address:', escrowContract.address)
     await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
