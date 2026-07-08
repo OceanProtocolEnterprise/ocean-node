@@ -49,11 +49,12 @@ aquariusRoutes.get(
       }
 
       const forceFlag = force === 'true'
-      const ddo = await new FindDdoHandler(req.oceanNode).findAndFormatDdo(did, forceFlag)
+      const findDdoHandler = new FindDdoHandler(req.oceanNode)
+      const ddo = await findDdoHandler.findAndFormatDdo(did, forceFlag)
 
       if (ddo) {
         const findDdoHandler = new FindDdoHandler(req.oceanNode)
-        const dcatDDO = findDdoHandler.transformToDCAT(ddo)
+        const dcatDDO = await findDdoHandler.transformToDCAT(ddo)
         HTTP_LOGGER.log(
           LOG_LEVELS_STR.LEVEL_DEBUG,
           `DCAT DDO: ${JSON.stringify(dcatDDO)}`
