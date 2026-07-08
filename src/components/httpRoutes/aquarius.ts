@@ -54,6 +54,10 @@ aquariusRoutes.get(
       if (ddo) {
         const findDdoHandler = new FindDdoHandler(req.oceanNode)
         const dcatDDO = findDdoHandler.transformToDCAT(ddo)
+        HTTP_LOGGER.log(
+          LOG_LEVELS_STR.LEVEL_DEBUG,
+          `DCAT DDO: ${JSON.stringify(dcatDDO)}`
+        )
         res.setHeader('Content-Type', 'application/ld+json')
         res.json(dcatDDO)
       } else {
