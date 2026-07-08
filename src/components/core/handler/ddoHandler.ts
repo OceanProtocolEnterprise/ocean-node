@@ -16,7 +16,6 @@ import { sleep, readStream, streamToUint8Array } from '../../../utils/util.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { ethers, isAddress } from 'ethers'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
-// import lzma from 'lzma-native'
 import lzmajs from 'lzma-purejs-requirejs'
 import { getValidationSignature, isRemoteDDO } from '../utils/validateDdoHandler.js'
 import {
@@ -51,13 +50,16 @@ import {
   DCATDataset,
   DCATDistribution,
   DCATQualifiedAttribution,
-  DCATTemporal
+  DCATTemporal,
+  DCATAgent,
+  DCATService,
+  DCATDatatoken,
+  DCATAccessDetails,
+  ChecksumAlgorithm
 } from '../../../@types/dcat.js'
 
 const MAX_NUM_PROVIDERS = 5
-// after 60 seconds it returns whatever info we have available
 const MAX_RESPONSE_WAIT_TIME_SECONDS = 60
-// wait time for reading the next getDDO command
 const MAX_WAIT_TIME_SECONDS_GET_DDO = 5
 
 export class DecryptDdoHandler extends CommandHandler {
@@ -102,7 +104,6 @@ export class DecryptDdoHandler extends CommandHandler {
     const config = await getConfiguration()
     const supportedNetwork = config.supportedNetworks[chainId]
 
-    // check if supported chainId
     if (!supportedNetwork) {
       CORE_LOGGER.logMessage(`Decrypt DDO: Unsupported chain id ${chainId}`, true)
       return {
@@ -141,7 +142,6 @@ export class DecryptDdoHandler extends CommandHandler {
 
       const ourEthAddress = this.getOceanNode().getKeyManager().getEthAddress()
       if (config.authorizedDecrypters.length > 0) {
-        // allow if on authorized list or it is own node
         if (
           !config.authorizedDecrypters
             .map((address) => address?.toLowerCase())
@@ -181,10 +181,6 @@ export class DecryptDdoHandler extends CommandHandler {
 
       const provider = await blockchain.getProvider()
       const signer = await blockchain.getSigner()
-      // note: "getOceanArtifactsAdresses()"" is broken for at least optimism sepolia
-      // if we do: artifactsAddresses[supportedNetwork.network]
-      // because on the contracts we have "optimism_sepolia" instead of "optimism-sepolia"
-      // so its always safer to use the chain id to get the correct network and artifacts addresses
 
       const dataNftAddress = ethers.getAddress(task.dataNftAddress)
       const wasDeployedByUs = await wasNFTDeployedByOurFactory(
@@ -202,7 +198,6 @@ export class DecryptDdoHandler extends CommandHandler {
         }
       }
 
-      // access list checks, needs blockchain connection
       const { authorizedDecryptersList } = config
 
       const isAllowed = await checkCredentialOnAccessList(
@@ -259,7 +254,6 @@ export class DecryptDdoHandler extends CommandHandler {
         try {
           encryptedDocument = ethers.getBytes(task.encryptedDocument)
           flags = Number(task.flags)
-          // eslint-disable-next-line prefer-destructuring
           documentHash = task.documentHash
         } catch (error) {
           return {
@@ -307,7 +301,6 @@ export class DecryptDdoHandler extends CommandHandler {
       }
 
       let decryptedDocument: Buffer
-      // check if DDO is ECIES encrypted
       if ((flags & 2) !== 0) {
         try {
           decryptedDocument = await oceanNode
@@ -325,15 +318,6 @@ export class DecryptDdoHandler extends CommandHandler {
       } else {
         try {
           decryptedDocument = lzmajs.decompressFile(decryptedDocument)
-          /*
-          lzma.decompress(
-            decryptedDocument,
-            { synchronous: true },
-            (decompressedResult: any) => {
-              decryptedDocument = decompressedResult
-            }
-          )
-          */
         } catch (error) {
           return {
             stream: null,
@@ -345,7 +329,6 @@ export class DecryptDdoHandler extends CommandHandler {
         }
       }
 
-      // did matches
       const ddo = JSON.parse(decryptedDocument.toString())
       if (ddo.id && !this.checkId(ddo.id, dataNftAddress, chainId)) {
         return {
@@ -365,7 +348,6 @@ export class DecryptDdoHandler extends CommandHandler {
         const result = await storage.getReadableStream()
         stream = result.stream as Readable
       } else {
-        // checksum matches
         const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
         if (decryptedDocumentHash !== documentHash) {
           return {
@@ -383,7 +365,7 @@ export class DecryptDdoHandler extends CommandHandler {
         status: { httpStatus: 200 }
       }
     } catch (error) {
-      CORE_LOGGER.info(`ERROR Decrypt DDO: ${JSON.stringify(error)}`) // should be logged by caller
+      CORE_LOGGER.info(`ERROR Decrypt DDO: ${JSON.stringify(error)}`)
       return {
         stream: null,
         status: { httpStatus: 500, error: `Decrypt DDO: Unknown error ${error}` }
@@ -398,7 +380,6 @@ export class GetDdoHandler extends CommandHandler {
     if (validation.valid) {
       validation = validateDDOIdentifier(command.id)
     }
-
     return validation
   }
 
@@ -443,7 +424,6 @@ export class FindDdoHandler extends CommandHandler {
     if (validation.valid) {
       validation = validateDDOIdentifier(command.id)
     }
-
     return validation
   }
 
@@ -456,9 +436,7 @@ export class FindDdoHandler extends CommandHandler {
       const node = this.getOceanNode()
       const p2pNode = node.getP2PNode()
 
-      // if not P2P node just look on local DB
       if (!hasP2PInterface || !p2pNode) {
-        // Checking locally only...
         const ddoInf = await findDDOLocally(node, task.id)
         const result = ddoInf ? [ddoInf] : []
         return {
@@ -468,31 +446,20 @@ export class FindDdoHandler extends CommandHandler {
       }
 
       let updatedCache = false
-      // result list
       const resultList: FindDDOResponse[] = []
-      // if we have the result cached recently we return that result
       if (hasCachedDDO(task, p2pNode)) {
-        // 'found cached DDO'
         resultList.push(p2pNode.getDDOCache().dht.get(task.id))
         return {
           stream: Readable.from(JSON.stringify(resultList, null, 4)),
           status: { httpStatus: 200 }
         }
       }
-      // otherwise we need to contact other providers and get DDO from them
-      // ids of available providers
-      let processed = 0
-      let toProcess = 0
 
       const configuration = await getConfiguration()
 
-      // Checking locally...
       const ddoInfo = await findDDOLocally(node, task.id)
       if (ddoInfo) {
-        // node has ddo
-        // add to the result list anyway
         resultList.push(ddoInfo)
-
         updatedCache = true
       }
 
@@ -515,23 +482,19 @@ export class FindDdoHandler extends CommandHandler {
               true
             )
 
-            // Update cache
             const ddoCache = p2pNode.getDDOCache()
             if (ddoCache.dht.has(ddo.id)) {
               const localValue: FindDDOResponse = ddoCache.dht.get(ddo.id)
               if (
                 new Date(ddoInfo.lastUpdateTime) > new Date(localValue.lastUpdateTime)
               ) {
-                // update cached version
                 ddoCache.dht.set(ddo.id, ddoInfo)
               }
             } else {
-              // just add it to the list
               ddoCache.dht.set(ddo.id, ddoInfo)
             }
             updatedCache = true
 
-            // Store locally if indexer is enabled
             if (configuration.hasIndexer) {
               const database = node.getDatabase()
               if (database && database.ddo) {
@@ -554,10 +517,8 @@ export class FindDdoHandler extends CommandHandler {
             LOG_LEVELS_STR.LEVEL_ERROR
           )
         }
-        processed++
       }
 
-      // if something goes really bad then exit after 60 secs
       const fnTimeout = setTimeout(() => {
         CORE_LOGGER.log(LOG_LEVELS_STR.LEVEL_DEBUG, 'FindDDO: Timeout reached: ', true)
         return {
@@ -566,68 +527,51 @@ export class FindDdoHandler extends CommandHandler {
         }
       }, 1000 * MAX_RESPONSE_WAIT_TIME_SECONDS)
 
-      // check other providers for this ddo
       const providers = await p2pNode.getProvidersForString(task.id)
-      // check if includes self and exclude from check list
       if (providers.length > 0) {
-        // exclude this node from the providers list if present
         const filteredProviders = providers.filter((provider: any) => {
           return provider.id.toString() !== p2pNode.getPeerId()
         })
 
-        // work with the filtered list only
         if (filteredProviders.length > 0) {
-          toProcess = filteredProviders.length
-          // only process a maximum of 5 provider entries per DDO (might never be that much anyway??)
-          if (toProcess > MAX_NUM_PROVIDERS) {
-            filteredProviders.slice(0, MAX_NUM_PROVIDERS)
-            toProcess = MAX_NUM_PROVIDERS
-          }
+          const providersToProcess = filteredProviders.slice(0, MAX_NUM_PROVIDERS)
+          let processedCount = 0
 
-          let doneLoop = 0
-          do {
-            // eslint-disable-next-line no-unmodified-loop-condition
-            for (let i = 0; i < toProcess && doneLoop < toProcess; i++) {
-              const provider = filteredProviders[i]
-              const peer = provider.id.toString()
-              const getCommand: GetDdoCommand = {
-                id: task.id,
-                command: PROTOCOL_COMMANDS.GET_DDO
+          for (const provider of providersToProcess) {
+            const peer = provider.id.toString()
+            const getCommand: GetDdoCommand = {
+              id: task.id,
+              command: PROTOCOL_COMMANDS.GET_DDO
+            }
+
+            try {
+              const response = await p2pNode.sendTo(peer, JSON.stringify(getCommand))
+
+              if (response.status.httpStatus === 200 && response.stream) {
+                const data = await streamToUint8Array(response.stream as Readable)
+                await processDDOResponse(peer, data)
               }
+            } catch (innerException) {
+              CORE_LOGGER.logMessage(
+                `Error getting DDO from peer ${peer}: ${innerException}`,
+                true
+              )
+            }
 
-              try {
-                const response = await p2pNode.sendTo(peer, JSON.stringify(getCommand))
-
-                if (response.status.httpStatus === 200 && response.stream) {
-                  // Convert stream to Uint8Array for processing
-                  const data = await streamToUint8Array(response.stream as Readable)
-                  await processDDOResponse(peer, data)
-                } else {
-                  processed++
-                }
-              } catch (innerException) {
-                processed++
-              }
-              // 'sleep 5 seconds...'
-
+            processedCount++
+            if (processedCount < providersToProcess.length) {
               CORE_LOGGER.logMessage(
                 `Sleeping for: ${MAX_WAIT_TIME_SECONDS_GET_DDO} seconds, while getting DDO info remote peer...`,
                 true
               )
-              await sleep(MAX_WAIT_TIME_SECONDS_GET_DDO * 1000) // await 5 seconds before proceeding to next one
-              // if the ddo is not cached, the very 1st request will take a bit longer
-              // cause it needs to get the response from all the other providers call getDDO()
-              // otherwise is immediate as we just return the cached version, once the cache expires we
-              // repeat the procedure and query the network again, updating cache at the end
+              await sleep(MAX_WAIT_TIME_SECONDS_GET_DDO * 1000)
             }
-            doneLoop += 1
-          } while (processed < toProcess)
+          }
 
           if (updatedCache) {
             p2pNode.getDDOCache().updated = new Date().getTime()
           }
 
-          // house cleaning
           clearTimeout(fnTimeout)
           return {
             stream: Readable.from(
@@ -636,7 +580,6 @@ export class FindDdoHandler extends CommandHandler {
             status: { httpStatus: 200 }
           }
         } else {
-          // could empty list
           clearTimeout(fnTimeout)
           return {
             stream: Readable.from(
@@ -646,7 +589,6 @@ export class FindDdoHandler extends CommandHandler {
           }
         }
       } else {
-        // could be empty list
         clearTimeout(fnTimeout)
         return {
           stream: Readable.from(JSON.stringify(sortFindDDOResults(resultList), null, 4)),
@@ -654,7 +596,6 @@ export class FindDdoHandler extends CommandHandler {
         }
       }
     } catch (error) {
-      // 'FindDDO big error: '
       CORE_LOGGER.logMessageWithEmoji(
         `Error: '${error.message}' was caught while getting DDO info for id: ${task.id}`,
         true,
@@ -668,10 +609,8 @@ export class FindDdoHandler extends CommandHandler {
     }
   }
 
-  // Function to use findDDO and get DDO in desired format
   async findAndFormatDdo(ddoId: string, force: boolean = false): Promise<DDO | null> {
     const node = this.getOceanNode()
-    // First try to find the DDO Locally if findDDO is not enforced
     if (!force) {
       try {
         const database = node.getDatabase()
@@ -703,16 +642,13 @@ export class FindDdoHandler extends CommandHandler {
         const streamData = await readStream(response.stream)
         const ddoList = JSON.parse(streamData)
 
-        // Assuming the first DDO in the list is the one we want
         const ddoData = ddoList[0]
         if (!ddoData) {
           return null
         }
 
-        // Format each service according to the Service interface
         const formattedServices = ddoData.services.map(formatService)
 
-        // Map the DDO data to the DDO interface
         const ddo: Asset = {
           '@context': ddoData['@context'],
           id: ddoData.id,
@@ -751,13 +687,23 @@ export class FindDdoHandler extends CommandHandler {
       credentialSubject.services.forEach((service: any) => {
         const distribution: DCATDistribution = {
           '@type': 'dcat:Distribution',
-          'dcat:accessURL': {
-            '@id': service.serviceEndpoint || ''
-          }
+          'dcat:accessURL': service.serviceEndpoint || ''
         }
 
         if (service.name) {
           distribution['dct:title'] = service.name
+        }
+
+        if (service.description) {
+          if (typeof service.description === 'object' && service.description['@value']) {
+            distribution['dct:description'] = service.description['@value']
+          } else if (typeof service.description === 'string') {
+            distribution['dct:description'] = service.description
+          }
+        }
+
+        if (service.type === 'access' && service.serviceEndpoint) {
+          distribution['dcat:downloadURL'] = service.serviceEndpoint
         }
 
         if (service.type === 'compute') {
@@ -787,11 +733,11 @@ export class FindDdoHandler extends CommandHandler {
           distribution['dcat:format'] = distribution['dcat:format'] || 'encrypted'
         }
 
-        if (service.files && service.files.length > 64) {
+        if (service.files && service.files.length > 0) {
           distribution['dcat:checksum'] = {
             '@type': 'spdx:Checksum',
             'spdx:algorithm': 'SHA-256',
-            'spdx:checksumValue': service.files.substring(0, 64)
+            'spdx:checksumValue': service.files
           }
         }
 
@@ -880,7 +826,20 @@ export class FindDdoHandler extends CommandHandler {
     }
   }
 
-  transformToDCAT(ddo: any): DCATDataset {
+  private getChecksumAlgorithm(algorithm?: string): ChecksumAlgorithm {
+    const validAlgorithms: ChecksumAlgorithm[] = [
+      'SHA-1',
+      'SHA-256',
+      'SHA-384',
+      'SHA-512'
+    ]
+    if (algorithm && validAlgorithms.includes(algorithm as ChecksumAlgorithm)) {
+      return algorithm as ChecksumAlgorithm
+    }
+    return 'SHA-256'
+  }
+
+  async transformToDCAT(ddo: any): Promise<DCATDataset> {
     CORE_LOGGER.debug(`[DCAT] Original DDO v5: ${JSON.stringify(ddo, null, 2)}`)
 
     const ddoCopy = JSON.parse(JSON.stringify(ddo))
@@ -893,8 +852,12 @@ export class FindDdoHandler extends CommandHandler {
     const purgatory = indexedMetadata.purgatory || { state: false }
     const event = indexedMetadata.event || {}
 
+    const config = await getConfiguration()
+    const baseUrl = config?.httpPort ? `http://localhost:${config.httpPort}` : ''
+
     const dcat: DCATDataset = {
       '@context': {
+        '@vocab': 'https://oceanenterprise.io/vocab/',
         dcat: 'http://www.w3.org/ns/dcat#',
         dct: 'http://purl.org/dc/terms/',
         foaf: 'http://xmlns.com/foaf/0.1/',
@@ -908,7 +871,6 @@ export class FindDdoHandler extends CommandHandler {
       },
       '@id': ddoCopy.id ? `urn:${ddoCopy.id}` : '',
       '@type': 'dcat:Dataset',
-      'dcat:version': ddoCopy.version || '5.0.0',
       'dct:title': metadata.name || ''
     }
 
@@ -939,7 +901,21 @@ export class FindDdoHandler extends CommandHandler {
           'foaf:name': metadata.author
         }
       } else if (typeof metadata.author === 'object') {
-        dcat['dct:creator'] = metadata.author
+        dcat['dct:creator'] = metadata.author as DCATAgent
+      }
+    }
+
+    if (metadata.publisher) {
+      dcat['dct:publisher'] = {
+        '@type': 'foaf:Agent',
+        'foaf:name': metadata.publisher
+      }
+    }
+
+    if (metadata.contactPoint) {
+      dcat['dcat:contactPoint'] = {
+        '@type': 'foaf:Agent',
+        'foaf:name': metadata.contactPoint
       }
     }
 
@@ -998,6 +974,12 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
+    if (baseUrl && ddoCopy.id) {
+      dcat['dcat:landingPage'] = {
+        '@id': `${baseUrl}/api/aquarius/assets/ddo/${ddoCopy.id}`
+      }
+    }
+
     const distributions = this.formatDistributions(ddoCopy)
     if (distributions.length > 0) {
       dcat['dcat:distribution'] = distributions
@@ -1017,6 +999,8 @@ export class FindDdoHandler extends CommandHandler {
       dcat['dct:language'] = Array.isArray(metadata.language)
         ? metadata.language
         : [metadata.language]
+    } else {
+      dcat['dct:language'] = ['en']
     }
 
     if (ddoCopy.id) {
@@ -1032,9 +1016,15 @@ export class FindDdoHandler extends CommandHandler {
       dcat['dct:accessRights'] = metadata.accessRights
     }
 
+    if (metadata.type) {
+      dcat['dct:type'] = metadata.type
+    }
+
     dcat['oec:chainId'] = credentialSubject.chainId
     dcat['oec:nftAddress'] = credentialSubject.nftAddress
-    dcat['oec:datatokens'] = credentialSubject.datatokens || []
+    dcat['oec:datatokens'] = this.formatDatatokensForDCAT(
+      credentialSubject.datatokens || []
+    )
     dcat['oec:services'] = this.formatServicesForDCAT(credentialSubject.services || [])
 
     dcat['oec:purgatory'] = {
@@ -1101,33 +1091,70 @@ export class FindDdoHandler extends CommandHandler {
     return dcat
   }
 
-  private formatServicesForDCAT(services: any[]): any[] {
+  private formatServicesForDCAT(services: any[]): DCATService[] {
     if (!services || !Array.isArray(services)) {
       return []
     }
 
     return services.map((service) => {
-      const formattedService: any = { ...service }
+      const formattedService: DCATService = {
+        id: service.id,
+        type: service.type,
+        name: service.name,
+        datatokenAddress: service.datatokenAddress,
+        files: service.files,
+        timeout: service.timeout,
+        state: service.state
+      }
+
+      if (service.description) {
+        formattedService.description = service.description
+      }
 
       if (service.serviceEndpoint && typeof service.serviceEndpoint === 'string') {
-        formattedService['dct:title'] = service.serviceEndpoint
         formattedService.serviceEndpoint = {
           '@id': service.serviceEndpoint,
           '@type': 'rdfs:Resource'
         }
       }
 
+      if (service.compute) {
+        formattedService.compute = service.compute
+      }
+
+      if (service.consumerParameters) {
+        formattedService.consumerParameters = service.consumerParameters
+      }
+
+      if (service.credentials) {
+        formattedService.credentials = service.credentials
+      }
+
       return formattedService
     })
   }
 
-  private formatAccessDetails(accessDetails: any): any {
+  private formatDatatokensForDCAT(datatokens: any[]): DCATDatatoken[] {
+    if (!datatokens || !Array.isArray(datatokens)) {
+      return []
+    }
+
+    return datatokens.map((token) => ({
+      address: token.address,
+      name: token.name,
+      symbol: token.symbol,
+      serviceId: token.serviceId,
+      decimals: token.decimals
+    }))
+  }
+
+  private formatAccessDetails(accessDetails: any): DCATAccessDetails {
     if (!accessDetails) {
       return undefined
     }
 
-    const formatted: any = {
-      '@type': 'oec:Fixed',
+    const formatted: DCATAccessDetails = {
+      '@type': accessDetails.type || 'oec:Fixed',
       'oec:addressOrId': accessDetails.addressOrId,
       'oec:isOwned': accessDetails.isOwned || false,
       'oec:isPurchasable': accessDetails.isPurchasable || false,
@@ -1172,7 +1199,6 @@ export class ValidateDDOHandler extends CommandHandler {
     if (validation.valid) {
       validation = validateDDOIdentifier(command.ddo.id)
     }
-
     return validation
   }
 
@@ -1278,7 +1304,6 @@ export function validateDdoSignedByPublisher(
       [ethers.hexlify(ethers.toUtf8Bytes(message))]
     )
     const messageHashBytes = ethers.getBytes(messageHash)
-    // Try both verification methods for backward compatibility
     const addressFromHashSignature = ethers.verifyMessage(messageHash, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
     return (
@@ -1305,12 +1330,6 @@ export function validateDDOIdentifier(identifier: string): ValidateParams {
   }
 }
 
-/**
- * Checks if the response is legit
- * @param ddo the DDO
- * @param oceanNode the OceanNode instance
- * @returns validation result
- */
 async function checkIfDDOResponseIsLegit(
   ddo: any,
   oceanNode: OceanNode
@@ -1320,18 +1339,16 @@ async function checkIfDDOResponseIsLegit(
   const updatedDdo = deleteIndexedMetadataIfExists(ddo)
   const { nftAddress, chainId } = updatedDdo
   let isValid = validateDDOHash(updatedDdo.id, nftAddress, chainId)
-  // 1) check hash sha256(nftAddress + chainId)
+
   if (!isValid) {
     CORE_LOGGER.error(`Asset ${updatedDdo.id} does not have a valid hash`)
     return false
   }
 
-  // 2) check event
   if (!event) {
     return false
   }
 
-  // 3) check if we support this network
   const config = await getConfiguration()
   const network = config.supportedNetworks[chainId.toString()]
   if (!network) {
@@ -1340,7 +1357,7 @@ async function checkIfDDOResponseIsLegit(
     )
     return false
   }
-  // 4) check if was deployed by our factory
+
   const blockchain = oceanNode.getBlockchain(chainId as number)
   if (!blockchain) {
     CORE_LOGGER.error(
@@ -1361,7 +1378,6 @@ async function checkIfDDOResponseIsLegit(
     return false
   }
 
-  // 5) check block & events
   const networkBlock = await getNetworkHeight(await blockchain.getProvider())
   if (
     !indexedMetadata.event.block ||
@@ -1374,8 +1390,7 @@ async function checkIfDDOResponseIsLegit(
     return false
   }
 
-  // check events on logs
-  const txId: string = indexedMetadata.event.txid || indexedMetadata.event.tx // NOTE: DDO is txid, Asset is tx
+  const txId: string = indexedMetadata.event.txid || indexedMetadata.event.tx
   if (!txId) {
     CORE_LOGGER.error(`DDO event missing tx data, cannot confirm transaction`)
     return false

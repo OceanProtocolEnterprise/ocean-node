@@ -1,6 +1,7 @@
-// @types/dcat.ts
+export type ChecksumAlgorithm = 'SHA-1' | 'SHA-256' | 'SHA-384' | 'SHA-512'
 export interface DCATContext {
   '@context': {
+    '@vocab'?: string
     dcat: string
     dct: string
     foaf: string
@@ -24,7 +25,7 @@ export interface DCATThemeConcept {
 }
 
 export interface DCATSpatial {
-  '@type': ['dct:Location', 'skos:Concept']
+  '@type': string[]
   'dcat:bbox'?: {
     '@type': 'geo:wktLiteral'
     '@value': string
@@ -60,18 +61,33 @@ export interface DCATCompute {
   'oec:publisherTrustedAlgorithmPublishers'?: string[]
 }
 
+export interface DCATAgent {
+  '@type': 'foaf:Agent'
+  'foaf:name': string
+  'foaf:mbox'?: string
+  'foaf:homepage'?: string
+}
+
 export interface DCATDistribution {
   '@type': 'dcat:Distribution'
-  'dcat:accessURL': {
-    '@id': string
-  }
+  'dcat:accessURL':
+    | string
+    | {
+        '@id': string
+      }
+  'dcat:downloadURL'?:
+    | string
+    | {
+        '@id': string
+      }
   'dct:title'?: string
+  'dct:description'?: string
   'dcat:mediaType'?: string
   'dcat:format'?: string
   'dcat:byteSize'?: number
   'dcat:checksum'?: {
     '@type': 'spdx:Checksum'
-    'spdx:algorithm': string
+    'spdx:algorithm': ChecksumAlgorithm
     'spdx:checksumValue': string
   }
   'oec:compute'?: DCATCompute
@@ -79,12 +95,7 @@ export interface DCATDistribution {
 
 export interface DCATQualifiedAttribution {
   '@type': 'prov:Attribution'
-  'prov:agent': {
-    '@type': 'foaf:Agent'
-    'foaf:name': string
-    'foaf:mbox'?: string
-    'foaf:homepage'?: string
-  }
+  'prov:agent': DCATAgent
   'prov:hadRole': {
     '@id': string
     '@type': 'dct:AgentRole'
@@ -122,8 +133,42 @@ export interface DCATStats {
   }
 }
 
+export interface DCATDatatoken {
+  address: string
+  name?: string
+  symbol?: string
+  serviceId?: string
+  decimals?: number
+}
+
+export interface DCATService {
+  id?: string
+  type?: string
+  name?: string
+  description?:
+    | string
+    | {
+        '@value': string
+        '@language'?: string
+        '@direction'?: string
+      }
+  serviceEndpoint?:
+    | string
+    | {
+        '@id': string
+        '@type'?: string
+      }
+  datatokenAddress?: string
+  files?: string
+  timeout?: number
+  state?: number
+  compute?: DCATCompute
+  consumerParameters?: any[]
+  credentials?: any
+}
+
 export interface DCATAccessDetails {
-  '@type': 'oec:Fixed'
+  '@type': string
   'oec:addressOrId'?: string
   'oec:baseToken'?: {
     'dct:title'?: string
@@ -150,6 +195,8 @@ export interface DCATDataset {
   '@context': DCATContext['@context']
   '@id': string
   '@type': 'dcat:Dataset'
+  'dct:title': string
+  'dct:description'?: string
   'dcat:keyword'?: string[]
   'dcat:theme'?: DCATThemeConcept[]
   'dcat:version'?: string
@@ -164,44 +211,43 @@ export interface DCATDataset {
   }
   'dcat:spatialResolutionInMeters'?: number
   'dcat:temporalResolution'?: string
-  'dct:creator'?: {
-    '@type': 'foaf:Agent'
-    'foaf:name': string
-    'foaf:mbox'?: string
-    'foaf:homepage'?: string
+  'dcat:landingPage'?: {
+    '@id': string
   }
-  'dct:description'?: string
+  'dcat:contactPoint'?: DCATAgent
+  'dct:creator'?: DCATAgent
+  'dct:publisher'?: DCATAgent
   'dct:issued'?: {
     '@type': 'xsd:dateTime'
     '@value': string
   }
-  'dct:license'?: string
   'dct:modified'?: {
     '@type': 'xsd:dateTime'
     '@value': string
   }
+  'dct:license'?: string
   'dct:spatial'?: DCATSpatial
   'dct:temporal'?: DCATTemporal
   'dct:accrualPeriodicity'?: {
     '@type': 'dct:Frequency'
     '@id': string
   }
-  'dct:title'?: string
   'dct:identifier'?: string[]
   'dct:language'?: string[]
   'dct:conformsTo'?: string[]
   'dct:rights'?: string
   'dct:accessRights'?: string
+  'dct:type'?: string
   'prov:qualifiedAttribution'?: DCATQualifiedAttribution[]
   'oec:accessDetails'?: DCATAccessDetails
   'oec:chainId'?: number
-  'oec:datatokens'?: any[]
+  'oec:datatokens'?: DCATDatatoken[]
   'oec:event'?: DCATEvent
   'oec:nft'?: DCATNFT
   'oec:nftAddress'?: string
   'oec:purgatory'?: {
     'oec:state': boolean
   }
-  'oec:services'?: any[]
+  'oec:services'?: DCATService[]
   'oec:stats'?: DCATStats
 }
