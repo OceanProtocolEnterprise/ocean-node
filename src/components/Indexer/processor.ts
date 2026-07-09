@@ -1,7 +1,6 @@
 import { ethers, Signer, FallbackProvider, Interface, getAddress } from 'ethers'
 import { BlocksEvents, ProcessingEvents } from '../../@types/blockchain.js'
 import { EVENTS } from '../../utils/constants.js'
-import { getConfiguration } from '../../utils/config.js'
 import { INDEXER_LOGGER } from '../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 import { fetchEventFromTransaction } from '../../utils/util.js'
@@ -18,11 +17,16 @@ import {
   ExchangeActivatedEventProcessor,
   ExchangeDeactivatedEventProcessor,
   ExchangeRateChangedEventProcessor,
+  NewAccessListEventProcessor,
+  AddressAddedEventProcessor,
+  AddressRemovedEventProcessor,
+  EscrowEventProcessor,
   ProcessorConstructor
 } from './processors/index.js'
 import { findEventByKey } from './utils.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 import AccessListContract from '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessList.sol/AccessList.json' with { type: 'json' }
+import { OceanNodeConfig } from '../../@types/OceanNode.js'
 
 const EVENT_PROCESSOR_MAP: Record<string, ProcessorConstructor> = {
   [EVENTS.METADATA_CREATED]: MetadataEventProcessor,
@@ -36,12 +40,30 @@ const EVENT_PROCESSOR_MAP: Record<string, ProcessorConstructor> = {
   [EVENTS.EXCHANGE_CREATED]: ExchangeCreatedEventProcessor,
   [EVENTS.EXCHANGE_ACTIVATED]: ExchangeActivatedEventProcessor,
   [EVENTS.EXCHANGE_DEACTIVATED]: ExchangeDeactivatedEventProcessor,
-  [EVENTS.EXCHANGE_RATE_CHANGED]: ExchangeRateChangedEventProcessor
+  [EVENTS.EXCHANGE_RATE_CHANGED]: ExchangeRateChangedEventProcessor,
+  [EVENTS.NEW_ACCESS_LIST]: NewAccessListEventProcessor,
+  [EVENTS.ADDRESS_ADDED]: AddressAddedEventProcessor,
+  [EVENTS.ADDRESS_REMOVED]: AddressRemovedEventProcessor,
+  [EVENTS.ESCROW_AUTH]: EscrowEventProcessor,
+  [EVENTS.ESCROW_LOCK]: EscrowEventProcessor,
+  [EVENTS.ESCROW_CLAIMED]: EscrowEventProcessor,
+  [EVENTS.ESCROW_CANCELED]: EscrowEventProcessor,
+  [EVENTS.ESCROW_DEPOSIT]: EscrowEventProcessor,
+  [EVENTS.ESCROW_WITHDRAW]: EscrowEventProcessor
 }
 
 const processorInstances = new Map<string, BaseEventProcessor>()
 
-function getEventProcessor(eventType: string, chainId: number): BaseEventProcessor {
+/** Drop cached processors so they are recreated with the current config (tests, new indexer, etc.). */
+export function clearEventProcessorCache(): void {
+  processorInstances.clear()
+}
+
+function getEventProcessor(
+  eventType: string,
+  chainId: number,
+  config: OceanNodeConfig
+): BaseEventProcessor {
   const cacheKey = `${eventType}-${chainId}`
 
   if (!processorInstances.has(cacheKey)) {
@@ -49,9 +71,13 @@ function getEventProcessor(eventType: string, chainId: number): BaseEventProcess
     if (!ProcessorClass) {
       throw new Error(`No processor found for event type: ${eventType}`)
     }
-    processorInstances.set(cacheKey, new ProcessorClass(chainId))
+    INDEXER_LOGGER.debug(
+      'Creating new Processor for event ' + eventType + 'with key ' + cacheKey
+    )
+    processorInstances.set(cacheKey, new ProcessorClass(chainId, config))
+  } else {
+    INDEXER_LOGGER.debug('Reusing cached processor for key ' + cacheKey)
   }
-
   return processorInstances.get(cacheKey)
 }
 
@@ -59,16 +85,18 @@ export const processChunkLogs = async (
   logs: readonly ethers.Log[],
   signer: Signer,
   provider: FallbackProvider,
-  chainId: number
+  chainId: number,
+  config: OceanNodeConfig
 ): Promise<BlocksEvents> => {
   const storeEvents: BlocksEvents = {}
   if (logs.length > 0) {
-    const { allowedValidators, allowedValidatorsList } = await getConfiguration() //  getAllowedValidators()
+    const { allowedValidators, allowedValidatorsList } = config //  getAllowedValidators()
     const checkMetadataValidated =
       allowedValidators.length > 0 ||
       (allowedValidatorsList && Object.keys(allowedValidatorsList).length > 0)
     for (const log of logs) {
       const event = findEventByKey(log.topics[0])
+
       if (event && Object.values(EVENTS).includes(event.type)) {
         // only log & process the ones we support
         INDEXER_LOGGER.logMessage(
@@ -163,7 +191,7 @@ export const processChunkLogs = async (
         if (event.type === EVENTS.TOKEN_URI_UPDATE) {
           storeEvents[event.type] = 'TOKEN_URI_UPDATE'
         } else {
-          const processor = getEventProcessor(event.type, chainId)
+          const processor = getEventProcessor(event.type, chainId, config)
           storeEvents[event.type] = await processor.processEvent(
             log,
             chainId,
@@ -174,6 +202,7 @@ export const processChunkLogs = async (
         }
       }
     }
+
     return storeEvents
   }
 
@@ -186,13 +215,15 @@ export const processBlocks = async (
   provider: FallbackProvider,
   network: number,
   lastIndexedBlock: number,
-  count: number
+  count: number,
+  config: OceanNodeConfig
 ): Promise<ProcessingEvents> => {
   try {
     const events: any[] | BlocksEvents =
       blockLogs && blockLogs.length > 0
-        ? await processChunkLogs(blockLogs, signer, provider, network)
+        ? await processChunkLogs(blockLogs, signer, provider, network, config)
         : []
+
     return {
       lastBlock: lastIndexedBlock + count,
       foundEvents: events

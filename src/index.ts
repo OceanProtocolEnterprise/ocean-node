@@ -23,8 +23,20 @@ import cors from 'cors'
 import { scheduleCronJobs } from './utils/cronjobs/scheduleCronJobs.js'
 import { requestValidator } from './components/httpRoutes/requestValidator.js'
 import { hasValidDBConfiguration } from './utils/database.js'
+import { assertConfiguredFeeTokensSupportedByOec } from './utils/feeTokenValidation.js'
 
 const app: Express = express()
+
+process.on('uncaughtException', (err) => {
+  OCEAN_NODE_LOGGER.error(`Uncaught exception: ${err.message}`)
+  process.exit(1)
+})
+process.on('unhandledRejection', (err) => {
+  OCEAN_NODE_LOGGER.error(
+    `Unhandled rejection: ${err instanceof Error ? err.message : String(err)}`
+  )
+  process.exit(1)
+})
 
 // const port = getRandomInt(6000,6500)
 
@@ -85,6 +97,12 @@ if (!hasValidDBConfiguration(config.dbConfig)) {
 // KeyManager will determine provider type from config.keys.type and initialize in constructor
 const keyManager = new KeyManager(config)
 const blockchainRegistry = new BlockchainRegistry(keyManager, config)
+try {
+  await assertConfiguredFeeTokensSupportedByOec(config, blockchainRegistry)
+} catch (err) {
+  OCEAN_NODE_LOGGER.error(err instanceof Error ? err.message : String(err))
+  process.exit(1)
+}
 
 if (config.hasP2P) {
   if (dbconn) {
@@ -95,7 +113,7 @@ if (config.hasP2P) {
   await node.start()
 }
 if (config.hasIndexer && dbconn) {
-  indexer = new OceanIndexer(dbconn, config.indexingNetworks, blockchainRegistry)
+  indexer = new OceanIndexer(dbconn, config, blockchainRegistry)
 }
 if (dbconn) {
   provider = new OceanProvider(dbconn)
@@ -112,7 +130,7 @@ const oceanNode = OceanNode.getInstance(
   keyManager,
   blockchainRegistry
 )
-oceanNode.addC2DEngines()
+await oceanNode.addC2DEngines()
 
 function removeExtraSlashes(req: any, res: any, next: any) {
   req.url = req.url.replace(/\/{2,}/g, '/')
@@ -120,14 +138,12 @@ function removeExtraSlashes(req: any, res: any, next: any) {
 }
 
 if (config.hasHttp) {
-  // allow up to 25Mb file upload
-  app.use(express.raw({ limit: '25mb' }))
   app.use(cors())
-  app.use(requestValidator, (req, res, next) => {
+  app.use((req, res, next) => {
     req.caller = req.headers['x-forwarded-for'] || req.socket.remoteAddress
     req.oceanNode = oceanNode
     next()
-  })
+  }, requestValidator)
 
   // Integrate static file serving middleware
   app.use(removeExtraSlashes)

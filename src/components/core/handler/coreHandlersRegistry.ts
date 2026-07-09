@@ -47,6 +47,18 @@ import {
 } from './p2p.js'
 import { CreateAuthTokenHandler, InvalidateAuthTokenHandler } from './authHandler.js'
 import { GetJobsHandler } from './getJobs.js'
+import {
+  PersistentStorageCreateBucketHandler,
+  PersistentStorageDeleteFileHandler,
+  PersistentStorageGetBucketsHandler,
+  PersistentStorageGetFileObjectHandler,
+  PersistentStorageListFilesHandler,
+  PersistentStorageUpdateBucketHandler,
+  PersistentStorageUploadFileHandler
+} from './persistentStorage.js'
+import { GetAccessListHandler, SearchAccessListHandler } from './accessListHandler.js'
+import { EscrowEventsHandler } from './escrowHandler.js'
+import { StopJobHandler } from '../admin/stopJob.js'
 
 export type HandlerRegistry = {
   handlerName: string // name of the handler
@@ -136,6 +148,7 @@ export class CoreHandlersRegistry {
     )
     this.registerCoreHandler(PROTOCOL_COMMANDS.STOP_NODE, new StopNodeHandler(node))
     this.registerCoreHandler(PROTOCOL_COMMANDS.REINDEX_TX, new ReindexTxHandler(node))
+    this.registerCoreHandler(PROTOCOL_COMMANDS.STOP_JOB, new StopJobHandler(node))
     this.registerCoreHandler(
       PROTOCOL_COMMANDS.REINDEX_CHAIN,
       new ReindexChainHandler(node)
@@ -167,6 +180,46 @@ export class CoreHandlersRegistry {
     this.registerCoreHandler(PROTOCOL_COMMANDS.PUSH_CONFIG, new PushConfigHandler(node))
     this.registerCoreHandler(PROTOCOL_COMMANDS.GET_LOGS, new GetLogsHandler(node))
     this.registerCoreHandler(PROTOCOL_COMMANDS.JOBS, new GetJobsHandler(node))
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      new PersistentStorageCreateBucketHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET,
+      new PersistentStorageUpdateBucketHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_BUCKETS,
+      new PersistentStorageGetBucketsHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_LIST_FILES,
+      new PersistentStorageListFilesHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+      new PersistentStorageUploadFileHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_FILE_OBJECT,
+      new PersistentStorageGetFileObjectHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_DELETE_FILE,
+      new PersistentStorageDeleteFileHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.GET_ACCESS_LIST,
+      new GetAccessListHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.SEARCH_ACCESS_LIST,
+      new SearchAccessListHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.GET_ESCROW_EVENTS,
+      new EscrowEventsHandler(node)
+    )
   }
 
   public static getInstance(

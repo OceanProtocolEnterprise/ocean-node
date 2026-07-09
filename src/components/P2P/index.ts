@@ -5,7 +5,8 @@ import { handleProtocolCommands } from './handlers.js'
 
 import { fromString as uint8ArrayFromString } from 'uint8arrays/from-string'
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
-import type { Stream } from '@libp2p/interface'
+import { LengthPrefixedStream, lpStream } from '@libp2p/utils'
+import type { Connection, Stream } from '@libp2p/interface'
 
 import { bootstrap } from '@libp2p/bootstrap'
 import { noise } from '@chainsafe/libp2p-noise'
@@ -32,7 +33,7 @@ import {
 } from '@libp2p/kad-dht'
 
 import { EVENTS, cidFromRawString } from '../../utils/index.js'
-import { Transform } from 'stream'
+import { Transform, Readable } from 'stream'
 import { Database } from '../database'
 import {
   OceanNodeConfig,
@@ -68,6 +69,35 @@ type DDOCache = {
 }
 
 let index = 0
+
+/** Optional request payload sent as LP frames after the command JSON; ends with an empty LP frame. */
+export type P2PRequestBodyStream = AsyncIterable<Uint8Array | Buffer | string> | Readable
+
+function toUint8ArrayChunk(chunk: unknown): Uint8Array {
+  if (chunk instanceof Uint8Array) return chunk
+  if (Buffer.isBuffer(chunk)) return new Uint8Array(chunk)
+  if (typeof chunk === 'string') return uint8ArrayFromString(chunk)
+  if (
+    chunk &&
+    typeof chunk === 'object' &&
+    ArrayBuffer.isView(chunk as ArrayBufferView)
+  ) {
+    const v = chunk as ArrayBufferView
+    return new Uint8Array(v.buffer, v.byteOffset, v.byteLength)
+  }
+  throw new Error('Unsupported chunk type for P2P request body')
+}
+
+async function writeP2pRequestBodyLp(
+  lp: LengthPrefixedStream<Stream>,
+  body: P2PRequestBodyStream,
+  signal: AbortSignal
+): Promise<void> {
+  for await (const chunk of body as AsyncIterable<unknown>) {
+    await lp.write(toUint8ArrayChunk(chunk), { signal })
+  }
+  await lp.write(new Uint8Array(0), { signal })
+}
 
 export class OceanP2P extends EventEmitter {
   _libp2p: Libp2p
@@ -108,6 +138,10 @@ export class OceanP2P extends EventEmitter {
 
   getCoreHandlers() {
     return this.coreHandlers
+  }
+
+  getConfig() {
+    return this._config
   }
 
   async start(options: any = null) {
@@ -330,20 +364,23 @@ export class OceanP2P extends EventEmitter {
           `/ip6/${config.p2pConfig.ipV6BindAddress}/tcp/${config.p2pConfig.ipV6BindWsPort}/ws`
         )
       }
+      const listenAddrs = config.p2pConfig.enableCircuitRelayClient
+        ? [...bindInterfaces, '/p2p-circuit']
+        : bindInterfaces
       let addresses = {}
       if (
         config.p2pConfig.announceAddresses &&
         config.p2pConfig.announceAddresses.length > 0
       ) {
         addresses = {
-          listen: bindInterfaces,
+          listen: listenAddrs,
           announceFilter: (multiaddrs: any[]) =>
             multiaddrs.filter((m) => this.shouldAnnounce(m)),
           appendAnnounce: config.p2pConfig.announceAddresses
         }
       } else {
         addresses = {
-          listen: bindInterfaces,
+          listen: listenAddrs,
           announceFilter: (multiaddrs: any[]) =>
             multiaddrs.filter((m) => this.shouldAnnounce(m))
         }
@@ -394,7 +431,12 @@ export class OceanP2P extends EventEmitter {
       // eslint-disable-next-line no-constant-condition, no-self-compare
       if (config.p2pConfig.enableCircuitRelayServer) {
         P2P_LOGGER.info('Enabling Circuit Relay Server')
-        servicesConfig = { ...servicesConfig, ...{ circuitRelay: circuitRelayServer() } }
+        servicesConfig = {
+          ...servicesConfig,
+          ...{
+            circuitRelay: circuitRelayServer({ reservations: { maxReservations: 2 } })
+          }
+        }
       }
       // eslint-disable-next-line no-constant-condition, no-self-compare
       if (config.p2pConfig.upnp) {
@@ -713,7 +755,7 @@ export class OceanP2P extends EventEmitter {
           isNaN(timeout) || timeout === 0
             ? AbortSignal.timeout(5000)
             : AbortSignal.timeout(timeout),
-        useCache: true,
+        useCache: false,
         useNetwork: true
       })
       return data
@@ -721,14 +763,56 @@ export class OceanP2P extends EventEmitter {
     return null
   }
 
+  async send(
+    lp: LengthPrefixedStream<Stream>,
+    message: string,
+    options: { signal: AbortSignal },
+    requestBody?: P2PRequestBodyStream
+  ) {
+    let outbound = message
+    if (requestBody) {
+      const cmd = JSON.parse(message) as Record<string, unknown>
+      cmd.p2pStreamBody = true
+      outbound = JSON.stringify(cmd)
+    }
+    await lp.write(uint8ArrayFromString(outbound), { signal: options.signal })
+    if (requestBody) {
+      await writeP2pRequestBodyLp(lp, requestBody, options.signal)
+    }
+    const statusBytes = await lp.read({ signal: options.signal })
+    return {
+      status: JSON.parse(uint8ArrayToString(statusBytes.subarray())),
+      stream: {
+        [Symbol.asyncIterator]: async function* () {
+          try {
+            while (true) {
+              const chunk = await lp.read()
+              yield chunk.subarray ? chunk.subarray() : chunk
+            }
+          } catch {}
+        }
+      }
+    }
+  }
+
   async sendTo(
     peerName: string,
     message: string,
-    multiAddrs?: string[]
+    multiAddrs?: string[],
+    requestBody?: P2PRequestBodyStream
   ): Promise<{ status: any; stream?: AsyncIterable<any> }> {
+    const options = {
+      signal: AbortSignal.timeout(10_000),
+      priority: 100,
+      runOnLimitedConnection: true
+    }
+
+    let connection: Connection
+    let stream: Stream
+    let peerId
+
     P2P_LOGGER.logMessage('SendTo() node ' + peerName + ' task: ' + message, true)
 
-    let peerId
     try {
       peerId = peerIdFromString(peerName)
     } catch (e) {
@@ -741,14 +825,9 @@ export class OceanP2P extends EventEmitter {
       return { status: { httpStatus: 404, error: 'Invalid peer' } }
     }
 
-    let multiaddrs: Multiaddr[] = []
-    if (!multiAddrs || multiAddrs.length < 1) {
-      multiaddrs = await this.getPeerMultiaddrs(peerName)
-    } else {
-      for (const addr of multiAddrs) {
-        multiaddrs.push(multiaddr(addr))
-      }
-    }
+    const multiaddrs = multiAddrs?.length
+      ? multiAddrs.map((addr) => multiaddr(addr))
+      : await this.getPeerMultiaddrs(peerName)
 
     if (multiaddrs.length < 1) {
       const error = `Cannot find any address to dial for peer: ${peerId}`
@@ -756,18 +835,12 @@ export class OceanP2P extends EventEmitter {
       return { status: { httpStatus: 404, error } }
     }
 
-    let stream: Stream
     try {
-      const options = {
-        signal: AbortSignal.timeout(10000),
-        priority: 100,
-        runOnLimitedConnection: true
-      }
-      const connection = await this._libp2p.dial(multiaddrs, options)
+      connection = await this._libp2p.dial(multiaddrs, options)
       if (connection.remotePeer.toString() !== peerId.toString()) {
-        const error = `Invalid peer on the other side: ${connection.remotePeer.toString()}`
-        P2P_LOGGER.error(error)
-        return { status: { httpStatus: 404, error } }
+        throw new Error(
+          `Invalid peer on the other side: ${connection.remotePeer.toString()}`
+        )
       }
       stream = await connection.newStream(this._protocol, options)
     } catch (e) {
@@ -776,33 +849,39 @@ export class OceanP2P extends EventEmitter {
       return { status: { httpStatus: 404, error } }
     }
 
-    if (!stream) {
-      return { status: { httpStatus: 404, error: 'Unable to get remote P2P stream' } }
-    }
-
+    let streamErr: Error | null = null
     try {
-      // Send message and close write side
-      stream.send(uint8ArrayFromString(message))
-      await stream.close()
-
-      // Read and parse status from first chunk
-      const iterator = stream[Symbol.asyncIterator]()
-      const { done, value } = await iterator.next()
-
-      if (done || !value) {
-        return { status: { httpStatus: 500, error: 'No response from peer' } }
-      }
-
-      const status = JSON.parse(uint8ArrayToString(value.subarray()))
-
-      // Return status and remaining stream
-      return { status, stream: { [Symbol.asyncIterator]: () => iterator } }
+      return await this.send(lpStream(stream), message, options, requestBody)
     } catch (err) {
-      P2P_LOGGER.error(`P2P communication error: ${err.message}`)
       try {
         stream.abort(err as Error)
       } catch {}
-      return { status: { httpStatus: 500, error: `P2P error: ${err.message}` } }
+      streamErr = err
+    }
+
+    // abortConnectionOnPingFailure is disabled to keep long-running download streams alive,
+    // so stale connections are not evicted automatically. On a stale stream error, close the
+    // connection and retry once so the next dial establishes a fresh one.
+    if (!streamErr.message.includes('closed') && !streamErr.message.includes('reset')) {
+      P2P_LOGGER.error(`P2P communication error: ${streamErr.message}`)
+      return { status: { httpStatus: 500, error: `P2P error: ${streamErr.message}` } }
+    }
+
+    P2P_LOGGER.warn(`Stale connection to ${peerId}, retrying: ${streamErr.message}`)
+    try {
+      await connection.close()
+    } catch {}
+    connection = await this._libp2p.dial(multiaddrs, options)
+    stream = await connection.newStream(this._protocol, options)
+
+    try {
+      return await this.send(lpStream(stream), message, options, requestBody)
+    } catch (retryErr) {
+      try {
+        stream.abort(retryErr as Error)
+      } catch {}
+      P2P_LOGGER.error(`P2P communication error on retry: ${retryErr.message}`)
+      return { status: { httpStatus: 500, error: `P2P error: ${retryErr.message}` } }
     }
   }
 
@@ -932,10 +1011,12 @@ export class OceanP2P extends EventEmitter {
     const cid = await cidFromRawString(input)
     const peersFound = []
     try {
-      // @ts-ignore ignore the type mismatch
       const f = this._libp2p.contentRouting.findProviders(cid, {
-        signal: AbortSignal.timeout(timeout || 20000) // 20 seconds        // on timeout the query ends with an abort signal => CodeError: Query aborted
-      })
+        queryFuncTimeout: timeout || 20000 // 20 seconds
+        // on timeout the query ends with an abort signal => CodeError: Query aborted
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any)
+
       for await (const value of f) {
         peersFound.push(value)
       }

@@ -15,7 +15,6 @@ import {
   setupEnvironment,
   tearDownEnvironment
 } from '../utils/utils.js'
-import { sleep } from '../../utils/util.js'
 
 let envOverrides: OverrideEnvConfig[]
 
@@ -44,7 +43,7 @@ describe('Status command tests', async () => {
   const keyManager = new KeyManager(config)
   const blockchainRegistry = new BlockchainRegistry(keyManager, config)
   const oceanP2P = new OceanP2P(config, keyManager, db)
-  const oceanIndexer = new OceanIndexer(db, config.indexingNetworks, blockchainRegistry)
+  const oceanIndexer = new OceanIndexer(db, config, blockchainRegistry)
   const oceanProvider = new OceanProvider(db)
   const oceanNode = OceanNode.getInstance(config, db, oceanP2P)
 
@@ -54,8 +53,7 @@ describe('Status command tests', async () => {
     await oceanIndexer.stopAllChainIndexers()
   })
 
-  it('Ocean Node instance', async () => {
-    await sleep(3000)
+  it('Ocean Node instance', () => {
     expect(oceanNode).to.be.instanceOf(OceanNode)
     expect(config.supportedNetworks).to.eql({
       '1': 'https://rpc.eth.gateway.fm',

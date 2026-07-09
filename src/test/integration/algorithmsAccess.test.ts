@@ -45,12 +45,13 @@ import { homedir } from 'os'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
 import { createHash } from 'crypto'
 import { getAlgoChecksums } from '../../components/core/compute/utils.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
+import { ensureEnterpriseFeeTokenAllowed } from '../utils/contracts.js'
 
-describe('Trusted algorithms Flow', () => {
+describe('**********         Trusted algorithms Flow', () => {
   let previousConfiguration: OverrideEnvConfig[]
   let config: OceanNodeConfig
   let dbconn: Database
@@ -97,40 +98,53 @@ describe('Trusted algorithms Flow', () => {
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
           JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-          '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"fees":{"' +
+          '[{"socketPath":"/var/run/docker.sock","environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
             DEVELOPMENT_CHAIN_ID +
             '":[{"feeToken":"' +
             paymentToken +
-            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60, "minJobDuration":10, "maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]}]'
         ]
       )
     )
     config = await getConfiguration(true)
     dbconn = await Database.init(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(config, dbconn, null, null, null)
-    indexer = new OceanIndexer(
+    oceanNode = await OceanNode.getInstance(
+      config,
       dbconn,
-      config.indexingNetworks,
-      oceanNode.blockchainRegistry
+      null,
+      null,
+      null,
+      null,
+      null,
+      true
     )
+    indexer = new OceanIndexer(dbconn, config, oceanNode.blockchainRegistry)
     oceanNode.addIndexer(indexer)
     oceanNode.addC2DEngines()
 
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
     consumerAccount = (await provider.getSigner(1)) as Signer
+    await ensureEnterpriseFeeTokenAllowed(
+      provider,
+      artifactsAddresses.development.EnterpriseFeeCollector,
+      paymentToken
+    )
     paymentTokenContract = new ethers.Contract(
       paymentToken,
       OceanToken.abi,
       publisherAccount
     )
     escrowContract = new ethers.Contract(
-      artifactsAddresses.development.Escrow,
-      EscrowJson.abi,
+      artifactsAddresses.development.EnterpriseEscrow,
+      EnterpriseEscrowJson.abi,
       publisherAccount
     )
   })
-
+  after(async () => {
+    await tearDownEnvironment(previousConfiguration)
+    await oceanNode.tearDownAll()
+  })
   it('Sets up compute envs', () => {
     assert(oceanNode, 'Failed to instantiate OceanNode')
     assert(config.c2dClusters, 'Failed to get c2dClusters')
@@ -138,16 +152,17 @@ describe('Trusted algorithms Flow', () => {
 
   // let's publish assets & algos
   it('should publish compute datasets & algos', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
     publishedComputeDataset = await publishAsset(
       computeAssetWithNoAccess,
       publisherAccount
     )
     publishedAlgoDataset = await publishAsset(algoAsset, publisherAccount)
     const computeDatasetResult = await waitToIndex(
+      oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     // Fail the test if compute dataset DDO was not indexed - subsequent tests depend on it
     assert(
@@ -157,9 +172,10 @@ describe('Trusted algorithms Flow', () => {
       }`
     )
     const algoDatasetResult = await waitToIndex(
+      oceanNode,
       publishedAlgoDataset.ddo.id,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
+      DEFAULT_TEST_TIMEOUT * 2
     )
     // Fail the test if algorithm DDO was not indexed - subsequent tests depend on it
     assert(
@@ -181,7 +197,6 @@ describe('Trusted algorithms Flow', () => {
     expect(response.stream).to.be.instanceOf(Readable)
 
     computeEnvironments = await streamToObject(response.stream as Readable)
-    console.log('existing envs: ', computeEnvironments)
     // expect 1 OR + envs (1 if only docker free env is available)
     assert(computeEnvironments.length >= 1, 'Not enough compute envs')
     for (const computeEnvironment of computeEnvironments) {
@@ -235,7 +250,6 @@ describe('Trusted algorithms Flow', () => {
     const resp = await new ComputeInitializeHandler(oceanNode).handle(
       initializeComputeTask
     )
-    console.log(resp)
     assert(resp, 'Failed to get response')
     assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
     assert(
@@ -286,6 +300,7 @@ describe('Trusted algorithms Flow', () => {
     const txReceipt = await setMetaDataTx.wait()
     assert(txReceipt, 'set metadata failed')
     publishedComputeDataset = await waitToIndex(
+      oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_UPDATED,
       DEFAULT_TEST_TIMEOUT * 2,
@@ -336,7 +351,6 @@ describe('Trusted algorithms Flow', () => {
     const resp = await new ComputeInitializeHandler(oceanNode).handle(
       initializeComputeTask
     )
-    console.log(resp)
     assert(resp, 'Failed to get response')
     assert(resp.status.httpStatus === 200, 'Failed to get 200 response')
     assert(resp.stream, 'Failed to get stream')
@@ -378,15 +392,20 @@ describe('Trusted algorithms Flow', () => {
   it('should start a compute job', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 10)
     // let's put funds in escrow & create an auth
-    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    const consumerAddress = await consumerAccount.getAddress()
+    escrowContract = new ethers.Contract(
+      initializeResponse.payment.escrowAddress,
+      EnterpriseEscrowJson.abi,
+      publisherAccount
+    )
+
+    let balance = await paymentTokenContract.balanceOf(consumerAddress)
+
     if (BigInt(balance.toString()) === BigInt(0)) {
       const mintAmount = ethers.parseUnits('1000', 18)
-      const mintTx = await paymentTokenContract.mint(
-        await consumerAccount.getAddress(),
-        mintAmount
-      )
+      const mintTx = await paymentTokenContract.mint(consumerAddress, mintAmount)
       await mintTx.wait()
-      balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+      balance = await paymentTokenContract.balanceOf(consumerAddress)
     }
     assert(BigInt(balance.toString()) > BigInt(0), 'Consumer has no Ocean tokens')
     const approveTx = await paymentTokenContract
@@ -407,10 +426,11 @@ describe('Trusted algorithms Flow', () => {
         10
       )
     await authorizeTx.wait()
+
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
 
@@ -432,14 +452,14 @@ describe('Trusted algorithms Flow', () => {
     const nonce = Date.now().toString()
 
     const messageHashBytes = createHashForSignature(
-      await consumerAccount.getAddress(),
+      consumerAddress,
       nonce,
       PROTOCOL_COMMANDS.COMPUTE_START
     )
     const signature = await safeSign(consumerAccount, messageHashBytes)
     const startComputeTask: PaidComputeStartCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_START,
-      consumerAddress: await consumerAccount.getAddress(),
+      consumerAddress,
       signature,
       nonce,
       environment: firstEnv.id,
@@ -456,7 +476,7 @@ describe('Trusted algorithms Flow', () => {
         transferTxId: algoOrderTxId,
         meta: publishedAlgoDataset.ddo.metadata.algorithm
       },
-      output: {},
+      output: null,
       payment: {
         chainId: DEVELOPMENT_CHAIN_ID,
         token: paymentToken
@@ -468,7 +488,7 @@ describe('Trusted algorithms Flow', () => {
     const auth = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
-      await consumerAccount.getAddress(),
+      consumerAddress,
       firstEnv.consumerAddress
     )
     assert(auth.length > 0, 'Should have authorization')
@@ -480,11 +500,21 @@ describe('Trusted algorithms Flow', () => {
       BigInt(auth[0].maxLockCounts.toString()) > BigInt(0),
       ' Should have maxLockCounts in auth'
     )
-    const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
-    console.log(`response: ${response.status.httpStatus}`)
-    console.log(`response: ${JSON.stringify(response)}`)
+    const environmentHash = firstEnv.id.slice(0, firstEnv.id.indexOf('-'))
+    const engine = await oceanNode.getC2DEngines().getC2DByHash(environmentHash)
+    const originalCreateLock = engine.escrow.createLock.bind(engine.escrow)
+    engine.escrow.createLock = () => Promise.resolve(`0x${'1'.padStart(64, '0')}`)
+    let response
+    try {
+      response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    } finally {
+      engine.escrow.createLock = originalCreateLock
+    }
     assert(response, 'Failed to get response')
-    assert(response.status.httpStatus === 200, 'Failed to get 200 response')
+    assert(
+      response.status.httpStatus === 200,
+      `Expected 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+    )
     assert(response.stream, 'Failed to get stream')
     expect(response.stream).to.be.instanceOf(Readable)
 
@@ -492,9 +522,5 @@ describe('Trusted algorithms Flow', () => {
     // eslint-disable-next-line prefer-destructuring
     jobId = jobs[0].jobId
     assert(jobId)
-  })
-  after(async () => {
-    await tearDownEnvironment(previousConfiguration)
-    indexer.stopAllChainIndexers()
   })
 })

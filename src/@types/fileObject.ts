@@ -25,33 +25,68 @@ export interface UrlFileObject extends BaseFileObject {
 export interface IpfsFileObject extends BaseFileObject {
   hash: string
 }
-export interface S3Object {
-  endpoint: string
-  region: string
-  objectKey: string
-  bucket: string
-  accessKeyId: string
-  secretAccessKey: string
-}
-export interface S3FileObject extends BaseFileObject {
-  s3Access: S3Object
-}
 
 export interface ArweaveFileObject extends BaseFileObject {
   transactionId: string
 }
 
+export interface S3Object {
+  endpoint: string
+  region?: string
+  objectKey: string
+  bucket: string
+  accessKeyId: string
+  secretAccessKey: string
+  /** If true, use path-style addressing (e.g. endpoint/bucket/key). Required for some S3-compatible services (e.g. MinIO). Default false (virtual-host style, e.g. bucket.endpoint/key). */
+  forcePathStyle?: boolean
+}
+export interface S3FileObject extends BaseFileObject {
+  s3Access: S3Object
+}
+
+export interface FtpFileObject extends BaseFileObject {
+  /** Full FTP or FTPS URL: ftp://[user:password@]host[:port]/path or ftps://... */
+  url: string
+}
+
+export interface PersistentStorageObject extends BaseFileObject {
+  type: 'nodePersistentStorage'
+  bucketId: string
+  fileName: string
+}
+
+export type StorageObject =
+  | UrlFileObject
+  | IpfsFileObject
+  | ArweaveFileObject
+  | S3FileObject
+  | FtpFileObject
+  | PersistentStorageObject
+
 export interface StorageReadable {
   stream: Readable
   httpStatus?: number
-  headers?: [any]
+  headers?: Record<string, string | string[]> | undefined
+  error?: any
 }
 
 export enum FileObjectType {
   URL = 'url',
   IPFS = 'ipfs',
   ARWEAVE = 'arweave',
-  S3 = 's3'
+  S3 = 's3',
+  FTP = 'ftp',
+  NODE_PERSISTENT_STORAGE = 'nodePersistentStorage'
+}
+
+// Case-insensitive match for the persistent-storage type. getStorageClass routes on
+// `type?.toLowerCase()`, so all guard checks must normalize too or a casing variant
+// (e.g. "NodePersistentStorage") slips past the guard and is still routed as PS.
+export function isPersistentStorageType(type: unknown): boolean {
+  return (
+    typeof type === 'string' &&
+    type.toLowerCase() === FileObjectType.NODE_PERSISTENT_STORAGE.toLowerCase()
+  )
 }
 
 export interface FileInfoRequest {
@@ -70,11 +105,10 @@ export interface FileInfoResponse {
   encryptMethod?: EncryptMethod
 }
 
-export interface FileInfoHttpRequest {
-  type?: 'ipfs' | 'url' | 'arweave'
-  did?: string
-  hash?: string
-  url?: string
-  transactionId?: string
-  serviceId?: string
-}
+export type FileInfoHttpRequest =
+  | StorageObject
+  | {
+      did?: string
+      serviceId?: string
+      checksum?: boolean
+    }

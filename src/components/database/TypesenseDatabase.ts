@@ -7,14 +7,18 @@ import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 
 import { ENVIRONMENT_VARIABLES, TYPESENSE_HITS_CAP } from '../../utils/constants.js'
 import {
+  AbstractAccessListDatabase,
   AbstractDdoDatabase,
   AbstractDdoStateDatabase,
+  AbstractEscrowDatabase,
   AbstractIndexerDatabase,
   AbstractLogDatabase,
   AbstractOrderDatabase
 } from './BaseDatabase.js'
-import { DDOManager } from '@oceanprotocol/ddo-js'
+import { AccessListUser } from '../../@types/AccessList.js'
+import { EscrowEvent } from '../../@types/Escrow.js'
 import { validateDDO } from '../../utils/asset.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 
 export class TypesenseOrderDatabase extends AbstractOrderDatabase {
   private provider: Typesense
@@ -208,6 +212,133 @@ export class TypesenseOrderDatabase extends AbstractOrderDatabase {
   }
 }
 
+export class TypesenseEscrowDatabase extends AbstractEscrowDatabase {
+  private provider: Typesense
+
+  constructor(config: OceanNodeDBConfig, schema: TypesenseSchema) {
+    super(config, schema)
+    return (async (): Promise<TypesenseEscrowDatabase> => {
+      this.provider = new Typesense({
+        ...convertTypesenseConfig(this.config.url),
+        logger: DATABASE_LOGGER
+      })
+      try {
+        await this.provider.collections(this.getSchema().name).retrieve()
+      } catch (error) {
+        if (error instanceof TypesenseError && error.httpStatus === 404) {
+          await this.provider.collections().create(this.getSchema())
+        }
+      }
+      return this
+    })() as unknown as TypesenseEscrowDatabase
+  }
+
+  getSchema(): TypesenseSchema {
+    return this.schema as TypesenseSchema
+  }
+
+  async create(event: EscrowEvent) {
+    try {
+      return await this.provider
+        .collections(this.getSchema().name)
+        .documents()
+        .create({ ...event })
+    } catch (error) {
+      if (error instanceof TypesenseError && error.httpStatus === 409) {
+        return { ...event }
+      }
+      const errorMsg = `Error when creating escrow event ${event.id}: ` + error.message
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+
+  async retrieve(id: string) {
+    try {
+      return await this.provider
+        .collections(this.getSchema().name)
+        .documents()
+        .retrieve(id)
+    } catch (error) {
+      const errorMsg = `Error when retrieving escrow event ${id}: ` + error.message
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+
+  async search(filters: Record<string, any>, offset?: number, size?: number) {
+    try {
+      const filterBy = Object.entries(filters || {})
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        // Backtick string values so spaces/special chars can't break the syntax;
+        // strip backticks from the value so it can't escape the quoted literal.
+        .map(([field, value]) =>
+          typeof value === 'string'
+            ? `${field}:=\`${value.replace(/`/g, '')}\``
+            : `${field}:=${value}`
+        )
+        .join(' && ')
+
+      // clamp the page size so a single request can't return an unbounded set
+      const limit = Math.min(size && size > 0 ? size : 100, TYPESENSE_HITS_CAP)
+      const from = offset && offset > 0 ? offset : 0
+
+      const searchParams: TypesenseSearchParams = {
+        q: '*',
+        query_by: 'eventType',
+        offset: from,
+        limit
+      }
+      if (filterBy) {
+        searchParams.filter_by = filterBy
+      }
+
+      const result = await this.provider
+        .collections(this.getSchema().name)
+        .documents()
+        .search(searchParams)
+
+      return result.hits.map((hit) => hit.document)
+    } catch (error) {
+      const errorMsg =
+        `Error when searching escrow events by ${JSON.stringify(filters)}: ` +
+        error.message
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+
+  async delete(id: string) {
+    try {
+      return await this.provider.collections(this.getSchema().name).documents().delete(id)
+    } catch (error) {
+      const errorMsg = `Error when deleting escrow event ${id}: ` + error.message
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+}
+
 export class TypesenseDdoStateDatabase extends AbstractDdoStateDatabase {
   private provider: Typesense
 
@@ -372,6 +503,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
   getDDOSchema(ddo: Record<string, any>): TypesenseSchema {
     // Find the schema based on the DDO version OR use the short DDO schema when state !== 0
     let schemaName: string
+
     const ddoInstance = DDOManager.getDDOClass(ddo)
     const ddoData = ddoInstance.getDDOData()
     if ('indexedMetadata' in ddoData && ddoData?.indexedMetadata?.nft.state !== 0) {
@@ -387,6 +519,31 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       LOG_LEVELS_STR.LEVEL_INFO
     )
     return schema
+  }
+
+  private async deleteDDOFromOtherSchemas(
+    did: string,
+    currentSchema: TypesenseSchema
+  ): Promise<void> {
+    for (const schema of this.getSchemas()) {
+      if (schema.name === currentSchema.name) {
+        continue
+      }
+
+      try {
+        await this.provider.collections(schema.name).documents().delete(did)
+      } catch (error) {
+        if (!(error instanceof TypesenseError && error.httpStatus === 404)) {
+          DATABASE_LOGGER.logMessageWithEmoji(
+            `Error when deleting stale DDO entry ${did} from schema ${schema.name}: ` +
+              error.message,
+            true,
+            GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+            LOG_LEVELS_STR.LEVEL_ERROR
+          )
+        }
+      }
+    }
   }
 
   async search(
@@ -511,10 +668,12 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       if (ddo?.indexedMetadata?.nft) delete ddo.nft
       const validation = await validateDDO(ddo)
       if (validation === true) {
-        return await this.provider
+        const response = await this.provider
           .collections(schema.name)
           .documents()
-          .update(ddo.id, ddo)
+          .upsert(ddo)
+        await this.deleteDDOFromOtherSchemas(ddo.id, schema)
+        return response
       } else {
         throw new Error(
           `Validation of DDO with schema version ${ddo.version} failed with errors`
@@ -932,4 +1091,176 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
       return 0
     }
   }
+}
+
+export class TypesenseAccessListDatabase extends AbstractAccessListDatabase {
+  private provider: Typesense
+
+  constructor(config: OceanNodeDBConfig, schema: TypesenseSchema) {
+    super(config, schema)
+    return (async (): Promise<TypesenseAccessListDatabase> => {
+      this.provider = new Typesense({
+        ...convertTypesenseConfig(this.config.url),
+        logger: DATABASE_LOGGER
+      })
+      try {
+        await this.provider.collections(this.schema.name).retrieve()
+      } catch (error) {
+        if (error instanceof TypesenseError && error.httpStatus === 404) {
+          await this.provider.collections().create(this.schema)
+        }
+      }
+      return this
+    })() as unknown as TypesenseAccessListDatabase
+  }
+
+  private docId(chainId: number, contractAddress: string): string {
+    return `${chainId}-${contractAddress.toLowerCase()}`
+  }
+
+  async create(
+    chainId: number,
+    contractAddress: string,
+    transferable: boolean,
+    block: number,
+    txId: string,
+    name?: string,
+    symbol?: string
+  ) {
+    const id = this.docId(chainId, contractAddress)
+    const lowerContract = contractAddress.toLowerCase()
+    try {
+      const existing: any = await this.retrieve(chainId, contractAddress)
+      const doc = {
+        id,
+        chainId,
+        contractAddress: lowerContract,
+        name,
+        symbol,
+        transferable,
+        users: existing?.users ?? [],
+        deploymentBlock: block,
+        deploymentTxId: txId
+      }
+      if (existing) {
+        return await this.provider
+          .collections(this.schema.name)
+          .documents()
+          .update(id, doc)
+      }
+      return await this.provider.collections(this.schema.name).documents().create(doc)
+    } catch (error) {
+      this.logError(`upserting access list ${id}`, error)
+      return null
+    }
+  }
+
+  async retrieve(chainId: number, contractAddress: string) {
+    const id = this.docId(chainId, contractAddress)
+    try {
+      const doc: any = await this.provider
+        .collections(this.schema.name)
+        .documents()
+        .retrieve(id)
+      return stripId(doc)
+    } catch (error) {
+      if (error instanceof TypesenseError && error.httpStatus === 404) {
+        return null
+      }
+      this.logError(`retrieving access list ${id}`, error)
+      return null
+    }
+  }
+
+  async addUser(chainId: number, contractAddress: string, user: AccessListUser) {
+    const id = this.docId(chainId, contractAddress)
+    const lowerContract = contractAddress.toLowerCase()
+    const normalized: AccessListUser = { ...user, wallet: user.wallet.toLowerCase() }
+    try {
+      const existing: any = await this.retrieve(chainId, contractAddress)
+      const users: AccessListUser[] = existing?.users ?? []
+      const exists = users.some((u) => u.tokenId === normalized.tokenId)
+      const nextUsers = exists ? users : [...users, normalized]
+      if (existing) {
+        return await this.provider
+          .collections(this.schema.name)
+          .documents()
+          .update(id, { users: nextUsers })
+      }
+      return await this.provider.collections(this.schema.name).documents().create({
+        id,
+        chainId,
+        contractAddress: lowerContract,
+        transferable: false,
+        users: nextUsers
+      })
+    } catch (error) {
+      this.logError(`adding user ${normalized.wallet} to access list ${id}`, error)
+      return null
+    }
+  }
+
+  async removeUserByTokenId(chainId: number, contractAddress: string, tokenId: number) {
+    const id = this.docId(chainId, contractAddress)
+    try {
+      const existing: any = await this.retrieve(chainId, contractAddress)
+      if (!existing) return null
+      const nextUsers = (existing.users ?? []).filter(
+        (u: AccessListUser) => u.tokenId !== tokenId
+      )
+      return await this.provider
+        .collections(this.schema.name)
+        .documents()
+        .update(id, { users: nextUsers })
+    } catch (error) {
+      this.logError(`removing tokenId ${tokenId} from access list ${id}`, error)
+      return null
+    }
+  }
+
+  async searchByWallet(wallet: string, chainId?: number): Promise<any[]> {
+    const lowerWallet = wallet.toLowerCase()
+    try {
+      const filterParts = [`users.wallet:=${lowerWallet}`]
+      if (chainId !== undefined) filterParts.push(`chainId:=${chainId}`)
+      const result = await this.provider
+        .collections(this.schema.name)
+        .documents()
+        .search({
+          q: '*',
+          query_by: 'contractAddress',
+          filter_by: filterParts.join(' && '),
+          per_page: 250
+        })
+      return (result.hits ?? []).map((h: any) => stripId(h.document))
+    } catch (error) {
+      this.logError(`searching access lists by wallet ${lowerWallet}`, error)
+      return []
+    }
+  }
+
+  async delete(chainId: number, contractAddress: string) {
+    const id = this.docId(chainId, contractAddress)
+    try {
+      return await this.provider.collections(this.schema.name).documents().delete(id)
+    } catch (error) {
+      this.logError(`deleting access list ${id}`, error)
+      return null
+    }
+  }
+
+  private logError(action: string, error: any) {
+    DATABASE_LOGGER.logMessageWithEmoji(
+      `Error when ${action}: ${error?.message ?? error}`,
+      true,
+      GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+      LOG_LEVELS_STR.LEVEL_ERROR
+    )
+  }
+}
+
+function stripId(doc: any): any {
+  if (!doc) return doc
+  const { id: _id, ...rest } = doc
+  return rest
 }

@@ -1,19 +1,23 @@
 import { Client } from '@elastic/elasticsearch'
 import {
+  AbstractAccessListDatabase,
   AbstractDdoDatabase,
   AbstractDdoStateDatabase,
+  AbstractEscrowDatabase,
   AbstractIndexerDatabase,
   AbstractLogDatabase,
   AbstractOrderDatabase
 } from './BaseDatabase.js'
+import { AccessListUser } from '../../@types/AccessList.js'
+import { EscrowEvent } from '../../@types/Escrow.js'
 import { createElasticsearchClientWithRetry } from './ElasticsearchConfigHelper.js'
 import { OceanNodeDBConfig } from '../../@types'
 import { ElasticsearchSchema } from './ElasticSchemas.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 
-import { DDOManager } from '@oceanprotocol/ddo-js'
 import { validateDDO } from '../../utils/asset.js'
+import { DDOManager } from '@oceanprotocol/ddo-js'
 
 export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
   private client: Client
@@ -76,7 +80,8 @@ export class ElasticsearchIndexerDatabase extends AbstractIndexerDatabase {
     try {
       const result = await this.client.get({
         index: this.index,
-        id: network.toString()
+        id: network.toString(),
+        refresh: true
       })
       return result._source
     } catch (error) {
@@ -240,8 +245,7 @@ export class ElasticsearchDdoStateDatabase extends AbstractDdoStateDatabase {
         index: this.index,
         body: {
           query
-        },
-        preference: '_primary_first'
+        }
       })
       console.log('Query result: ', result)
       return result.hits.hits.map((hit: any) => {
@@ -475,6 +479,108 @@ export class ElasticsearchOrderDatabase extends AbstractOrderDatabase {
   }
 }
 
+export class ElasticsearchEscrowDatabase extends AbstractEscrowDatabase {
+  private provider: Client
+
+  constructor(config: OceanNodeDBConfig, schema: ElasticsearchSchema) {
+    super(config, schema)
+
+    return (async (): Promise<ElasticsearchEscrowDatabase> => {
+      this.provider = await createElasticsearchClientWithRetry(config)
+      await this.initializeIndex()
+      return this
+    })() as unknown as ElasticsearchEscrowDatabase
+  }
+
+  getSchema(): ElasticsearchSchema {
+    return this.schema as ElasticsearchSchema
+  }
+
+  private async initializeIndex() {
+    try {
+      const { index } = this.getSchema()
+      const exists = await this.provider.indices.exists({ index })
+      if (!exists) {
+        await this.provider.indices.create({
+          index,
+          body: this.getSchema().body as any
+        })
+      }
+    } catch (e) {
+      DATABASE_LOGGER.error(`Failed to create escrow index: ${e.message}`)
+    }
+  }
+
+  async create(event: EscrowEvent) {
+    try {
+      await this.provider.index({
+        index: this.getSchema().index,
+        id: event.id,
+        body: event
+      })
+      return event
+    } catch (error) {
+      const errorMsg = `Error when creating escrow event ${event.id}: ` + error.message
+      DATABASE_LOGGER.logMessageWithEmoji(errorMsg, true, LOG_LEVELS_STR.LEVEL_ERROR)
+      return null
+    }
+  }
+
+  async retrieve(id: string) {
+    try {
+      const result = await this.provider.get({
+        index: this.getSchema().index,
+        id
+      })
+      return normalizeDocumentId(result._source, result._id)
+    } catch (error) {
+      const errorMsg = `Error when retrieving escrow event ${id}: ` + error.message
+      DATABASE_LOGGER.logMessageWithEmoji(errorMsg, true, LOG_LEVELS_STR.LEVEL_ERROR)
+      return null
+    }
+  }
+
+  async search(filters: Record<string, any>, offset?: number, size?: number) {
+    try {
+      // clamp the page size so a single request can't return an unbounded set
+      const limit = Math.min(size && size > 0 ? size : 100, 250)
+      const from = offset && offset > 0 ? offset : 0
+
+      const terms = Object.entries(filters || {})
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .map(([field, value]) => ({ term: { [field]: value } }))
+      const query = terms.length ? { bool: { must: terms } } : { match_all: {} }
+
+      const searchParams = {
+        index: this.getSchema().index,
+        body: { query, from, size: limit }
+      }
+      const result = await this.provider.search(searchParams)
+      return result.hits.hits.map((hit: any) => normalizeDocumentId(hit._source, hit._id))
+    } catch (error) {
+      const errorMsg =
+        `Error when searching escrow events by ${JSON.stringify(filters)}: ` +
+        error.message
+      DATABASE_LOGGER.logMessageWithEmoji(errorMsg, true, LOG_LEVELS_STR.LEVEL_ERROR)
+      return null
+    }
+  }
+
+  async delete(id: string) {
+    try {
+      await this.provider.delete({
+        index: this.getSchema().index,
+        id
+      })
+      return { id }
+    } catch (error) {
+      const errorMsg = `Error when deleting escrow event ${id}: ` + error.message
+      DATABASE_LOGGER.logMessageWithEmoji(errorMsg, true, LOG_LEVELS_STR.LEVEL_ERROR)
+      return null
+    }
+  }
+}
+
 export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
   private client: Client
 
@@ -483,8 +589,25 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
 
     return (async (): Promise<ElasticsearchDdoDatabase> => {
       this.client = await createElasticsearchClientWithRetry(config)
+      await this.initializeIndexes()
       return this
     })() as unknown as ElasticsearchDdoDatabase
+  }
+
+  private async initializeIndexes() {
+    for (const schema of this.getSchemas()) {
+      try {
+        const exists = await this.client.indices.exists({ index: schema.index })
+        if (!exists) {
+          await this.client.indices.create({
+            index: schema.index,
+            body: schema.body as any
+          })
+        }
+      } catch (e) {
+        DATABASE_LOGGER.error(`Failed to create DDO index ${schema.index}: ${e.message}`)
+      }
+    }
   }
 
   getSchemas(): ElasticsearchSchema[] {
@@ -511,6 +634,33 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       LOG_LEVELS_STR.LEVEL_INFO
     )
     return schema
+  }
+
+  private async deleteDDOFromOtherSchemas(
+    id: string,
+    currentSchema: ElasticsearchSchema
+  ): Promise<void> {
+    for (const schema of this.getSchemas()) {
+      if (schema.index === currentSchema.index) {
+        continue
+      }
+
+      try {
+        await this.client.delete({
+          index: schema.index,
+          id
+        })
+      } catch (error) {
+        if (error.statusCode !== 404) {
+          DATABASE_LOGGER.logMessageWithEmoji(
+            `Error when deleting stale DDO entry ${id} from schema ${schema.index}: ${error.message}`,
+            true,
+            GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+            LOG_LEVELS_STR.LEVEL_ERROR
+          )
+        }
+      }
+    }
   }
 
   async search(query: Record<string, any>): Promise<any> {
@@ -674,13 +824,12 @@ export class ElasticsearchDdoDatabase extends AbstractDdoDatabase {
       if (ddo?.indexedMetadata?.nft) delete ddo.nft
       const validation = await validateDDO(ddo)
       if (validation === true) {
-        const response: any = await this.client.update({
+        const response: any = await this.client.index({
           index: schema.index,
           id: ddo.id,
-          body: {
-            doc: ddo
-          }
+          body: ddo
         })
+        await this.deleteDDOFromOtherSchemas(ddo.id, schema)
         // make sure we do not have different responses 4 between DBs
         // do the same thing on other methods
         if (response._id === ddo.id) {
@@ -1036,6 +1185,277 @@ export class ElasticsearchLogDatabase extends AbstractLogDatabase {
     } catch (e) {
       DATABASE_LOGGER.error('Unable to retrieve logs count: ' + e.message)
       return 0
+    }
+  }
+}
+
+export class ElasticsearchAccessListDatabase extends AbstractAccessListDatabase {
+  private client: Client
+  private index: string
+
+  constructor(config: OceanNodeDBConfig) {
+    super(config)
+    this.index = 'access_list'
+
+    return (async (): Promise<ElasticsearchAccessListDatabase> => {
+      this.client = await createElasticsearchClientWithRetry(config)
+      await this.initializeIndex()
+      return this
+    })() as unknown as ElasticsearchAccessListDatabase
+  }
+
+  private docId(chainId: number, contractAddress: string): string {
+    return `${chainId}-${contractAddress.toLowerCase()}`
+  }
+
+  private async initializeIndex() {
+    try {
+      const indexExists = await this.client.indices.exists({ index: this.index })
+      if (!indexExists) {
+        await this.client.indices.create({
+          index: this.index,
+          body: {
+            mappings: {
+              properties: {
+                chainId: { type: 'integer' },
+                contractAddress: { type: 'keyword' },
+                name: { type: 'keyword' },
+                symbol: { type: 'keyword' },
+                transferable: { type: 'boolean' },
+                users: {
+                  type: 'nested',
+                  properties: {
+                    wallet: { type: 'keyword' },
+                    tokenId: { type: 'long' },
+                    block: { type: 'long' },
+                    txId: { type: 'keyword' }
+                  }
+                },
+                deploymentBlock: { type: 'long' },
+                deploymentTxId: { type: 'keyword' }
+              }
+            }
+          }
+        })
+      }
+    } catch (e) {
+      DATABASE_LOGGER.error(e.message)
+    }
+  }
+
+  async create(
+    chainId: number,
+    contractAddress: string,
+    transferable: boolean,
+    block: number,
+    txId: string,
+    name?: string,
+    symbol?: string
+  ) {
+    const id = this.docId(chainId, contractAddress)
+    const lowerContract = contractAddress.toLowerCase()
+    try {
+      await this.client.update({
+        index: this.index,
+        id,
+        body: {
+          script: {
+            source: `
+              ctx._source.transferable = params.transferable;
+              ctx._source.deploymentBlock = params.block;
+              ctx._source.deploymentTxId = params.txId;
+              if (params.name != null) { ctx._source.name = params.name; }
+              if (params.symbol != null) { ctx._source.symbol = params.symbol; }
+            `,
+            lang: 'painless',
+            params: { transferable, block, txId, name, symbol }
+          },
+          upsert: {
+            chainId,
+            contractAddress: lowerContract,
+            name,
+            symbol,
+            transferable,
+            users: [],
+            deploymentBlock: block,
+            deploymentTxId: txId
+          }
+        },
+        refresh: 'wait_for'
+      })
+      return { id }
+    } catch (error) {
+      const errorMsg = `Error when upserting access list ${id}: ${error.message}`
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+
+  async retrieve(chainId: number, contractAddress: string) {
+    const id = this.docId(chainId, contractAddress)
+    try {
+      const result = await this.client.get({
+        index: this.index,
+        id,
+        refresh: true
+      })
+      return result._source
+    } catch (error) {
+      if (error?.meta?.statusCode === 404) {
+        return null
+      }
+      const errorMsg = `Error when retrieving access list ${id}: ${error.message}`
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+
+  async addUser(chainId: number, contractAddress: string, user: AccessListUser) {
+    const id = this.docId(chainId, contractAddress)
+    const lowerContract = contractAddress.toLowerCase()
+    const normalized: AccessListUser = { ...user, wallet: user.wallet.toLowerCase() }
+    try {
+      await this.client.update({
+        index: this.index,
+        id,
+        body: {
+          script: {
+            source: `
+              if (ctx._source.users == null) { ctx._source.users = []; }
+              boolean exists = false;
+              for (int i = 0; i < ctx._source.users.length; i++) {
+                if (ctx._source.users[i].tokenId == params.user.tokenId) { exists = true; break; }
+              }
+              if (!exists) { ctx._source.users.add(params.user); }
+            `,
+            lang: 'painless',
+            params: { user: normalized }
+          },
+          upsert: {
+            chainId,
+            contractAddress: lowerContract,
+            transferable: false,
+            users: [normalized]
+          }
+        },
+        refresh: 'wait_for'
+      })
+      return { id }
+    } catch (error) {
+      const errorMsg = `Error when adding user ${normalized.wallet} to access list ${id}: ${error.message}`
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+
+  async removeUserByTokenId(chainId: number, contractAddress: string, tokenId: number) {
+    const id = this.docId(chainId, contractAddress)
+    try {
+      await this.client.update({
+        index: this.index,
+        id,
+        body: {
+          script: {
+            source: `
+              if (ctx._source.users != null) {
+                ctx._source.users.removeIf(u -> u.tokenId == params.tokenId);
+              }
+            `,
+            lang: 'painless',
+            params: { tokenId }
+          }
+        },
+        refresh: 'wait_for'
+      })
+      return { id }
+    } catch (error) {
+      if (error?.meta?.statusCode === 404) {
+        DATABASE_LOGGER.logMessageWithEmoji(
+          `AddressRemoved on missing access list ${id} (tokenId=${tokenId}); ignoring.`,
+          true,
+          GENERIC_EMOJIS.EMOJI_CHECK_MARK,
+          LOG_LEVELS_STR.LEVEL_WARN
+        )
+        return null
+      }
+      const errorMsg = `Error when removing tokenId ${tokenId} from access list ${id}: ${error.message}`
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
+    }
+  }
+
+  async searchByWallet(wallet: string, chainId?: number): Promise<any[]> {
+    const lowerWallet = wallet.toLowerCase()
+    const filters: any[] = [
+      {
+        nested: {
+          path: 'users',
+          query: { term: { 'users.wallet': lowerWallet } }
+        }
+      }
+    ]
+    if (chainId !== undefined) {
+      filters.push({ term: { chainId } })
+    }
+    try {
+      const result = await this.client.search({
+        index: this.index,
+        size: 250,
+        body: {
+          query: { bool: { must: filters } }
+        }
+      } as any)
+      return result.hits.hits.map((h: any) => h._source)
+    } catch (error) {
+      const errorMsg = `Error when searching access lists by wallet ${lowerWallet}: ${error.message}`
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return []
+    }
+  }
+
+  async delete(chainId: number, contractAddress: string) {
+    const id = this.docId(chainId, contractAddress)
+    try {
+      await this.client.delete({
+        index: this.index,
+        id,
+        refresh: 'wait_for'
+      })
+      return { id }
+    } catch (error) {
+      const errorMsg = `Error when deleting access list ${id}: ${error.message}`
+      DATABASE_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return null
     }
   }
 }

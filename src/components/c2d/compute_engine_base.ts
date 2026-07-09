@@ -5,7 +5,6 @@ import type {
   ComputeAlgorithm,
   ComputeAsset,
   ComputeJob,
-  ComputeOutput,
   ComputeResourceRequest,
   ComputeResourceRequestWithPrice,
   ComputeResourceType,
@@ -21,7 +20,11 @@ import { C2DClusterType } from '../../@types/C2D/C2D.js'
 import { C2DDatabase } from '../database/C2DDatabase.js'
 import { Escrow } from '../core/utils/escrow.js'
 import { KeyManager } from '../KeyManager/index.js'
-import { dockerRegistryAuth, dockerRegistrysAuth } from '../../@types/OceanNode.js'
+import {
+  dockerRegistryAuth,
+  dockerRegistrysAuth,
+  OceanNodeConfig
+} from '../../@types/OceanNode.js'
 import { ValidateParams } from '../httpRoutes/validateCommands.js'
 import { EncryptMethod } from '../../@types/fileObject.js'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
@@ -32,19 +35,21 @@ export abstract class C2DEngine {
   public escrow: Escrow
   public keyManager: KeyManager
   public dockerRegistryAuths: dockerRegistrysAuth
+  public config: OceanNodeConfig
 
   public constructor(
     cluster: C2DClusterInfo,
     db: C2DDatabase,
     escrow: Escrow,
     keyManager: KeyManager,
-    dockerRegistryAuths: dockerRegistrysAuth
+    config: OceanNodeConfig
   ) {
     this.clusterConfig = cluster
     this.db = db
     this.escrow = escrow
     this.keyManager = keyManager
-    this.dockerRegistryAuths = dockerRegistryAuths
+    this.config = config
+    this.dockerRegistryAuths = config?.dockerRegistrysAuth
   }
 
   getKeyManager(): KeyManager {
@@ -84,7 +89,7 @@ export abstract class C2DEngine {
   public abstract startComputeJob(
     assets: ComputeAsset[],
     algorithm: ComputeAlgorithm,
-    output: ComputeOutput,
+    output: string,
     environment: string,
     owner: string,
     maxJobDuration: number,
@@ -94,7 +99,8 @@ export abstract class C2DEngine {
     metadata?: DBComputeJobMetadata,
     additionalViewers?: string[],
     queueMaxWaitTime?: number,
-    encryptedDockerRegistryAuth?: string
+    encryptedDockerRegistryAuth?: string,
+    outputBucketId?: string
   ): Promise<ComputeJob[]>
 
   public abstract stopComputeJob(
@@ -112,7 +118,8 @@ export abstract class C2DEngine {
   public abstract getComputeJobResult(
     consumerAddress: string,
     jobId: string,
-    index: number
+    index: number,
+    offset?: number
   ): Promise<{ stream: Readable; headers: any }>
 
   public abstract cleanupExpiredStorage(job: DBComputeJob): Promise<boolean>
@@ -248,7 +255,63 @@ export abstract class C2DEngine {
       properResources.push({ id: device, amount: desired })
     }
 
+    this.checkResourceConstraints(properResources, env, isFree)
     return properResources
+  }
+
+  protected checkResourceConstraints(
+    resources: ComputeResourceRequest[],
+    env: ComputeEnvironment,
+    isFree: boolean
+  ): void {
+    const envResources = isFree ? (env.free?.resources ?? []) : (env.resources ?? [])
+    for (const envResource of envResources) {
+      if (!envResource.constraints || envResource.constraints.length === 0) continue
+      const parentAmount = this.getResourceRequest(resources, envResource.id)
+      if (!parentAmount || parentAmount <= 0) continue
+
+      for (const constraint of envResource.constraints) {
+        let constrainedAmount = this.getResourceRequest(resources, constraint.id) ?? 0
+
+        if (constraint.min !== undefined) {
+          const requiredMin = parentAmount * constraint.min
+          if (constrainedAmount < requiredMin) {
+            const constrainedMaxMin = this.getMaxMinResource(constraint.id, env, isFree)
+            if (requiredMin > constrainedMaxMin.max) {
+              throw new Error(
+                `Cannot satisfy constraint: ${parentAmount} ${envResource.id} requires at least ${requiredMin} ${constraint.id}, but max is ${constrainedMaxMin.max}`
+              )
+            }
+            this.setResourceAmount(resources, constraint.id, requiredMin)
+            constrainedAmount = requiredMin
+          }
+        }
+
+        if (constraint.max !== undefined) {
+          const requiredMax = parentAmount * constraint.max
+          // re-read in case it was bumped above
+          constrainedAmount = this.getResourceRequest(resources, constraint.id) ?? 0
+          if (constrainedAmount > requiredMax) {
+            throw new Error(
+              `Too much ${constraint.id} for ${parentAmount} ${envResource.id}. Max allowed: ${requiredMax}, requested: ${constrainedAmount}`
+            )
+          }
+        }
+      }
+    }
+  }
+
+  protected setResourceAmount(
+    resources: ComputeResourceRequest[],
+    id: ComputeResourceType,
+    amount: number
+  ): void {
+    for (const resource of resources) {
+      if (resource.id === id) {
+        resource.amount = amount
+        return
+      }
+    }
   }
 
   public async getUsedResources(env: ComputeEnvironment): Promise<any> {
@@ -260,6 +323,9 @@ export abstract class C2DEngine {
     } catch (e) {
       CORE_LOGGER.error('Failed to get running jobs:' + e.message)
     }
+
+    const envResourceMap = new Map((env.resources || []).map((r) => [r.id, r]))
+
     let totalJobs = 0
     let totalFreeJobs = 0
     let queuedJobs = 0
@@ -268,33 +334,46 @@ export abstract class C2DEngine {
     let maxWaitTimeFree = 0
     let maxRunningTime = 0
     let maxRunningTimeFree = 0
+
     for (const job of jobs) {
-      if (job.environment === env.id) {
-        if (job.queueMaxWaitTime === 0) {
-          const timeElapsed =
-            new Date().getTime() / 1000 - Number.parseFloat(job?.algoStartTimestamp)
+      const isThisEnv = job.environment === env.id
+      const isRunning = job.queueMaxWaitTime === 0
+
+      if (isThisEnv) {
+        if (isRunning) {
+          const timeElapsed = job.buildStartTimestamp
+            ? new Date().getTime() / 1000 - Number.parseFloat(job?.buildStartTimestamp)
+            : new Date().getTime() / 1000 - Number.parseFloat(job?.algoStartTimestamp)
           totalJobs++
           maxRunningTime += job.maxJobDuration - timeElapsed
           if (job.isFree) {
             totalFreeJobs++
             maxRunningTimeFree += job.maxJobDuration - timeElapsed
           }
+        } else {
+          queuedJobs++
+          maxWaitTime += job.maxJobDuration
+          if (job.isFree) {
+            queuedFreeJobs++
+            maxWaitTimeFree += job.maxJobDuration
+          }
+        }
+      }
 
-          for (const resource of job.resources) {
+      if (isRunning) {
+        for (const resource of job.resources) {
+          const envRes = envResourceMap.get(resource.id)
+          if (envRes) {
+            // GPUs are shared-exclusive: inUse tracked globally across all envs
+            // Everything else (cpu, ram, disk) is per-env exclusive
+            const isSharedExclusive = envRes.type === 'gpu'
+            if (!isSharedExclusive && !isThisEnv) continue
             if (!(resource.id in usedResources)) usedResources[resource.id] = 0
             usedResources[resource.id] += resource.amount
             if (job.isFree) {
               if (!(resource.id in usedFreeResources)) usedFreeResources[resource.id] = 0
               usedFreeResources[resource.id] += resource.amount
             }
-          }
-        } else {
-          // queued job
-          queuedJobs++
-          maxWaitTime += job.maxJobDuration
-          if (job.isFree) {
-            queuedFreeJobs++
-            maxWaitTimeFree += job.maxJobDuration
           }
         }
       }
@@ -313,12 +392,41 @@ export abstract class C2DEngine {
     }
   }
 
+  protected physicalLimits: Map<string, number> = new Map()
+
+  private checkGlobalResourceAvailability(
+    allEnvironments: ComputeEnvironment[],
+    resourceId: string,
+    amount: number
+  ) {
+    let globalUsed = 0
+    let globalTotal = 0
+    for (const e of allEnvironments) {
+      const res = this.getResource(e.resources, resourceId)
+      if (res) {
+        globalTotal += res.total || 0
+        globalUsed += res.inUse || 0
+      }
+    }
+    const physicalLimit = this.physicalLimits.get(resourceId)
+    if (physicalLimit !== undefined && globalTotal > physicalLimit) {
+      globalTotal = physicalLimit
+    }
+    const globalRemainder = globalTotal - globalUsed
+    if (globalRemainder < amount) {
+      throw new Error(
+        `Not enough available ${resourceId} globally (remaining: ${globalRemainder}, requested: ${amount})`
+      )
+    }
+  }
+
   // overridden by each engine if required
   // eslint-disable-next-line require-await
   public async checkIfResourcesAreAvailable(
     resourcesRequest: ComputeResourceRequest[],
     env: ComputeEnvironment,
-    isFree: boolean
+    isFree: boolean,
+    allEnvironments?: ComputeEnvironment[]
   ) {
     // Filter out resources with amount 0 as they're not actually being requested
     const activeResources = resourcesRequest.filter((r) => r.amount > 0)
@@ -328,6 +436,13 @@ export abstract class C2DEngine {
       if (!envResource) throw new Error(`No such resource ${request.id}`)
       if (envResource.total - envResource.inUse < request.amount)
         throw new Error(`Not enough available ${request.id}`)
+
+      // Global check for non-GPU resources (cpu, ram, disk are per-env exclusive)
+      // GPUs are shared-exclusive so their inUse already reflects global usage
+      if (allEnvironments && envResource.type !== 'gpu') {
+        this.checkGlobalResourceAvailability(allEnvironments, request.id, request.amount)
+      }
+
       if (isFree) {
         if (!env.free) throw new Error(`No free resources`)
         envResource = this.getResource(env.free?.resources, request.id)
@@ -546,6 +661,10 @@ export abstract class C2DEngine {
       return this.dockerRegistryAuths[registry]
     }
     return null
+  }
+
+  public getConfig(): OceanNodeConfig {
+    return this.config
   }
 
   public async checkEncryptedDockerRegistryAuth(

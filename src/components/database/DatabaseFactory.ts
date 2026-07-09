@@ -1,26 +1,32 @@
 import { OceanNodeDBConfig } from '../../@types'
 import {
+  AbstractAccessListDatabase,
   AbstractDdoDatabase,
   AbstractDdoStateDatabase,
+  AbstractEscrowDatabase,
   AbstractIndexerDatabase,
   AbstractLogDatabase,
   AbstractOrderDatabase
 } from './BaseDatabase.js'
 import {
+  ElasticsearchAccessListDatabase,
   ElasticsearchDdoDatabase,
   ElasticsearchDdoStateDatabase,
+  ElasticsearchEscrowDatabase,
   ElasticsearchIndexerDatabase,
   ElasticsearchLogDatabase,
   ElasticsearchOrderDatabase
 } from './ElasticSearchDatabase.js'
 import { typesenseSchemas } from './TypesenseSchemas.js'
 import {
+  TypesenseAccessListDatabase,
   TypesenseDdoDatabase,
   TypesenseDdoStateDatabase,
+  TypesenseEscrowDatabase,
   TypesenseIndexerDatabase,
   TypesenseLogDatabase,
   TypesenseOrderDatabase
-} from './TypenseDatabase.js'
+} from './TypesenseDatabase.js'
 import { elasticSchemas } from './ElasticSchemas.js'
 import { IDdoStateQuery } from '../../@types/DDO/IDdoStateQuery.js'
 import { TypesenseDdoStateQuery } from './TypesenseDdoStateQuery.js'
@@ -45,7 +51,11 @@ export class DatabaseFactory {
         new ElasticsearchOrderDatabase(config, elasticSchemas.orderSchema),
       ddoState: (config: OceanNodeDBConfig) => new ElasticsearchDdoStateDatabase(config),
       ddoStateQuery: () => new ElasticSearchDdoStateQuery(),
-      metadataQuery: () => new ElasticSearchMetadataQuery()
+      metadataQuery: () => new ElasticSearchMetadataQuery(),
+      accessList: (config: OceanNodeDBConfig) =>
+        new ElasticsearchAccessListDatabase(config),
+      escrow: (config: OceanNodeDBConfig) =>
+        new ElasticsearchEscrowDatabase(config, elasticSchemas.escrowSchema)
     },
     typesense: {
       ddo: (config: OceanNodeDBConfig) =>
@@ -59,7 +69,11 @@ export class DatabaseFactory {
       ddoState: (config: OceanNodeDBConfig) =>
         new TypesenseDdoStateDatabase(config, typesenseSchemas.ddoStateSchema),
       ddoStateQuery: () => new TypesenseDdoStateQuery(),
-      metadataQuery: () => new TypesenseMetadataQuery()
+      metadataQuery: () => new TypesenseMetadataQuery(),
+      accessList: (config: OceanNodeDBConfig) =>
+        new TypesenseAccessListDatabase(config, typesenseSchemas.accessListSchema),
+      escrow: (config: OceanNodeDBConfig) =>
+        new TypesenseEscrowDatabase(config, typesenseSchemas.escrowSchema)
     }
   }
 
@@ -128,5 +142,17 @@ export class DatabaseFactory {
 
   static async createConfigDatabase(): Promise<SQLLiteConfigDatabase> {
     return await new SQLLiteConfigDatabase()
+  }
+
+  static createAccessListDatabase(
+    config: OceanNodeDBConfig
+  ): Promise<AbstractAccessListDatabase> {
+    return this.createDatabase('accessList', config)
+  }
+
+  static createEscrowDatabase(
+    config: OceanNodeDBConfig
+  ): Promise<AbstractEscrowDatabase> {
+    return this.createDatabase('escrow', config)
   }
 }

@@ -1,3 +1,4 @@
+import { OceanNodeConfig } from '../../../@types'
 import { BaseEventProcessor } from './BaseProcessor'
 
 export * from './DispenserActivatedEventProcessor.js'
@@ -11,6 +12,13 @@ export * from './MetadataEventProcessor.js'
 export * from './MetadataStateEventProcessor.js'
 export * from './OrderReusedEventProcessor.js'
 export * from './OrderStartedEventProcessor.js'
+export * from './NewAccessListEventProcessor.js'
+export * from './AddressAddedEventProcessor.js'
+export * from './AddressRemovedEventProcessor.js'
+export * from './EscrowEventProcessor.js'
 export * from './BaseProcessor.js'
 
-export type ProcessorConstructor = new (chainId: number) => BaseEventProcessor
+export type ProcessorConstructor = new (
+  chainId: number,
+  config: OceanNodeConfig
+) => BaseEventProcessor

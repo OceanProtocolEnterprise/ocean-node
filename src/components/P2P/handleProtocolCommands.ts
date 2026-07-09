@@ -7,11 +7,11 @@ import { Command } from '../../@types/commands.js'
 import { P2PCommandResponse } from '../../@types/OceanNode'
 import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 import { BaseHandler } from '../core/handler/handler.js'
-import { getConfiguration } from '../../utils/index.js'
 import {
   checkGlobalConnectionsRateLimit,
   checkRequestsRateLimit
 } from '../../utils/validators.js'
+import { lpStream } from '@libp2p/utils'
 import type { Connection, Stream } from '@libp2p/interface'
 
 export class ReadableString extends Readable {
@@ -40,29 +40,55 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
   P2P_LOGGER.logMessage('Incoming connection from peer ' + remotePeer, true)
   P2P_LOGGER.logMessage('Using ' + remoteAddr, true)
 
-  const sendErrorAndClose = async (httpStatus: number, error: string) => {
+  stream.resume()
+  const lp = lpStream(stream)
+  const handshakeSignal = () => AbortSignal.timeout(30_000)
+  const dataWriteSignal = () => AbortSignal.timeout(30 * 60_000)
+
+  const sendErrorAndClose = async (
+    httpStatus: number,
+    error: string,
+    errorDebug?: Record<string, unknown>
+  ) => {
     try {
-      // Check if stream is already closed
       if (stream.status === 'closed' || stream.status === 'closing') {
         P2P_LOGGER.warn('Stream already closed, cannot send error response')
         return
       }
-
-      // Resume stream in case it's paused - we need to write
-      stream.resume()
-      const status = { httpStatus, error }
-      stream.send(uint8ArrayFromString(JSON.stringify(status)))
+      const status = errorDebug
+        ? { httpStatus, error, errorDebug }
+        : { httpStatus, error }
+      await lp.write(uint8ArrayFromString(JSON.stringify(status)), {
+        signal: handshakeSignal()
+      })
       await stream.close()
     } catch (e) {
-      P2P_LOGGER.error(`Error sending error response: ${e.message}`)
+      const msg = e instanceof Error ? e.message : e != null ? String(e) : 'Unknown error'
+      P2P_LOGGER.error(`Error sending error response: ${msg}`)
       try {
         stream.abort(e as Error)
       } catch {}
     }
   }
 
-  // Rate limiting and deny list checks
-  const configuration = await getConfiguration()
+  // Read the command first so the client always gets a response after writing.
+  // Rate limiting checks happen after reading to maintain the write→read protocol order.
+  let task: Command
+  try {
+    const cmdBytes = await lp.read({ signal: handshakeSignal() })
+    const str = uint8ArrayToString(cmdBytes.subarray())
+    task = JSON.parse(str) as Command
+  } catch (err) {
+    P2P_LOGGER.log(
+      LOG_LEVELS_STR.LEVEL_ERROR,
+      `Unable to process P2P command: ${err?.message ?? err}`
+    )
+    await sendErrorAndClose(400, 'Invalid command')
+    return
+  }
+
+  // Rate limiting and deny list checks (after reading command)
+  const configuration = this.getConfig()
   const { denyList } = configuration
 
   if (denyList.peers.includes(remotePeer.toString())) {
@@ -90,37 +116,45 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
     return
   }
 
-  // Resume the stream. We can now write.
-  stream.resume()
-
-  // v3 streams are AsyncIterable
-  let task: Command
-  try {
-    for await (const chunk of stream) {
-      try {
-        const str = uint8ArrayToString(chunk.subarray())
-        task = JSON.parse(str) as Command
-      } catch (e) {
-        await sendErrorAndClose(400, 'Invalid command')
-        return
-      }
-    }
-  } catch (err) {
-    P2P_LOGGER.log(
-      LOG_LEVELS_STR.LEVEL_ERROR,
-      `Unable to process P2P command: ${err.message}`
-    )
-    await sendErrorAndClose(400, 'Invalid command')
-    return
-  }
-
   if (!task) {
     P2P_LOGGER.error('Invalid or missing task/command data!')
     await sendErrorAndClose(400, 'Invalid command')
     return
   }
 
-  P2P_LOGGER.logMessage('Performing P2P task: ' + JSON.stringify(task), true)
+  const taskRecord = task as unknown as Record<string, unknown>
+  if (taskRecord.p2pStreamBody === true) {
+    delete taskRecord.p2pStreamBody
+
+    // True streaming: expose an async Readable that reads LP frames lazily
+    // as the handler consumes it. Frames are terminated by an empty chunk.
+    taskRecord.stream = Readable.from(
+      (async function* () {
+        while (true) {
+          const frame = await lp.read({ signal: handshakeSignal() })
+          const buf = Buffer.from(
+            (frame as unknown as { subarray: () => Uint8Array }).subarray()
+          )
+
+          if (buf.length === 0) {
+            break
+          }
+
+          yield buf
+        }
+      })()
+    )
+  }
+
+  const logPayload = { ...taskRecord }
+  // Avoid JSON-stringifying the request stream itself.
+  if (logPayload.stream) {
+    logPayload.stream = '[request stream]'
+  }
+  if (Buffer.isBuffer(logPayload.rawData)) {
+    logPayload.rawData = `[${logPayload.rawData.length} bytes]`
+  }
+  P2P_LOGGER.logMessage('Performing P2P task: ' + JSON.stringify(logPayload), true)
 
   // Get and execute handler
   const handler: BaseHandler = this.getCoreHandlers().getHandler(task.command)
@@ -133,31 +167,31 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
     task.caller = remotePeer.toString()
     const response: P2PCommandResponse = await handler.handle(task)
 
-    // Send status first
-    stream.send(uint8ArrayFromString(JSON.stringify(response.status)))
+    // Send status first (length-prefixed)
+    await lp.write(uint8ArrayFromString(JSON.stringify(response.status)), {
+      signal: handshakeSignal()
+    })
 
-    // Stream data chunks without buffering, with backpressure support
+    // Stream data chunks as length-prefixed messages
     if (response.stream) {
       for await (const chunk of response.stream as Readable) {
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-
-        // Handle backpressure - if send returns false, wait for drain
-        if (!stream.send(bytes)) {
-          await stream.onDrain({
-            signal: AbortSignal.timeout(30000) // 30 second timeout for drain
-          })
-        }
+        await lp.write(bytes, { signal: dataWriteSignal() })
       }
     }
 
     await stream.close()
   } catch (err) {
     P2P_LOGGER.logMessageWithEmoji(
-      'handleProtocolCommands Error: ' + err.message,
+      'handleProtocolCommands Error: ' +
+        (err instanceof Error ? err.message : String(err)),
       true,
       GENERIC_EMOJIS.EMOJI_CROSS_MARK,
       LOG_LEVELS_STR.LEVEL_ERROR
     )
-    await sendErrorAndClose(500, err.message)
+    const httpStatus =
+      typeof (err as any)?.status === 'number' ? (err as any).status : 500
+    const msg = err instanceof Error ? err.message : String(err)
+    await sendErrorAndClose(httpStatus, msg)
   }
 }

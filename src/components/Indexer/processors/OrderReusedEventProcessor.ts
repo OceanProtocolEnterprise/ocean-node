@@ -1,7 +1,6 @@
 import { DDOManager } from '@oceanprotocol/ddo-js'
 import { ethers, Signer, FallbackProvider } from 'ethers'
 import { EVENTS } from '../../../utils/constants.js'
-import { getDatabase } from '../../../utils/database.js'
 import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import {
@@ -36,7 +35,7 @@ export class OrderReusedEventProcessor extends BaseEventProcessor {
     const nftAddress = await datatokenContract.getERC721Address()
     const did = getDid(nftAddress, chainId)
     try {
-      const { ddo: ddoDatabase, order: orderDatabase } = await getDatabase()
+      const { ddo: ddoDatabase, order: orderDatabase } = await this.getDatabase()
       const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
       if (!ddo) {
         INDEXER_LOGGER.logMessage(
@@ -44,7 +43,15 @@ export class OrderReusedEventProcessor extends BaseEventProcessor {
         )
         return
       }
+      const existingOrder = await orderDatabase.retrieve(event.transactionHash)
+      if (existingOrder) {
+        INDEXER_LOGGER.logMessage(
+          `OrderReused already processed for tx ${event.transactionHash}, skipping duplicate`
+        )
+        return ddo
+      }
       const ddoInstance = DDOManager.getDDOClass(ddo)
+      const storedDid = ddoInstance.getDid()
       if (!ddoInstance.getAssetFields().indexedMetadata) {
         ddoInstance.updateFields({ indexedMetadata: {} })
       }
@@ -102,7 +109,7 @@ export class OrderReusedEventProcessor extends BaseEventProcessor {
           payer,
           event.address,
           nftAddress,
-          did,
+          storedDid,
           startOrderId
         )
       } catch (error) {

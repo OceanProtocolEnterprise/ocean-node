@@ -6,6 +6,7 @@ import {
 } from '../../@types/C2D/C2D.js'
 import sqlite3, { RunResult } from 'sqlite3'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
+import { create256Hash } from '../../utils/crypt.js'
 
 interface ComputeDatabaseProvider {
   newJob(job: DBComputeJob): Promise<string>
@@ -45,7 +46,12 @@ function getInternalStructure(job: DBComputeJob): any {
     terminationDetails: job.terminationDetails,
     payment: job.payment,
     algoDuration: job.algoDuration,
-    queueMaxWaitTime: job.queueMaxWaitTime
+    queueMaxWaitTime: job.queueMaxWaitTime,
+    output: job.output,
+    outputBucketId: job.outputBucketId,
+    jobIdHash: job.jobIdHash,
+    buildStartTimestamp: job.buildStartTimestamp,
+    buildStopTimestamp: job.buildStopTimestamp
   }
   return internalBlob
 }
@@ -438,11 +444,12 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
     })
   }
 
-  getJobs(
+  async getJobs(
     environments?: string[],
     fromTimestamp?: string,
     consumerAddrs?: string[],
-    status?: C2DStatusNumber
+    status?: C2DStatusNumber,
+    runningJobs?: boolean
   ): Promise<DBComputeJob[]> {
     let selectSQL = `SELECT * FROM ${this.schema.name}`
 
@@ -455,20 +462,57 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
       params.push(...environments)
     }
 
-    if (fromTimestamp) {
-      conditions.push(`dateFinished >= ?`)
-      params.push(fromTimestamp)
+    if (runningJobs) {
+      conditions.push(`status = ?`)
+      params.push(C2DStatusNumber.RunningAlgorithm.toString())
+      if (fromTimestamp) {
+        conditions.push(`dateCreated >= ?`)
+        params.push(fromTimestamp)
+      }
+    } else {
+      if (fromTimestamp) {
+        conditions.push(`dateFinished >= ?`)
+        params.push(fromTimestamp)
+      }
+      if (status) {
+        conditions.push(`status = ?`)
+        params.push(status.toString())
+      }
     }
 
     if (consumerAddrs && consumerAddrs.length > 0) {
       const placeholders = consumerAddrs.map(() => '?').join(',')
-      conditions.push(`owner NOT IN (${placeholders})`)
+      conditions.push(`owner IN (${placeholders})`)
       params.push(...consumerAddrs)
     }
 
-    if (status) {
-      conditions.push(`status = ?`)
-      params.push(status.toString())
+    if (conditions.length > 0) {
+      selectSQL += ` WHERE ${conditions.join(' AND ')}`
+    }
+    selectSQL += ` ORDER BY dateCreated DESC`
+    return await this.doQuery(selectSQL, params, environments)
+  }
+
+  async getJobsByStatus(
+    environments: string[],
+    status: C2DStatusNumber[]
+  ): Promise<DBComputeJob[]> {
+    let selectSQL = `SELECT * FROM ${this.schema.name}`
+
+    // sqlite3 bindings accept both strings and numbers; `status` is a numeric enum.
+    const params: Array<string | number> = []
+    const conditions: string[] = []
+
+    if (environments && environments.length > 0) {
+      const placeholders = environments.map(() => '?').join(',')
+      conditions.push(`environment IN (${placeholders})`)
+      params.push(...environments)
+    }
+
+    if (status && status.length > 0) {
+      const placeholders = status.map(() => '?').join(',')
+      conditions.push(`status IN (${placeholders})`)
+      params.push(...status)
     }
 
     if (conditions.length > 0) {
@@ -476,6 +520,14 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
     }
     selectSQL += ` ORDER BY dateCreated DESC`
 
+    return await this.doQuery(selectSQL, params, environments)
+  }
+
+  private doQuery(
+    selectSQL: string,
+    params: Array<string | number>,
+    environments: string[]
+  ) {
     return new Promise<DBComputeJob[]>((resolve, reject) => {
       this.db.all(selectSQL, params, (err, rows: any[] | undefined) => {
         if (err) {
@@ -491,6 +543,9 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
               const maxJobDuration = row.expireTimestamp
               delete row.expireTimestamp
               const job: DBComputeJob = { ...row, ...body, maxJobDuration }
+              if (!job.jobIdHash && job.jobId) {
+                job.jobIdHash = create256Hash(job.jobId)
+              }
               return job
             })
             resolve(all)

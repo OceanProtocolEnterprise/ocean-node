@@ -12,7 +12,7 @@ import {
   isDataTokenTemplate4,
   isERC20Template4Active
 } from '../../../utils/asset.js'
-import { verifyProviderFees, createProviderFee } from '../utils/feesHandler.js'
+import { ProviderFees } from '../utils/feesHandler.js'
 
 import { validateOrderTransaction } from '../utils/validateOrders.js'
 import { EncryptMethod } from '../../../@types/fileObject.js'
@@ -23,17 +23,26 @@ import {
   validateCommandParameters
 } from '../../httpRoutes/validateCommands.js'
 import { isAddress } from 'ethers'
-import { getConfiguration, isPolicyServerConfigured } from '../../../utils/index.js'
+import { isPolicyServerConfigured } from '../../../utils/index.js'
 import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { FindDdoHandler } from '../handler/ddoHandler.js'
 import { isOrderingAllowedForAsset } from '../handler/downloadHandler.js'
 import { getNonceAsNumber } from '../utils/nonceHandler.js'
-import { getAlgorithmImage } from '../../c2d/compute_engine_docker.js'
+import {
+  getAlgorithmImage,
+  resolveComputeFileObject
+} from '../../c2d/compute_engine_docker.js'
 
 import { Credentials, DDOManager } from '@oceanprotocol/ddo-js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { PolicyServer } from '../../policyServer/index.js'
-import { generateUniqueID, getAlgoChecksums, validateAlgoForDataset } from './utils.js'
+import {
+  generateUniqueID,
+  getAlgoChecksums,
+  validateAlgoForDataset,
+  validateOutput
+} from './utils.js'
+import { ensureConsumerAllowedForPersistentStorageLocalfsFileObject } from '../../persistentStorage/PersistentStorageFactory.js'
 
 export class ComputeInitializeHandler extends CommandHandler {
   validate(command: ComputeInitializeCommand): ValidateParams {
@@ -77,7 +86,7 @@ export class ComputeInitializeHandler extends CommandHandler {
     let resourcesNeeded
     try {
       const node = this.getOceanNode()
-      const config = await getConfiguration()
+      const config = node.getConfig()
       try {
         // split compute env (which is already in hash-envId format) and get the hash
         // then get env which might contain dashes as well
@@ -98,7 +107,8 @@ export class ComputeInitializeHandler extends CommandHandler {
         task.algorithm.documentId,
         task.algorithm.serviceId,
         node,
-        config
+        config,
+        task.consumerAddress
       )
 
       const isRawCodeAlgorithm = task.algorithm.meta?.rawcode
@@ -207,7 +217,28 @@ export class ComputeInitializeHandler extends CommandHandler {
           )
         }
       }
-
+      const isValidOutput = await validateOutput(
+        node,
+        task.output,
+        this.getOceanNode().getConfig()
+      )
+      if (isValidOutput.status.httpStatus !== 200) {
+        return isValidOutput
+      }
+      for (const elem of [task.algorithm, ...task.datasets]) {
+        // resolve encrypted / documentId+serviceId references so persistent-storage ACL
+        // is validated here too (not only plaintext file objects)
+        const resolvedFileObject =
+          (await resolveComputeFileObject(elem)) ?? elem.fileObject
+        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
+          node,
+          task.consumerAddress,
+          resolvedFileObject
+        )
+        if (psAccess) {
+          return psAccess
+        }
+      }
       // check algo
       let index = 0
       const policyServer = new PolicyServer()
@@ -234,10 +265,6 @@ export class ComputeInitializeHandler extends CommandHandler {
             credentials,
             metadata
           } = ddoInstance.getDDOFields()
-          CORE_LOGGER.logMessage(
-            `InitializeCompute: evaluating access for did=${ddoInstance.getDid()} serviceId=${elem.serviceId} metadataType=${metadata?.type} consumerAddress=${task.consumerAddress}`,
-            true
-          )
           const isOrdable = isOrderingAllowedForAsset(ddo)
           if (!isOrdable.isOrdable) {
             CORE_LOGGER.error(isOrdable.reason)
@@ -273,9 +300,10 @@ export class ComputeInitializeHandler extends CommandHandler {
               }
             }
           }
-          const config = await getConfiguration()
-          const { chainId } = config.supportedNetworks[ddoChainId]
           const oceanNode = this.getOceanNode()
+          const config = oceanNode.getConfig()
+          const { chainId } = config.supportedNetworks[ddoChainId]
+
           const blockchain = oceanNode.getBlockchain(chainId)
           if (!blockchain) {
             return {
@@ -299,10 +327,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           // check credentials (DDO level)
           let accessGrantedDDOLevel: boolean
           if (credentials) {
-            CORE_LOGGER.logMessage(
-              `InitializeCompute: DDO-level credentials found for did=${ddoInstance.getDid()} policyServerConfigured=${isPolicyServerConfigured()}`,
-              true
-            )
             // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
             // It will just use the existing code and let PolicyServer decide.
             if (isPolicyServerConfigured()) {
@@ -313,20 +337,12 @@ export class ComputeInitializeHandler extends CommandHandler {
                 task.consumerAddress,
                 task.policyServer
               )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: policy server DDO-level decision for did=${ddoInstance.getDid()} serviceId=${elem.serviceId} success=${response.success} httpStatus=${response.httpStatus} message=${response.message}`,
-                true
-              )
               accessGrantedDDOLevel = response.success
             } else {
               accessGrantedDDOLevel = await checkCredentials(
                 task.consumerAddress,
                 credentials as Credentials,
                 await blockchain.getSigner()
-              )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: local DDO-level credentials decision for did=${ddoInstance.getDid()} serviceId=${elem.serviceId} success=${accessGrantedDDOLevel}`,
-                true
               )
             }
             if (!accessGrantedDDOLevel) {
@@ -357,10 +373,6 @@ export class ComputeInitializeHandler extends CommandHandler {
           // check credentials on service level
           // if using a policy server and we are here it means that access was granted (they are merged/assessed together)
           if (service.credentials) {
-            CORE_LOGGER.logMessage(
-              `InitializeCompute: service-level credentials found for did=${ddoInstance.getDid()} serviceId=${service.id} policyServerConfigured=${isPolicyServerConfigured()}`,
-              true
-            )
             let accessGrantedServiceLevel: boolean
             if (isPolicyServerConfigured()) {
               // we use the previous check or we do it again
@@ -372,20 +384,12 @@ export class ComputeInitializeHandler extends CommandHandler {
                 task.consumerAddress,
                 task.policyServer
               )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: policy server service-level decision for did=${ddoInstance.getDid()} serviceId=${service.id} success=${response.success} httpStatus=${response.httpStatus} message=${response.message}`,
-                true
-              )
               accessGrantedServiceLevel = accessGrantedDDOLevel || response.success
             } else {
               accessGrantedServiceLevel = await checkCredentials(
                 task.consumerAddress,
                 service.credentials,
                 await blockchain.getSigner()
-              )
-              CORE_LOGGER.logMessage(
-                `InitializeCompute: local service-level credentials decision for did=${ddoInstance.getDid()} serviceId=${service.id} success=${accessGrantedServiceLevel}`,
-                true
               )
             }
 
@@ -527,6 +531,7 @@ export class ComputeInitializeHandler extends CommandHandler {
             message: false
           }
           result.consumerAddress = env.consumerAddress
+          const fees = new ProviderFees(node)
           if ('transferTxId' in elem && elem.transferTxId) {
             // search for that compute env and see if it has access to dataset
             const paymentValidation = await validateOrderTransaction(
@@ -542,7 +547,7 @@ export class ComputeInitializeHandler extends CommandHandler {
             if (paymentValidation.isValid === true) {
               // order is valid, so let's check providerFees
               result.validOrder = elem.transferTxId
-              validFee = await verifyProviderFees(
+              validFee = await fees.verifyProviderFees(
                 elem.transferTxId,
                 task.consumerAddress,
                 provider,
@@ -555,7 +560,11 @@ export class ComputeInitializeHandler extends CommandHandler {
           }
           if (validFee.isValid === false) {
             if (canDecrypt) {
-              result.providerFee = await createProviderFee(ddo, service, service.timeout)
+              result.providerFee = await fees.createProviderFee(
+                ddo,
+                service,
+                service.timeout
+              )
             } else {
               // TO DO:  Edge case when this asset is served by a remote provider.
               // We should connect to that provider and get the fee

@@ -7,13 +7,12 @@ import {
   StorageTypes,
   OceanNodeConfig
 } from '../../../@types/OceanNode.js'
-import { getConfiguration } from '../../../utils/index.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { OceanNode } from '../../../OceanNode.js'
 import { typesenseSchemas } from '../../database/TypesenseSchemas.js'
 import { SupportedNetwork } from '../../../@types/blockchain.js'
-import { getAdminAddresses } from '../../../utils/auth.js'
 import HumanHasher from 'humanhash'
+import { getPackageVersion } from '../../../utils/version.js'
 
 function getSupportedStorageTypes(config: OceanNodeConfig): StorageTypes {
   return {
@@ -75,7 +74,7 @@ async function getIndexerBlockInfo(
 ): Promise<string> {
   let blockNr = '0'
   try {
-    const database = oceanNode.getDatabase()
+    const database = await oceanNode.getDatabase()
     if (!database || !database.indexer) {
       CORE_LOGGER.log(
         LOG_LEVELS_STR.LEVEL_WARN,
@@ -111,7 +110,7 @@ export async function status(
     )
     return
   }
-  const config = await getConfiguration()
+  const config = oceanNode.getConfig()
 
   // no previous status?
   if (!nodeStatus) {
@@ -126,7 +125,7 @@ export async function status(
       publicKey: publicKeyHex,
       friendlyName: new HumanHasher().humanize(publicKeyHex),
       address: oceanNode.getKeyManager().getEthAddress(),
-      version: process.env.npm_package_version,
+      version: getPackageVersion(),
       http: config.hasHttp,
       p2p: config.hasP2P,
       provider: [],
@@ -136,7 +135,7 @@ export async function status(
       // uptime: process.uptime(),
       platform: platformInfo,
       codeHash: config.codeHash,
-      allowedAdmins: await getAdminAddresses()
+      allowedAdmins: oceanNode.getAdminAddresses()
     }
   }
   // need to update at least block info if available
@@ -171,6 +170,15 @@ export async function status(
       CORE_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error getting c2d clusters: ${error}`)
     }
     nodeStatus.supportedSchemas = typesenseSchemas.ddoSchemas
+  } else {
+    delete nodeStatus.c2dClusters
+    delete nodeStatus.supportedSchemas
+  }
+
+  if (config.persistentStorage) {
+    nodeStatus.persistentStorage = {}
+    if (config.persistentStorage.accessLists)
+      nodeStatus.persistentStorage.accessLists = config.persistentStorage.accessLists
   }
   return nodeStatus
 }

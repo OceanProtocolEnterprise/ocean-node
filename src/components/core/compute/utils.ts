@@ -1,19 +1,20 @@
 import { OceanNode } from '../../../OceanNode.js'
-import { AlgoChecksums } from '../../../@types/C2D/C2D.js'
+import { AlgoChecksums, ComputeOutput } from '../../../@types/C2D/C2D.js'
 import { OceanNodeConfig } from '../../../@types/OceanNode.js'
 import {
-  ArweaveFileObject,
-  IpfsFileObject,
-  UrlFileObject
+  StorageObject,
+  EncryptMethod,
+  isPersistentStorageType
 } from '../../../@types/fileObject.js'
 import { getFile } from '../../../utils/file.js'
-import urlJoin from 'url-join'
-import { fetchFileMetadata } from '../../../utils/asset.js'
+import { Storage } from '../../storage/index.js'
 
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { createHash } from 'crypto'
 import { FindDdoHandler } from '../../core/handler/ddoHandler.js'
 import { DDOManager, VersionedDDO } from '@oceanprotocol/ddo-js'
+
+import { P2PCommandResponse } from '../../../@types/index.js'
 
 export function generateUniqueID(jobStructure: any): string {
   const timestamp =
@@ -26,15 +27,20 @@ export function generateUniqueID(jobStructure: any): string {
 }
 
 export async function getAlgoChecksums(
-  algoDID: string,
-  algoServiceId: string,
+  algoDID: string | undefined,
+  algoServiceId: string | undefined,
   oceanNode: OceanNode,
-  config: OceanNodeConfig
+  config: OceanNodeConfig,
+  consumerAddress?: string
 ): Promise<AlgoChecksums> {
   const checksums: AlgoChecksums = {
     files: '',
     container: '',
     serviceId: algoServiceId
+  }
+  // Raw-code algorithms have no DDO to resolve - skip the lookup (no error logs, no DB hit)
+  if (!algoDID) {
+    return checksums
   }
   try {
     const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
@@ -44,18 +50,23 @@ export async function getAlgoChecksums(
     }
     const fileArray = await getFile(algoDDO, algoServiceId, oceanNode)
     for (const file of fileArray) {
-      const url =
-        file.type === 'url'
-          ? (file as UrlFileObject).url
-          : file.type === 'arweave'
-            ? urlJoin(config.arweaveGateway, (file as ArweaveFileObject).transactionId)
-            : file.type === 'ipfs'
-              ? urlJoin(config.ipfsGateway, (file as IpfsFileObject).hash)
-              : null
-      const headers = file.type === 'url' ? (file as UrlFileObject).headers : undefined
-
-      const { contentChecksum } = await fetchFileMetadata(url, 'get', false, headers)
-      checksums.files = checksums.files.concat(contentChecksum)
+      // persistent storage checksums require a consumerAddress (ACL); guard so a
+      // missing consumer errors instead of silently producing an empty checksum
+      if (isPersistentStorageType((file as any)?.type) && !consumerAddress) {
+        throw new Error(
+          'Unable to compute checksum for persistent storage algorithm file: missing consumerAddress'
+        )
+      }
+      const storage = Storage.getStorageClass(
+        file as StorageObject,
+        config,
+        consumerAddress
+      )
+      const fileInfo = await storage.fetchSpecificFileMetadata(
+        file as StorageObject,
+        true // force checksum
+      )
+      checksums.files = checksums.files.concat(fileInfo.checksum)
     }
 
     const ddoInstance = DDOManager.getDDOClass(algoDDO)
@@ -151,4 +162,161 @@ export async function validateAlgoForDataset(
     CORE_LOGGER.error(error.message)
     return false
   }
+}
+
+// checks if the encrypted string sent by the user is a valid ComputeOutput object
+export async function validateOutput(
+  node: OceanNode,
+  output: string,
+  config: OceanNodeConfig
+): Promise<P2PCommandResponse> {
+  // null output is valid, because it's optional
+  if (!output) {
+    return {
+      status: {
+        httpStatus: 200,
+        error: null,
+        headers: null
+      },
+      stream: null
+    }
+  }
+
+  try {
+    const decrypted = await node
+      .getKeyManager()
+      .decrypt(Buffer.from(output, 'hex'), EncryptMethod.ECIES)
+
+    const obj = JSON.parse(decrypted.toString()) as ComputeOutput
+    const storage = Storage.getStorageClass(obj.remoteStorage, config)
+
+    const hasUploadSupport =
+      storage.hasUpload && 'upload' in storage && typeof storage.upload === 'function'
+
+    // Only validate output-encryption semantics if backend can actually upload results.
+    if (!hasUploadSupport) {
+      return {
+        status: {
+          httpStatus: 400,
+          error: `Storage class has no support for upload`,
+          headers: null
+        },
+        stream: null
+      }
+    }
+    const [isValidStorage, storageValidationError] = storage.validate()
+    if (!isValidStorage) {
+      return {
+        status: {
+          httpStatus: 400,
+          error: storageValidationError || 'Invalid remote storage configuration',
+          headers: null
+        },
+        stream: null
+      }
+    }
+    if (obj.encryption && !obj.encryption.key) {
+      return {
+        status: {
+          httpStatus: 400,
+          error: `Encryption required, but no key`,
+          headers: null
+        },
+        stream: null
+      }
+    }
+    if (obj.encryption && obj.encryption.encryptMethod !== EncryptMethod.AES) {
+      return {
+        status: {
+          httpStatus: 400,
+          error: `Only AES encryption is supported`,
+          headers: null
+        },
+        stream: null
+      }
+    }
+    if (obj.encryption?.key) {
+      const keyBytes = Buffer.from(obj.encryption.key, 'hex')
+      if (keyBytes.length < 32) {
+        return {
+          status: {
+            httpStatus: 400,
+            error: `AES key must be at least 32 bytes (64 hex chars), got ${keyBytes.length} bytes`,
+            headers: null
+          },
+          stream: null
+        }
+      }
+    }
+
+    return {
+      status: {
+        httpStatus: 200,
+        error: null,
+        headers: null
+      },
+      stream: null
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    return {
+      status: {
+        httpStatus: 400,
+        error: `Invalid output: ${message}`,
+        headers: null
+      },
+      stream: null
+    }
+  }
+}
+
+export async function validateOutputBucket(
+  node: OceanNode,
+  outputBucketId: string,
+  output: string,
+  consumerAddress: string
+): Promise<P2PCommandResponse> {
+  const success: P2PCommandResponse = {
+    status: {
+      httpStatus: 200,
+      error: null,
+      headers: null
+    },
+    stream: null
+  }
+  const failure = (httpStatus: number, error: string): P2PCommandResponse => ({
+    status: {
+      httpStatus,
+      error,
+      headers: null
+    },
+    stream: null
+  })
+
+  if (!outputBucketId) {
+    return success
+  }
+  if (output) {
+    return failure(400, 'output and outputBucketId are mutually exclusive')
+  }
+  const persistentStorage = node.getPersistentStorage()
+  if (!persistentStorage) {
+    return failure(400, 'Persistent storage is not enabled on this node')
+  }
+  try {
+    persistentStorage.validateBucket(outputBucketId)
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    return failure(400, message)
+  }
+  try {
+    await persistentStorage.assertConsumerAllowedForBucket(
+      consumerAddress,
+      outputBucketId
+    )
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    return failure(403, message)
+  }
+  return success
 }

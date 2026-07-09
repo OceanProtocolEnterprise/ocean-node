@@ -18,7 +18,7 @@ import { KeyManager } from '../../components/KeyManager/index.js'
 import { C2DClusterInfo } from '../../@types/C2D/C2D.js'
 import Dockerode from 'dockerode'
 
-describe('Docker Image Cleanup Integration Tests', () => {
+describe('**********         Docker Image Cleanup Integration Tests', () => {
   let envOverrides: OverrideEnvConfig[]
   let config: OceanNodeConfig
   let db: C2DDatabase
@@ -33,24 +33,32 @@ describe('Docker Image Cleanup Integration Tests', () => {
         JSON.stringify([
           {
             socketPath: '/var/run/docker.sock',
-            resources: [{ id: 'disk', total: 10 }],
-            storageExpiry: 604800,
-            maxJobDuration: 3600,
-            minJobDuration: 60,
-            fees: {
-              '1': [
-                {
-                  feeToken: '0x123',
-                  prices: [{ id: 'cpu', price: 1 }]
-                }
-              ]
-            },
-            access: {
-              addresses: [],
-              accessLists: null
-            },
             imageRetentionDays: 7,
-            imageCleanupInterval: 60 // 1 minute for testing
+            imageCleanupInterval: 60, // 1 minute for testing
+            environments: [
+              {
+                storageExpiry: 604800,
+                maxJobDuration: 3600,
+                minJobDuration: 60,
+                resources: [
+                  { id: 'cpu', total: 4, max: 4, min: 1, type: 'cpu' },
+                  { id: 'ram', total: 10, max: 10, min: 1, type: 'ram' },
+                  { id: 'disk', total: 10, max: 10, min: 0, type: 'disk' }
+                ],
+                fees: {
+                  '1': [
+                    {
+                      feeToken: '0x123',
+                      prices: [{ id: 'cpu', price: 1 }]
+                    }
+                  ]
+                },
+                access: {
+                  addresses: [],
+                  accessLists: null
+                }
+              }
+            ]
           }
         ])
       ]
@@ -188,7 +196,7 @@ describe('Docker Image Cleanup Integration Tests', () => {
       escrow = {} as Escrow
       keyManager = {} as KeyManager
 
-      dockerEngine = new C2DEngineDocker(clusterConfig, db, escrow, keyManager, {})
+      dockerEngine = new C2DEngineDocker(clusterConfig, db, escrow, keyManager, config)
     })
 
     it('should track image usage when image is pulled', async () => {

@@ -17,12 +17,8 @@ import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { ethers, isAddress } from 'ethers'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import lzmajs from 'lzma-purejs-requirejs'
-import { getValidationSignature, isRemoteDDO } from '../utils/validateDdoHandler.js'
-import {
-  getConfiguration,
-  hasP2PInterface,
-  isPolicyServerConfigured
-} from '../../../utils/config.js'
+import { isRemoteDDO } from '../utils/validateDdoHandler.js'
+import { getConfiguration, isPolicyServerConfigured } from '../../../utils/config.js'
 import { PolicyServer } from '../../policyServer/index.js'
 import {
   GetDdoCommand,
@@ -101,7 +97,7 @@ export class DecryptDdoHandler extends CommandHandler {
       return validationResponse
     }
     const chainId = String(task.chainId)
-    const config = await getConfiguration()
+    const config = this.getOceanNode().getConfig()
     const supportedNetwork = config.supportedNetworks[chainId]
 
     if (!supportedNetwork) {
@@ -349,7 +345,7 @@ export class DecryptDdoHandler extends CommandHandler {
         stream = result.stream as Readable
       } else {
         const decryptedDocumentHash = create256Hash(decryptedDocument.toString())
-        if (decryptedDocumentHash !== documentHash) {
+        if (documentHash && decryptedDocumentHash !== documentHash) {
           return {
             stream: null,
             status: {
@@ -389,7 +385,7 @@ export class GetDdoHandler extends CommandHandler {
       return validationResponse
     }
     try {
-      const database = this.getOceanNode().getDatabase()
+      const database = await this.getOceanNode().getDatabase()
       if (!database || !database.ddo) {
         CORE_LOGGER.error('DDO database is not available')
         return {
@@ -436,7 +432,9 @@ export class FindDdoHandler extends CommandHandler {
       const node = this.getOceanNode()
       const p2pNode = node.getP2PNode()
 
-      if (!hasP2PInterface || !p2pNode) {
+      // if not P2P node just look on local DB
+      if (!node.hasP2PInterface || !p2pNode) {
+        // Checking locally only...
         const ddoInf = await findDDOLocally(node, task.id)
         const result = ddoInf ? [ddoInf] : []
         return {
@@ -455,7 +453,7 @@ export class FindDdoHandler extends CommandHandler {
         }
       }
 
-      const configuration = await getConfiguration()
+      const configuration = node.getConfig()
 
       const ddoInfo = await findDDOLocally(node, task.id)
       if (ddoInfo) {
@@ -496,7 +494,7 @@ export class FindDdoHandler extends CommandHandler {
             updatedCache = true
 
             if (configuration.hasIndexer) {
-              const database = node.getDatabase()
+              const database = await node.getDatabase()
               if (database && database.ddo) {
                 const ddoExistsLocally = await database.ddo.retrieve(ddo.id)
                 if (!ddoExistsLocally) {
@@ -613,7 +611,7 @@ export class FindDdoHandler extends CommandHandler {
     const node = this.getOceanNode()
     if (!force) {
       try {
-        const database = node.getDatabase()
+        const database = await node.getDatabase()
         if (database && database.ddo) {
           const ddo = await database.ddo.retrieve(ddoId)
           return ddo as DDO
@@ -1214,7 +1212,7 @@ export class ValidateDDOHandler extends CommandHandler {
       }
     }
     let shouldSign = false
-    const configuration = await getConfiguration()
+    const configuration = this.getOceanNode().getConfig()
     if (configuration.validateUnsignedDDO) {
       shouldSign = true
     }
@@ -1254,7 +1252,7 @@ export class ValidateDDOHandler extends CommandHandler {
           task.publisherAddress,
           task.policyServer
         )
-        if (!response) {
+        if (!response.success) {
           CORE_LOGGER.logMessage(
             `Error: Validation for ${task.publisherAddress} was denied`,
             true
@@ -1271,7 +1269,9 @@ export class ValidateDDOHandler extends CommandHandler {
       return {
         stream: shouldSign
           ? Readable.from(
-              JSON.stringify(await getValidationSignature(JSON.stringify(task.ddo)))
+              JSON.stringify(
+                await this.getOceanNode().getValidationSignature(JSON.stringify(task.ddo))
+              )
             )
           : null,
         status: { httpStatus: 200 }
@@ -1349,7 +1349,8 @@ async function checkIfDDOResponseIsLegit(
     return false
   }
 
-  const config = await getConfiguration()
+  // 3) check if we support this network
+  const config = oceanNode.getConfig()
   const network = config.supportedNetworks[chainId.toString()]
   if (!network) {
     CORE_LOGGER.error(

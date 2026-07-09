@@ -17,6 +17,7 @@ import {
   tearDownEnvironment
 } from '../utils/utils.js'
 import { streamToObject } from '../../utils/util.js'
+import { create256Hash } from '../../utils/crypt.js'
 
 // Helper to create a minimal valid DBComputeJob
 function buildJob(overrides: Partial<DBComputeJob> = {}): DBComputeJob {
@@ -25,6 +26,9 @@ function buildJob(overrides: Partial<DBComputeJob> = {}): DBComputeJob {
     owner: overrides.owner || '0xowner_test',
     did: overrides.did,
     jobId: overrides.jobId || `job-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    jobIdHash: create256Hash(
+      overrides.jobId || `job-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    ),
     dateCreated: overrides.dateCreated || nowSec,
     dateFinished: overrides.dateFinished || (null as unknown as string),
     status: overrides.status ?? C2DStatusNumber.JobStarted,
@@ -56,11 +60,13 @@ function buildJob(overrides: Partial<DBComputeJob> = {}): DBComputeJob {
     payment: overrides.payment,
     additionalViewers: overrides.additionalViewers || [],
     algoDuration: overrides.algoDuration || 0,
-    queueMaxWaitTime: overrides.queueMaxWaitTime || 0
+    queueMaxWaitTime: overrides.queueMaxWaitTime || 0,
+    buildStartTimestamp: overrides.buildStartTimestamp || '0',
+    buildStopTimestamp: overrides.buildStopTimestamp || '0'
   }
 }
 
-describe('GetJobsHandler integration', () => {
+describe('**********         GetJobsHandler integration', () => {
   let previousConfiguration: OverrideEnvConfig[]
   let oceanNode: OceanNode
   let db: Database
@@ -74,7 +80,16 @@ describe('GetJobsHandler integration', () => {
     previousConfiguration = await setupEnvironment(TEST_ENV_CONFIG_FILE)
     const config = await getConfiguration(true)
     db = await Database.init(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(config, db)
+    oceanNode = await OceanNode.getInstance(
+      config,
+      db,
+      null,
+      null,
+      null,
+      null,
+      null,
+      true
+    )
 
     handler = new GetJobsHandler(oceanNode)
 
@@ -101,6 +116,7 @@ describe('GetJobsHandler integration', () => {
   })
 
   after(async () => {
+    await oceanNode.tearDownAll()
     await tearDownEnvironment(previousConfiguration)
   })
 
@@ -131,7 +147,7 @@ describe('GetJobsHandler integration', () => {
     expect(filtered.every((j) => Number(j.dateFinished) >= Number(fromTs))).to.equal(true)
   })
 
-  it('should exclude jobs owned by specified consumer addresses', async function () {
+  it('should include jobs owned by specified consumer addresses', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT)
 
     const resp = await handler.handle({
@@ -144,7 +160,7 @@ describe('GetJobsHandler integration', () => {
     const jobs = (await streamToObject(resp.stream as Readable)) as any[]
 
     const owners = jobs.filter((j) => j.environment === uniqueEnv).map((j) => j.owner)
-    expect(owners.includes(ownerA)).to.equal(false)
-    expect(owners.includes(ownerB)).to.equal(true)
+    expect(owners.includes(ownerA)).to.equal(true)
+    expect(owners.includes(ownerB)).to.equal(false)
   })
 })

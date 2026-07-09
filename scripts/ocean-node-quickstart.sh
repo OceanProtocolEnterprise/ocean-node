@@ -113,6 +113,12 @@ ensure_jq() {
     fi
 }
 
+get_public_ip() {
+    if command -v curl >/dev/null 2>&1; then
+        DETECTED_PUBLIC_IP=$(curl -s ifconfig.me) 
+    fi
+}
+
 echo "Checking prerequisites (jq) are installed.."
 ensure_jq
 
@@ -170,8 +176,14 @@ if [ "$enable_upnp" == "y" ]; then
     P2P_ENABLE_UPNP='true'
 fi
 
-
-read -p "Provide the public IPv4 address or FQDN where this node will be accessible: " P2P_ANNOUNCE_ADDRESS
+get_public_ip
+if [ -n "$DETECTED_PUBLIC_IP" ]; then
+    echo -ne "Provide the public IPv4 address or FQDN where this node will be accessible (press Enter to accept detected address: "$DETECTED_PUBLIC_IP") ": 
+    read P2P_ANNOUNCE_ADDRESS
+    P2P_ANNOUNCE_ADDRESS=${P2P_ANNOUNCE_ADDRESS:-$DETECTED_PUBLIC_IP}
+else
+    read -p "Provide the public IPv4 address or FQDN where this node will be accessible: " P2P_ANNOUNCE_ADDRESS
+fi
 
 if [ -n "$P2P_ANNOUNCE_ADDRESS" ]; then
   validate_ip_or_fqdn "$P2P_ANNOUNCE_ADDRESS"
@@ -182,10 +194,10 @@ if [ -n "$P2P_ANNOUNCE_ADDRESS" ]; then
 
 if [[ "$P2P_ANNOUNCE_ADDRESS" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     # IPv4
-    P2P_ANNOUNCE_ADDRESSES='["/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/ip4/'$P2P_ANNOUNCE_ADDRESS'/ws/tcp/'$P2P_ipV4BindWsPort'"]'
+    P2P_ANNOUNCE_ADDRESSES='["/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/ws", "/ip4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/tls/ws"]'
   elif [[ "$P2P_ANNOUNCE_ADDRESS" =~ ^[a-zA-Z0-9.-]+$ ]]; then
     # FQDN
-    P2P_ANNOUNCE_ADDRESSES='["/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/dns4/'$P2P_ANNOUNCE_ADDRESS'/ws/tcp/'$P2P_ipV4BindWsPort'"]'
+    P2P_ANNOUNCE_ADDRESSES='["/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindTcpPort'", "/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/ws", "/dns4/'$P2P_ANNOUNCE_ADDRESS'/tcp/'$P2P_ipV4BindWsPort'/tls/ws"]'
   fi
 else
   P2P_ANNOUNCE_ADDRESSES=''
@@ -227,47 +239,51 @@ if [ -z "$DOCKER_COMPUTE_ENVIRONMENTS" ]; then
   export DOCKER_COMPUTE_ENVIRONMENTS='[
     {
       "socketPath": "/var/run/docker.sock",
-      "resources": [
+      "environments": [
         {
-          "id": "disk",
-          "total": 10
-        }
-      ],
-      "storageExpiry": 604800,
-      "maxJobDuration": 36000,
-      "minJobDuration": 60,
-      "fees": {
-        "1": [
-          {
-            "feeToken": "0x123",
-            "prices": [
+          "storageExpiry": 604800,
+          "maxJobDuration": 36000,
+          "minJobDuration": 60,
+          "resources": [
+            {
+              "id": "disk",
+              "total": 10
+            }
+          ],
+          "fees": {
+            "1": [
+              {
+                "feeToken": "0x123",
+                "prices": [
+                  {
+                    "id": "cpu",
+                    "price": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "free": {
+            "maxJobDuration": 360000,
+            "minJobDuration": 60,
+            "maxJobs": 3,
+            "resources": [
               {
                 "id": "cpu",
-                "price": 1
+                "max": 1
+              },
+              {
+                "id": "ram",
+                "max": 1
+              },
+              {
+                "id": "disk",
+                "max": 1
               }
             ]
           }
-        ]
-      },
-      "free": {
-        "maxJobDuration": 360000,
-        "minJobDuration": 60,
-        "maxJobs": 3,
-        "resources": [
-          {
-            "id": "cpu",
-            "max": 1
-          },
-          {
-            "id": "ram",
-            "max": 1
-          },
-          {
-            "id": "disk",
-            "max": 1
-          }
-        ]
-      }
+        }
+      ]
     }
   ]'
 fi
@@ -277,22 +293,124 @@ fi
 # Function to check for NVIDIA GPUs
 get_nvidia_gpus() {
     if command -v nvidia-smi &> /dev/null; then
-        nvidia-smi --query-gpu=name,uuid --format=csv,noheader | while IFS=, read -r name uuid; do
+        nvidia-smi --query-gpu=name,uuid,driver_version,memory.total --format=csv,noheader | while IFS=, read -r name uuid driver_version memory_total; do
             name=$(echo "$name" | xargs)
             uuid=$(echo "$uuid" | xargs)
-            jq -c -n \
+            driver_version=$(echo "$driver_version" | xargs)
+            memory_total=$(echo "$memory_total" | xargs)
+            
+             jq -c -n \
                 --arg name "$name" \
                 --arg uuid "$uuid" \
+                --arg driver_version "$driver_version" \
+                --arg memory_total "$memory_total" \
                 '{
                     description: $name,
+                    driverVersion: (if $driver_version != "" then $driver_version else null end),
+                    memoryTotal: (if $memory_total != "" then $memory_total else null end),
                     init: {
                         deviceRequests: {
                             Driver: "nvidia",
                             Devices: [$uuid]
                         }
                     }
-                }'
+                } | del(.. | select(. == null))'
         done
+    fi
+}
+
+get_driver_version() {
+    local module="$1"
+    local ver
+    ver=$(modinfo "$module" 2>/dev/null | awk '/^version:/ {print $2; exit}')
+    if [ -n "$ver" ]; then
+        echo "$ver"
+        return
+    fi
+
+    if modinfo "$module" 2>/dev/null | grep -q "^srcversion:"; then
+        uname -r
+        return
+    fi
+}
+
+get_intel_driver_version() {
+    # oneAPI / Level Zero runtime (Intel Arc)
+    local ver
+    ver=$(clinfo 2>/dev/null | awk '/Driver Version/ {print $NF; exit}')
+    [ -n "$ver" ] && { echo "$ver"; return; }
+    ver=$(dpkg -l 2>/dev/null | awk '/intel-level-zero-gpu/ {print $3; exit}')
+    [ -z "$ver" ] && ver=$(rpm -q --qf '%{VERSION}' intel-level-zero-gpu 2>/dev/null)
+    [ -n "$ver" ] && { echo "$ver"; return; }
+    get_driver_version "xe" || get_driver_version "i915"
+}
+
+get_amd_driver_version() {
+    local ver
+    ver=$(cat /opt/rocm/.info/version 2>/dev/null | head -n1)
+    [ -n "$ver" ] && { echo "ROCm $ver"; return; }
+    ver=$(rocm-smi --version 2>/dev/null | awk '/ROCm/ {print $NF; exit}')
+    [ -n "$ver" ] && { echo "$ver"; return; }
+    ver=$(dpkg -l 2>/dev/null | awk '/rocm-core/ {print $3; exit}')
+    [ -z "$ver" ] && ver=$(rpm -q --qf '%{VERSION}' rocm-core 2>/dev/null)
+    [ -n "$ver" ] && { echo "ROCm $ver"; return; }
+    get_driver_version "amdgpu"
+}
+
+get_amd_vram() {
+    local card_path="$1"
+    local real_device_path
+    real_device_path=$(readlink -f "$card_path/device")
+
+    local vram_bytes=""
+    for f in \
+        "$real_device_path/mem_info_vram_total" \
+        "$card_path/device/mem_info_vram_total"; do
+        if [ -r "$f" ]; then
+            vram_bytes=$(cat "$f" 2>/dev/null)
+            break
+        fi
+    done
+
+    if [ -n "$vram_bytes" ] && [ "$vram_bytes" -gt 0 ] 2>/dev/null; then
+        echo $(( vram_bytes / 1024 / 1024 )) MiB
+    fi
+}
+
+get_intel_vram() {
+    local card_path="$1"
+    local real_device_path
+    real_device_path=$(readlink -f "$card_path/device")
+
+    for f in \
+        "$real_device_path/drm/$(basename $card_path)/gt/gt0/mem_info_vram_total" \
+        "$real_device_path/mem_info_vram_total"; do
+        if [ -r "$f" ]; then
+            local bytes
+            bytes=$(cat "$f" 2>/dev/null)
+            if [ -n "$bytes" ] && [ "$bytes" -gt 0 ] 2>/dev/null; then
+                echo "$(( bytes / 1024 / 1024 )) MiB"
+                return
+            fi
+        fi
+    done
+
+    local slot
+    slot=$(basename "$real_device_path")
+    local raw
+    raw=$(lspci -s "$slot" -v 2>/dev/null | awk '/Memory at|prefetchable/ && /size=/ {
+        match($0, /size=([0-9]+[KMG])/, a); if (a[1]) { print a[1]; exit }
+    }')
+
+    if [ -n "$raw" ]; then
+        local num unit
+        num=$(echo "$raw" | tr -d 'KMG')
+        unit=$(echo "$raw" | tr -d '0-9')
+        case "$unit" in
+            K) echo "$(( num / 1024 )) MiB" ;;
+            M) echo "${num} MiB" ;;
+            G) echo "$(( num * 1024 )) MiB" ;;
+        esac
     fi
 }
 
@@ -309,40 +427,51 @@ map_pci_to_primary() {
     done
 }
 
-process_pci_line() {
-    line="$1"
-
-    slot=$(echo "$line" | awk '{print $1}')
-    vendor_id_hex=$(echo "$line" | awk '{print $3}' | tr -d '"')
-
-    if [[ "$vendor_id_hex" == "10de" ]] && command -v nvidia-smi &> /dev/null; then
+# Function to check for other GPUs (AMD, Intel, etc.) via lspci
+get_generic_gpus() {
+    if ! command -v lspci &> /dev/null; then
         return
     fi
 
+    map_pci_to_primary
+    lspci -mm -n -d ::0300 | while read -r line; do process_pci_line "$line"; done
+    lspci -mm -n -d ::0302 | while read -r line; do process_pci_line "$line"; done
+}
+
+process_pci_line() {
+    line="$1"
+    
+    slot=$(echo "$line" | awk '{print $1}')
+    vendor_id_hex=$(echo "$line" | awk '{print $3}' | tr -d '"')
+    
+    if [[ "$vendor_id_hex" == "10de" ]] && command -v nvidia-smi &> /dev/null; then
+        return
+    fi
+    
     full_info=$(lspci -s "$slot" -vmm)
     vendor_name=$(echo "$full_info" | grep "^Vendor:" | cut -f2-)
     device_name=$(echo "$full_info" | grep "^Device:" | cut -f2-)
-
+    
     description="$vendor_name $device_name"
-    pci_id="0000:$slot"
-
+    pci_id="0000:$slot" 
+    
     driver=""
-    if [[ "$vendor_id_hex" == "1002" ]]; then
+    if [[ "$vendor_id_hex" == "1002" ]]; then # AMD
         driver="amdgpu"
-    elif [[ "$vendor_id_hex" = "8086" ]]; then
+    elif [[ "$vendor_id_hex" = "8086" ]]; then # Intel
         driver="intel"
     fi
 
     device_id=""
     card_path=""
     if [ -n "${gpu_map[$pci_id]}" ]; then
-        device_id="${gpu_map[$pci_id]}"
+        device_id="${gpu_map[$pci_id]}" # e.g. /dev/dri/card0
         card_name=$(basename "$device_id")
         card_path="/sys/class/drm/$card_name"
     else
         device_id="${pci_id}"
     fi
-
+    
     local devices=()
     local binds=()
     local cap_add=()
@@ -355,38 +484,52 @@ process_pci_line() {
         local real_device_path=$(readlink -f "$card_path/device")
         local render_name=""
         if [ -d "$real_device_path/drm" ]; then
-            render_name=$(ls "$real_device_path/drm" | grep "^renderD" | head -n 1)
+             render_name=$(ls "$real_device_path/drm" | grep "^renderD" | head -n 1)
         fi
 
         case "$vendor_id_hex" in
-            "1002") # AMD
+            "1002") # AMD (0x1002)
+                local amd_driver_version
+                amd_driver_version=$(get_amd_driver_version)
+                local amd_memory_total
+                amd_memory_total=$(get_amd_vram "$card_path")
+
                 if [ -e "/dev/dxg" ]; then
                     devices+=("/dev/dxg")
                 else
                     devices+=("/dev/kfd")
                 fi
                 [ -n "$render_name" ] && devices+=("/dev/dri/$render_name")
-                devices+=("$device_id")
+                devices+=("$device_id") # /dev/dri/cardX
+
                 [ -e "/opt/rocm/lib/libhsa-runtime64.so.1" ] && \
-                    binds+=("/opt/rocm/lib/libhsa-runtime64.so.1:/opt/rocm/lib/libhsa-runtime64.so.1")
+                     binds+=("/opt/rocm/lib/libhsa-runtime64.so.1:/opt/rocm/lib/libhsa-runtime64.so.1")
+
                 cap_add+=("SYS_PTRACE")
                 ipc_mode="\"host\""
                 shm_size="8589934592"
                 security_opt='{"seccomp": "unconfined"}'
                 ;;
-            "8086") # Intel
-                [ -n "$render_name" ] && devices+=("/dev/dri/$render_name")
-                devices+=("$device_id")
-                group_add+=("video" "render")
-                cap_add+=("SYS_ADMIN")
+            
+            "8086") # Intel (0x8086)
+                local intel_driver_version
+                intel_driver_version=$(get_intel_driver_version)
+                local intel_memory_total
+                intel_memory_total=$(get_intel_vram "$card_path")
+
+                 [ -n "$render_name" ] && devices+=("/dev/dri/$render_name")
+                 devices+=("$device_id")
+
+                 group_add+=("video" "render")
+                 cap_add+=("SYS_ADMIN")
                 ;;
         esac
     else
-        if [[ "$vendor_id_hex" == "1002" ]] || [[ "$vendor_id_hex" == "8086" ]]; then
-            if [[ "$device_id" == /dev/* ]]; then
-                devices+=("$device_id")
-            fi
-        fi
+         if [[ "$vendor_id_hex" == "1002" ]] || [[ "$vendor_id_hex" == "8086" ]]; then
+              if [[ "$device_id" == /dev/* ]]; then
+                  devices+=("$device_id")
+              fi
+         fi
     fi
 
     json_devices=$(printf '%s\n' "${devices[@]}" | jq -R . | jq -s . | jq 'map(select(length > 0))')
@@ -395,13 +538,21 @@ process_pci_line() {
     json_group=$(printf '%s\n' "${group_add[@]}" | jq -R . | jq -s . | jq 'map(select(length > 0))')
 
     if [ "$(echo "$json_devices" | jq length)" -eq 0 ]; then
-        json_devices="[\"$device_id\"]"
+         json_devices="[\"$device_id\"]"
     fi
 
+    local driver_version=""
+    local memory_total=""
+    case "$vendor_id_hex" in
+        "1002") driver_version="$amd_driver_version"; memory_total="$amd_memory_total" ;;
+        "8086") driver_version="$intel_driver_version"; memory_total="$intel_memory_total" ;;
+    esac
     jq -c -n \
         --arg desc "$description" \
         --arg driver "$driver" \
         --arg device_id "$device_id" \
+        --arg driver_version "$driver_version" \
+        --arg memory_total "$memory_total" \
         --argjson dev "$json_devices" \
         --argjson bind "$json_binds" \
         --argjson cap "$json_cap" \
@@ -411,6 +562,8 @@ process_pci_line() {
         --argjson ipc "$ipc_mode" \
         '{
             description: $desc,
+            driverVersion: (if $driver_version != "" then $driver_version else null end),
+            memoryTotal: (if $memory_total != "" then $memory_total else null end),
             init: {
                 deviceRequests: {
                     Driver: (if $driver != "" then $driver else null end),
@@ -427,41 +580,48 @@ process_pci_line() {
         } | del(.. | select(. == null)) | del(.. | select(. == []))'
 }
 
-# Function to check for other GPUs (AMD, Intel, etc.) via lspci
-get_generic_gpus() {
-    if ! command -v lspci &> /dev/null; then
-        return
-    fi
-    map_pci_to_primary
-    lspci -mm -n -d ::0300 | while read -r line; do process_pci_line "$line"; done
-    lspci -mm -n -d ::0302 | while read -r line; do process_pci_line "$line"; done
-}
-
 # Function to get all GPUs in JSON array format
 get_all_gpus_json() {
     (
         get_nvidia_gpus
         get_generic_gpus
     ) | jq -s '
-        group_by(.description) | map({
-            id: (.[0].description | ascii_downcase | gsub("[^a-z0-9]"; "-") | gsub("-+"; "-") | sub("^-"; "") | sub("-$"; "")),
-            description: .[0].description,
-            type: "gpu",
-            total: length,
-            init: {
-                deviceRequests: {
-                    Driver: .[0].init.deviceRequests.Driver,
-                    (if .[0].init.deviceRequests.Driver == "nvidia" then "DeviceIDs" else "Devices" end): (map(.init.deviceRequests.Devices[]?) | unique),
-                    Capabilities: [["gpu"]]
-                },
-                Binds: (map(.init.Binds[]?) | unique),
-                CapAdd: (map(.init.CapAdd[]?) | unique),
-                GroupAdd: (map(.init.GroupAdd[]?) | unique),
-                SecurityOpt: .[0].init.SecurityOpt,
-                ShmSize: .[0].init.ShmSize,
-                IpcMode: .[0].init.IpcMode
+        group_by(.description) | map(
+            {
+                id: (.[0].description | ascii_downcase | gsub("[^a-z0-9]"; "-") | gsub("-+"; "-") | sub("^-"; "") | sub("-$"; "")),
+                description: .[0].description,
+                type: "gpu",
+                total: length,
+                driverVersion: (.[0].driverVersion // null),
+                memoryTotal: (.[0].memoryTotal // null),
+                platform: (if .[0].init.deviceRequests.Driver == "amdgpu" then "amd" else .[0].init.deviceRequests.Driver end),
+                init: (
+                    if .[0].init.deviceRequests.Driver == "nvidia" then
+                    {
+                        deviceRequests: {
+                            Driver: .[0].init.deviceRequests.Driver,
+                            DeviceIDs: (map(.init.deviceRequests.Devices[]?) | unique),
+                            Capabilities: [["gpu"]]
+                        }
+                    }
+                    else
+                    {
+                        advanced: {
+                            Driver: .[0].init.deviceRequests.Driver,
+                            Devices: (map(.init.deviceRequests.Devices[]?) | unique),
+                            Capabilities: [["gpu"]],
+                            Binds: (map(.init.Binds[]?) | unique),
+                            CapAdd: (map(.init.CapAdd[]?) | unique),
+                            GroupAdd: (map(.init.GroupAdd[]?) | unique),
+                            SecurityOpt: .[0].init.SecurityOpt,
+                            ShmSize: .[0].init.ShmSize,
+                            IpcMode: .[0].init.IpcMode
+                        } | del(.. | select(. == null)) | del(.. | select(. == []))
+                    }
+                    end
+                )
             } | del(.. | select(. == null)) | del(.. | select(. == []))
-        }) | map(if .init.deviceRequests.Driver == null then del(.init.deviceRequests.Driver) else . end)
+        )
     '
 }
 
@@ -472,7 +632,7 @@ if command -v jq &> /dev/null; then
 
   if [ "$GPU_COUNT" -gt 0 ]; then
     echo "Detected $GPU_COUNT GPU type(s). Updating configuration..."
-    DOCKER_COMPUTE_ENVIRONMENTS=$(echo "$DOCKER_COMPUTE_ENVIRONMENTS" | jq --argjson gpus "$DETECTED_GPUS" '.[0].resources += $gpus')
+    DOCKER_COMPUTE_ENVIRONMENTS=$(echo "$DOCKER_COMPUTE_ENVIRONMENTS" | jq --argjson gpus "$DETECTED_GPUS" '.[0].environments[0].resources += $gpus')
     echo "GPUs added to Compute Environment resources."
   else
     echo "No GPUs detected."
@@ -540,13 +700,14 @@ services:
 #      P2P_mDNSInterval: ''
 #      P2P_connectionsMaxParallelDials: ''
 #      P2P_connectionsDialTimeout: ''
-       P2P_ENABLE_UPNP: '$P2P_ENABLE_UPNP'
+      P2P_ENABLE_UPNP: '$P2P_ENABLE_UPNP'
 #      P2P_ENABLE_AUTONAT: ''
-#      P2P_ENABLE_CIRCUIT_RELAY_SERVER: ''
-#      P2P_ENABLE_CIRCUIT_RELAY_CLIENT: ''
+      P2P_ENABLE_CIRCUIT_RELAY_SERVER: false
+      P2P_ENABLE_CIRCUIT_RELAY_CLIENT: false
 #      P2P_BOOTSTRAP_NODES: ''
 #      P2P_FILTER_ANNOUNCED_ADDRESSES: ''
       DOCKER_COMPUTE_ENVIRONMENTS: '$DOCKER_COMPUTE_ENVIRONMENTS'
+      ENABLE_BENCHMARK: true
 $(
   if [ "$enable_tls" == "y" ]; then
     echo "      HTTP_CERT_PATH: '/usr/src/app/certs/cert.pem'"
@@ -609,3 +770,7 @@ echo -e "\e[1;32mP2P IPv6 TCP Port: $P2P_ipV6BindTcpPort\e[0m"
 echo -e "\e[1;32mP2P IPv6 WebSocket Port: $P2P_ipV6BindWsPort\e[0m"
 echo ""
 echo -e "\e[1;32m4)\e[0m If using SSL/TLS with a custom domain name, make sure to listen on host port 443 for the HTTP API, or use a reverse proxy with TLS offloading"
+echo ""
+echo -e "If your node is not reachable by other peers (NAT, no public IP, port forwarding issues),"
+echo -e "refer to the networking guide for help with Dynamic DNS, port forwarding, and circuit relay:"
+echo -e "\e[1;34mhttps://github.com/oceanprotocol/ocean-node/blob/main/docs/networking.md\e[0m"

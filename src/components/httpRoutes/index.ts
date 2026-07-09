@@ -9,12 +9,14 @@ import { rootEndpointRoutes } from './rootEndpoint.js'
 import { fileInfoRoute } from './fileInfo.js'
 import { computeRoutes } from './compute.js'
 import { queueRoutes } from './queue.js'
-// import { getConfiguration } from '../../utils/config.js'
 import { jobsRoutes } from './jobs.js'
 import { addMapping, allRoutesMapping, findPathName } from './routeUtils.js'
 import { PolicyServerPassthroughRoute } from './policyServer.js'
 import { authRoutes } from './auth.js'
 import { adminConfigRoutes } from './adminConfig.js'
+import { persistentStorageRoutes } from './persistentStorage.js'
+import { accessListRoutes } from './accessList.js'
+import { escrowRoutes } from './escrow.js'
 
 export * from './getOceanPeers.js'
 export * from './auth.js'
@@ -62,6 +64,13 @@ httpRoutes.use(PolicyServerPassthroughRoute)
 httpRoutes.use(authRoutes)
 // admin config routes
 httpRoutes.use(adminConfigRoutes)
+// persistent storage routes
+httpRoutes.use(persistentStorageRoutes)
+// access list routes
+httpRoutes.use(accessListRoutes)
+// escrow events routes
+// /api/services/escrow/events
+httpRoutes.use(escrowRoutes)
 
 export function getAllServiceEndpoints() {
   httpRoutes.stack.forEach(addMapping.bind(null, []))

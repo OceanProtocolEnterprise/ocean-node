@@ -1,27 +1,21 @@
+import { Readable } from 'stream'
 import { ValidateParams } from '../components/httpRoutes/validateCommands.js'
 import { P2PCommandResponse } from './OceanNode'
 import { DDO } from '@oceanprotocol/ddo-js'
 import type {
   ComputeAsset,
   ComputeAlgorithm,
-  ComputeOutput,
   ComputeResourceRequest,
   DBComputeJobMetadata
 } from './C2D/C2D.js'
-import {
-  ArweaveFileObject,
-  FileObjectType,
-  EncryptMethod,
-  IpfsFileObject,
-  UrlFileObject,
-  BaseFileObject
-} from './fileObject'
-
+import { FileObjectType, StorageObject, EncryptMethod } from './fileObject'
+import type { AccessList } from './AccessList.js'
 export interface Command {
   command: string // command name
   node?: string // if not present it means current node
   authorization?: string
   caller?: string | string[] // added by our node for rate limiting
+  stream?: Readable | null // commands may have an extra stream, after body. IE: Encrypt file
 }
 
 export interface GetP2PPeerCommand extends Command {
@@ -34,6 +28,16 @@ export interface FindPeerCommand extends Command {
 
 export interface GetP2PPeersCommand extends Command {}
 export interface GetP2PNetworkStatsCommand extends Command {}
+
+export interface GetAccessListCommand extends Command {
+  chainId: number
+  contractAddress: string
+}
+
+export interface SearchAccessListCommand extends Command {
+  wallet: string
+  chainId?: number
+}
 
 export interface SignedCommand extends Command {
   nonce: string
@@ -69,8 +73,10 @@ export interface FileInfoCommand extends Command {
   did?: string
   serviceId?: string
   fileIndex?: number
-  file?: UrlFileObject | ArweaveFileObject | IpfsFileObject
+  file?: StorageObject
   checksum?: boolean
+  // required only for nodePersistentStorage files, to gate on the bucket ACL
+  consumerAddress?: string
 }
 // group these 2
 export interface DDOCommand extends Command {
@@ -101,6 +107,18 @@ export interface QueryCommand extends Command {
   query: Record<string, any>
   maxResultsPerPage?: number
   pageNumber?: number
+}
+
+export interface GetEscrowEventsCommand extends Command {
+  chainId?: number
+  eventType?: string
+  payer?: string
+  payee?: string
+  token?: string
+  jobId?: string
+  txId?: string
+  offset?: number
+  size?: number
 }
 export interface ReindexCommand extends Command {
   txId: string
@@ -135,7 +153,7 @@ export interface EncryptFileCommand extends Command {
   consumerAddress: string
   signature: string
   encryptionType?: EncryptMethod.AES | EncryptMethod.ECIES
-  files?: BaseFileObject
+  files?: StorageObject
   rawData?: Buffer
   policyServer?: any // object to pass to policy server
 }
@@ -153,6 +171,10 @@ export interface GetFeesCommand extends Command {
 }
 // admin commands
 export interface AdminStopNodeCommand extends SignedCommand {}
+
+export interface AdminStopJobCommand extends SignedCommand {
+  jobId: string // composite format: "<clusterHash>-<actualJobId>"
+}
 export interface AdminReindexTxCommand extends SignedCommand {
   chainId: number
   txId: string
@@ -228,6 +250,7 @@ export interface ComputeInitializeCommand extends Command {
   policyServer?: any // object to pass to policy server
   queueMaxWaitTime?: number // max time in seconds a job can wait in the queue before being started
   encryptedDockerRegistryAuth?: string
+  output?: string // this is always an ECIES encrypted string, that decodes to ComputeOutput interface
 }
 
 export interface FreeComputeStartCommand extends Command {
@@ -237,7 +260,8 @@ export interface FreeComputeStartCommand extends Command {
   environment: string
   algorithm: ComputeAlgorithm
   datasets?: ComputeAsset[]
-  output?: ComputeOutput
+  output?: string // this is always an ECIES encrypted string, that decodes to ComputeOutput interface
+  outputBucketId?: string
   resources?: ComputeResourceRequest[]
   maxJobDuration?: number
   policyServer?: any // object to pass to policy server
@@ -264,6 +288,7 @@ export interface ComputeGetResultCommand extends Command {
   nonce: string
   jobId: string
   index: number
+  offset?: number
 }
 export interface ComputeGetStreamableLogsCommand extends Command {
   consumerAddress: string
@@ -318,4 +343,59 @@ export interface GetJobsCommand extends Command {
   environments?: string[]
   fromTimestamp?: string
   consumerAddrs?: string[]
+  runningJobs?: boolean
+}
+
+export interface PersistentStorageCreateBucketCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  accessLists: AccessList[]
+  label?: string
+}
+
+export interface PersistentStorageUpdateBucketCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  bucketId: string
+  label?: string
+}
+
+export interface PersistentStorageGetBucketsCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  owner: string
+}
+
+export interface PersistentStorageListFilesCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  bucketId: string
+}
+
+export interface PersistentStorageUploadFileCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  bucketId: string
+  fileName: string
+}
+
+export interface PersistentStorageGetFileObjectCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  bucketId: string
+  fileName: string
+}
+
+export interface PersistentStorageDeleteFileCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  bucketId: string
+  fileName: string
 }

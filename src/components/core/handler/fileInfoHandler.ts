@@ -1,10 +1,9 @@
 import { Readable } from 'stream'
-import urlJoin from 'url-join'
 import { P2PCommandResponse } from '../../../@types/index.js'
 import {
-  ArweaveFileObject,
-  IpfsFileObject,
-  UrlFileObject
+  FileObjectType,
+  StorageObject,
+  isPersistentStorageType
 } from '../../../@types/fileObject.js'
 import { OceanNodeConfig } from '../../../@types/OceanNode.js'
 import { FileInfoCommand } from '../../../@types/commands.js'
@@ -12,44 +11,43 @@ import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { Storage } from '../../storage/index.js'
 import { CommandHandler } from './handler.js'
 import { validateDDOIdentifier } from './ddoHandler.js'
-import { fetchFileMetadata } from '../../../utils/asset.js'
 import {
   ValidateParams,
   buildInvalidRequestMessage,
   validateCommandParameters
 } from '../../httpRoutes/validateCommands.js'
 import { getFile } from '../../../utils/file.js'
-import { getConfiguration } from '../../../utils/index.js'
 
 async function formatMetadata(
-  file: ArweaveFileObject | IpfsFileObject | UrlFileObject,
-  config: OceanNodeConfig
-) {
-  const url =
-    file.type === 'url'
-      ? (file as UrlFileObject).url
-      : file.type === 'arweave'
-        ? urlJoin(config.arweaveGateway, (file as ArweaveFileObject).transactionId)
-        : file.type === 'ipfs'
-          ? urlJoin(config.ipfsGateway, (file as IpfsFileObject).hash)
-          : null
-  const headers = file.type === 'url' ? (file as UrlFileObject).headers : undefined
-
-  const { contentLength, contentType, contentChecksum } = await fetchFileMetadata(
-    url,
-    'get',
-    false,
-    headers
-  )
-
-  return {
-    valid: true,
-    contentLength,
-    contentType,
-    checksum: contentChecksum,
-    name: new URL(url).pathname.split('/').pop() || '',
-    type: file.type
+  file: StorageObject,
+  config: OceanNodeConfig,
+  consumerAddress?: string
+): Promise<{
+  valid: boolean
+  contentLength: string
+  contentType: string
+  checksum?: string
+  name: string
+  type: string
+}> {
+  // Persistent-storage files are ACL-gated: only resolve real metadata when a
+  // consumerAddress is supplied (the backend then enforces the bucket ACL). Without it,
+  // return a generic entry
+  if (isPersistentStorageType((file as { type?: string })?.type) && !consumerAddress) {
+    return {
+      valid: false,
+      contentLength: '',
+      contentType: 'application/octet-stream',
+      name: '',
+      type: FileObjectType.NODE_PERSISTENT_STORAGE
+    }
   }
+  const storage = Storage.getStorageClass(file, config, consumerAddress)
+  const fileInfo = await storage.fetchSpecificFileMetadata(file, false)
+  CORE_LOGGER.logMessage(
+    `Metadata for file: ${fileInfo.contentLength} ${fileInfo.contentType}`
+  )
+  return fileInfo
 }
 export class FileInfoHandler extends CommandHandler {
   validate(command: FileInfoCommand): ValidateParams {
@@ -72,6 +70,29 @@ export class FileInfoHandler extends CommandHandler {
         return buildInvalidRequestMessage('Invalid Request: no fields are present!')
       }
     }
+
+    const matchesRegex = (value: string, regex: RegExp): boolean => regex.test(value)
+    if (command.did && !matchesRegex(command.did, /^did:op/)) {
+      return buildInvalidRequestMessage('Invalid Request: invalid did!')
+    }
+    if (command.type && !Object.values(FileObjectType).includes(command.type)) {
+      return buildInvalidRequestMessage(
+        'Invalid Request: type must be one of ' + Object.values(FileObjectType).join(', ')
+      )
+    }
+    // persistent storage files are ACL-gated: a consumerAddress is required so the bucket
+    // ACL can be enforced. Check both the top-level command type AND the embedded file type
+    // (normalized for casing), since handle() routes getStorageClass on file.type.
+    if (
+      (isPersistentStorageType(command.type) ||
+        isPersistentStorageType(command.file?.type)) &&
+      !command.consumerAddress
+    ) {
+      return buildInvalidRequestMessage(
+        'Invalid Request: consumerAddress is required for nodePersistentStorage files'
+      )
+    }
+
     return validation
   }
 
@@ -82,11 +103,11 @@ export class FileInfoHandler extends CommandHandler {
     }
     try {
       const oceanNode = this.getOceanNode()
-      const config = await getConfiguration()
+      const config = oceanNode.getConfig()
       let fileInfo = []
 
       if (task.file && task.type) {
-        const storage = Storage.getStorageClass(task.file, config)
+        const storage = Storage.getStorageClass(task.file, config, task.consumerAddress)
 
         fileInfo = await storage.getFileInfo({
           type: task.type,
@@ -95,11 +116,15 @@ export class FileInfoHandler extends CommandHandler {
       } else if (task.did && task.serviceId) {
         const fileArray = await getFile(task.did, task.serviceId, oceanNode)
         if (task.fileIndex) {
-          const fileMetadata = await formatMetadata(fileArray[task.fileIndex], config)
+          const fileMetadata = await formatMetadata(
+            fileArray[task.fileIndex],
+            config,
+            task.consumerAddress
+          )
           fileInfo.push(fileMetadata)
         } else {
           for (const file of fileArray) {
-            const fileMetadata = await formatMetadata(file, config)
+            const fileMetadata = await formatMetadata(file, config, task.consumerAddress)
             fileInfo.push(fileMetadata)
           }
         }

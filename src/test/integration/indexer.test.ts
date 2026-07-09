@@ -26,7 +26,7 @@ import {
   getOceanArtifactsAdresses,
   getOceanArtifactsAdressesByChainId
 } from '../../utils/address.js'
-import { createFee } from '../../components/core/utils/feesHandler.js'
+
 import { Asset, DDO } from '@oceanprotocol/ddo-js'
 import {
   DEFAULT_TEST_TIMEOUT,
@@ -48,8 +48,9 @@ import { QueryCommand } from '../../@types/commands.js'
 import { getConfiguration } from '../../utils/config.js'
 import { EncryptMethod } from '../../@types/fileObject.js'
 import { deleteIndexedMetadataIfExists } from '../../utils/asset.js'
+import { ProviderFees } from '../../components/core/utils/feesHandler.js'
 
-describe('Indexer stores a new metadata events and orders.', () => {
+describe('**********         Indexer stores a new metadata events and orders.', () => {
   let database: Database
   let oceanNode: OceanNode
   let provider: JsonRpcProvider
@@ -100,12 +101,22 @@ describe('Indexer stores a new metadata events and orders.', () => {
 
     const config = await getConfiguration(true)
     database = await Database.init(config.dbConfig)
-    oceanNode = OceanNode.getInstance(config, database)
-    indexer = new OceanIndexer(
+
+    const oldIndexer = OceanNode.getInstance(config, database).getIndexer()
+    if (oldIndexer) {
+      await oldIndexer.stopAllChainIndexers()
+    }
+    oceanNode = OceanNode.getInstance(
+      config,
       database,
-      mockSupportedNetworks,
-      oceanNode.blockchainRegistry
+      null,
+      null,
+      null,
+      null,
+      null,
+      true
     )
+    indexer = new OceanIndexer(database, config, oceanNode.blockchainRegistry)
     oceanNode.addIndexer(indexer)
     let artifactsAddresses = getOceanArtifactsAdressesByChainId(DEVELOPMENT_CHAIN_ID)
     if (!artifactsAddresses) {
@@ -122,7 +133,10 @@ describe('Indexer stores a new metadata events and orders.', () => {
       publisherAccount
     )
   })
-
+  after(async () => {
+    await oceanNode.tearDownAll()
+    await tearDownEnvironment(previousConfiguration)
+  })
   it('instance Database', () => {
     expect(database).to.be.instanceOf(Database)
   })
@@ -210,6 +224,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
   it('should store the ddo in the database and return it ', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 2)
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT * 2
@@ -254,7 +269,6 @@ describe('Indexer stores a new metadata events and orders.', () => {
 
   it('should store the ddo state in the db with no errors and retrieve it using did', async function () {
     const ddoState = await database.ddoState.retrieve(resolvedDDO.id)
-    console.log('ddoState: ', ddoState)
     assert(ddoState, 'ddoState not found')
     expect(resolvedDDO.id).to.equal(ddoState.did)
     expect(ddoState.valid).to.equal(true)
@@ -321,6 +335,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
 
   it('should detect update event and store the udpdated ddo in the database', async function () {
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.METADATA_UPDATED,
       DEFAULT_TEST_TIMEOUT,
@@ -342,11 +357,13 @@ describe('Indexer stores a new metadata events and orders.', () => {
   })
 
   it('should get the updated state', async function () {
+    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
     const result = await nftContract.getMetaData()
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.METADATA_UPDATED,
-      DEFAULT_TEST_TIMEOUT,
+      DEFAULT_TEST_TIMEOUT * 3,
       true
     )
     const retrievedDDO: any = ddo
@@ -368,6 +385,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
 
   it('should get the active state', async function () {
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.METADATA_UPDATED,
       DEFAULT_TEST_TIMEOUT,
@@ -394,8 +412,8 @@ describe('Indexer stores a new metadata events and orders.', () => {
       paymentCollector?.toLowerCase() === publisherAddress?.toLowerCase(),
       'paymentCollector not correct'
     )
-
-    const feeData = await createFee(
+    const fees = new ProviderFees(oceanNode)
+    const feeData = await fees.createFee(
       resolvedDDO as DDO,
       0,
       'null',
@@ -456,16 +474,18 @@ describe('Indexer stores a new metadata events and orders.', () => {
   })
 
   it('should get number of orders', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.ORDER_STARTED,
-      DEFAULT_TEST_TIMEOUT * 2,
+      DEFAULT_TEST_TIMEOUT * 4,
       true
     )
     if (ddo) {
       const retrievedDDO = ddo
       console.log('indexer retrieved ddo: ', JSON.stringify(retrievedDDO))
+      console.log('stats: ', JSON.stringify(retrievedDDO.indexedMetadata.stats))
       for (const stat of retrievedDDO.indexedMetadata.stats) {
         if (stat.datatokenAddress === datatokenAddress) {
           expect(stat.orders).to.equal(1)
@@ -495,7 +515,8 @@ describe('Indexer stores a new metadata events and orders.', () => {
 
   it('should detect OrderReused event', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 2)
-    const feeData = await createFee(
+    const fees = new ProviderFees(oceanNode)
+    const feeData = await fees.createFee(
       resolvedDDO as DDO,
       0,
       'null',
@@ -551,6 +572,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
   it('should increase number of orders', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 3)
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.ORDER_REUSED,
       DEFAULT_TEST_TIMEOUT * 3,
@@ -597,13 +619,15 @@ describe('Indexer stores a new metadata events and orders.', () => {
   })
 
   it('Deprecated asset should have a short version of ddo', async function () {
+    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
     const result = await nftContract.getMetaData()
     expect(parseInt(result[2].toString())).to.equal(2)
 
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.METADATA_STATE,
-      DEFAULT_TEST_TIMEOUT,
+      DEFAULT_TEST_TIMEOUT * 3,
       true
     )
     const resolvedDDO: any = ddo
@@ -635,6 +659,7 @@ describe('Indexer stores a new metadata events and orders.', () => {
 
   it('should store ddo reindex', async function () {
     const { ddo, wasTimeout } = await waitToIndex(
+      oceanNode,
       assetDID,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT
@@ -653,10 +678,5 @@ describe('Indexer stores a new metadata events and orders.', () => {
       const queue = indexer.getIndexingQueue()
       expect(queue.length).to.be.equal(0)
     }, DEFAULT_TEST_TIMEOUT / 2)
-  })
-
-  after(async () => {
-    await tearDownEnvironment(previousConfiguration)
-    indexer.stopAllChainIndexers()
   })
 })

@@ -7,6 +7,7 @@ export const ENV_TO_CONFIG_MAPPING = {
   DB_TYPE: 'DB_TYPE',
   FEE_AMOUNT: 'FEE_AMOUNT',
   FEE_TOKENS: 'FEE_TOKENS',
+  SKIP_FEE_TOKEN_VALIDATION: 'skipFeeTokenValidation',
   HTTP_API_PORT: 'httpPort',
   RPCS: 'supportedNetworks',
   IPFS_GATEWAY: 'ipfsGateway',
@@ -68,12 +69,18 @@ export const ENV_TO_CONFIG_MAPPING = {
   P2P_AUTODIALINTERVAL: 'p2pConfig.autoDialInterval',
   P2P_ENABLE_NETWORK_STATS: 'p2pConfig.enableNetworkStats',
   HTTP_CERT_PATH: 'httpCertPath',
-  HTTP_KEY_PATH: 'httpKeyPath'
+  HTTP_KEY_PATH: 'httpKeyPath',
+  ENABLE_BENCHMARK: 'enableBenchmark',
+  PERSISTENT_STORAGE: 'persistentStorage'
 } as const
 
 // Configuration defaults
 export const DEFAULT_RATE_LIMIT_PER_MINUTE = 30
 export const DEFAULT_MAX_CONNECTIONS_PER_MINUTE = 60 * 2 // 120 requests per minute
+export const SEPOLIA_CHAIN_ID = '11155111'
+export const BASE_CHAIN_ID = '8453'
+export const USDC_TOKEN = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'
+export const USDC_TOKEN_ADDRESS_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 
 export const DEFAULT_BOOTSTRAP_ADDRESSES = [
   // OPF nodes

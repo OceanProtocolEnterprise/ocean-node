@@ -1329,6 +1329,61 @@ updates node configuration and reloads it gracefully (admin only)
 
 ---
 
+## Get Escrow Events
+
+### `HTTP` GET /api/services/escrow/events?
+
+### `HTTP` POST /directCommand
+
+### `P2P` command: getEscrowEvents
+
+#### Description
+
+Returns indexed Escrow contract events. The indexer matches Escrow logs by topic hash, verifies they came from the chain's `Escrow` contract (`Deposit`/`Withdraw`/`Lock` are generic signatures), and stores one row per event in the append-only `escrow` collection keyed by `${txHash}-${logIndex}`. All filters are optional.
+
+#### Parameters
+
+| name      | type   | required  | description                                               |
+| --------- | ------ | --------- | --------------------------------------------------------- |
+| command   | string | POST only | command name (`getEscrowEvents`)                          |
+| chainId   | number |           | chain id                                                  |
+| eventType | string |           | one of `Auth, Lock, Claimed, Canceled, Deposit, Withdraw` |
+| payer     | string |           | payer address (case-insensitive)                          |
+| payee     | string |           | payee address (case-insensitive)                          |
+| token     | string |           | token address (case-insensitive)                          |
+| jobId     | string |           | compute job id                                            |
+| txId      | string |           | transaction hash                                          |
+| offset    | number |           | rows to skip (default 0)                                  |
+| size      | number |           | page size (default 100, max 250)                          |
+
+#### Request (POST /directCommand)
+
+```json
+{ "command": "getEscrowEvents", "chainId": 8996, "eventType": "Deposit", "offset": 0, "size": 50 }
+```
+
+#### Response
+
+Every row has `id, eventType, chainId, contract, block, txHash` plus event-specific fields (`payer, payee, token, jobId, amount, expiry, proof, maxLockedAmount, maxLockSeconds, maxLockCounts`).
+
+```json
+[
+  {
+    "id": "0x39f3...6575-3",
+    "eventType": "Deposit",
+    "chainId": 8996,
+    "contract": "0x282d...a1a1",
+    "block": 55,
+    "txHash": "0x39f3...6575",
+    "payer": "0xbe54...ab5e",
+    "token": "0x282d...a1a1",
+    "amount": "100000000000000000000"
+  }
+]
+```
+
+---
+
 # Compute
 
 For starters, you can find a list of algorithms in the [Ocean Algorithms repository](https://github.com/oceanprotocol/algo_dockers) and the docker images in the [Algo Dockerhub](https://hub.docker.com/r/oceanprotocol/algo_dockers/tags).
@@ -1463,7 +1518,8 @@ starts a free compute job and returns jobId if succesfull
 | additionalViewers           | object |          | optional array of addresses that are allowed to fetch the result                                                                                                            |
 | queueMaxWaitTime            | number |          | optional max time in seconds a job can wait in the queue before being started                                                                                               |
 | encryptedDockerRegistryAuth | string |          | Ecies encrypted docker auth schema for image (see [Private Docker Registries with Per-Job Authentication](../env.md#private-docker-registries-with-per-job-authentication)) |
-
+| output                      | string |          | Ecies encrypted with instructions for uploading compute results (see [C2D result upload to remote storage](../Storage.md#c2d-result-upload-to-remote-storage))              |
+| outputBucketId              | string |          | persistent-storage bucket id; the bucket is mounted at /data/outputs and results are stored there as individual files. Mutually exclusive with `output` (see [persistent storage](../persistentStorage.md#using-a-bucket-for-compute-job-outputs))   |
 #### Request
 
 ```json
@@ -1585,3 +1641,180 @@ returns job result
 #### Response
 
 File content
+
+---
+
+## Persistent Storage
+
+### `HTTP` POST /api/services/persistentStorage/buckets
+
+#### Description
+
+Create a new persistent storage bucket. Bucket ownership is set to the request `consumerAddress`.
+
+#### Request Headers
+
+| name            | type   | required | description |
+| --------------- | ------ | -------- | ----------- |
+| Authorization   | string |          | auth token (optional; depends on node auth configuration) |
+
+#### Request Body
+
+```json
+{
+  "consumerAddress": "0x...",
+  "signature": "0x...",
+  "nonce": "123",
+  "accessLists": []
+}
+```
+
+#### Response (200)
+
+```json
+{
+  "bucketId": "uuid",
+  "owner": "0x...",
+  "accessList": []
+}
+```
+
+---
+
+### `HTTP` GET /api/services/persistentStorage/buckets
+
+#### Description
+
+List buckets for a given `owner`. Results are filtered by bucket access lists for the calling consumer.
+
+#### Query Parameters
+
+| name            | type   | required | description |
+| --------------- | ------ | -------- | ----------- |
+| consumerAddress | string | v        | consumer address |
+| signature       | string | v        | signed message (consumerAddress + nonce + command) |
+| nonce           | string | v        | request nonce |
+| chainId         | number | v        | chain id (used by auth/signature checks) |
+| owner           | string | v        | bucket owner to filter by |
+
+#### Response (200)
+
+```json
+[
+  {
+    "bucketId": "uuid",
+    "owner": "0x...",
+    "createdAt": 1710000000,
+    "accessLists": []
+  }
+]
+```
+
+---
+
+### `HTTP` GET /api/services/persistentStorage/buckets/:bucketId/files
+
+#### Description
+
+List files in a bucket.
+
+#### Query Parameters
+
+| name            | type   | required | description |
+| --------------- | ------ | -------- | ----------- |
+| consumerAddress | string | v        | consumer address |
+| signature       | string | v        | signed message (consumerAddress + nonce + command) |
+| nonce           | string | v        | request nonce |
+
+#### Response (200)
+
+```json
+[
+  {
+    "bucketId": "uuid",
+    "name": "hello.txt",
+    "size": 123,
+    "lastModified": 1710000000
+  }
+]
+```
+
+---
+
+### `HTTP` GET /api/services/persistentStorage/buckets/:bucketId/files/:fileName/object
+
+#### Description
+
+Return the `fileObject` for a specific file in a bucket (useful for passing references to other subsystems like compute).
+
+#### Query Parameters
+
+| name            | type   | required | description |
+| --------------- | ------ | -------- | ----------- |
+| consumerAddress | string | v        | consumer address |
+| signature       | string | v        | signed message (consumerAddress + nonce + command) |
+| nonce           | string | v        | request nonce |
+
+#### Response (200)
+
+```json
+{
+  "type": "nodePersistentStorage",
+  "bucketId": "uuid",
+  "fileName": "hello.txt"
+}
+```
+
+---
+
+### `HTTP` POST /api/services/persistentStorage/buckets/:bucketId/files/:fileName
+
+#### Description
+
+Upload a file to a bucket. The request body is treated as raw bytes.
+
+#### Query Parameters
+
+| name            | type   | required | description |
+| --------------- | ------ | -------- | ----------- |
+| consumerAddress | string | v        | consumer address |
+| signature       | string | v        | signed message (consumerAddress + nonce + command) |
+| nonce           | string | v        | request nonce |
+
+#### Request Body
+
+Raw bytes (any content-type).
+
+#### Response (200)
+
+```json
+{
+  "bucketId": "uuid",
+  "name": "hello.txt",
+  "size": 123,
+  "lastModified": 1710000000
+}
+```
+
+---
+
+### `HTTP` DELETE /api/services/persistentStorage/buckets/:bucketId/files/:fileName
+
+#### Description
+
+Delete a file from a bucket.
+
+#### Query Parameters
+
+| name            | type   | required | description |
+| --------------- | ------ | -------- | ----------- |
+| consumerAddress | string | v        | consumer address |
+| signature       | string | v        | signed message (consumerAddress + nonce + command) |
+| nonce           | string | v        | request nonce |
+| chainId         | number | v        | chain id (used by auth/signature checks) |
+
+#### Response (200)
+
+```json
+{ "success": true }
+```

@@ -7,7 +7,13 @@ import {
 } from '../../../@types/commands.js'
 import { CommandHandler } from '../handler/handler.js'
 import { OceanNode } from '../../../OceanNode.js'
-import { generateUniqueID, getAlgoChecksums, validateAlgoForDataset } from './utils.js'
+import {
+  generateUniqueID,
+  getAlgoChecksums,
+  validateAlgoForDataset,
+  validateOutput,
+  validateOutputBucket
+} from './utils.js'
 import {
   ValidateParams,
   buildInvalidRequestMessage,
@@ -24,11 +30,12 @@ import {
 import { EncryptMethod } from '../../../@types/fileObject.js'
 import {
   ComputeAccessList,
+  ComputeEnvironment,
   ComputeResourceRequestWithPrice
 } from '../../../@types/C2D/C2D.js'
 // import { verifyProviderFees } from '../utils/feesHandler.js'
 import { validateOrderTransaction } from '../utils/validateOrders.js'
-import { getConfiguration, isPolicyServerConfigured } from '../../../utils/index.js'
+import { isPolicyServerConfigured } from '../../../utils/index.js'
 import { sanitizeServiceFiles } from '../../../utils/util.js'
 import { FindDdoHandler } from '../handler/ddoHandler.js'
 // import { ProviderFeeValidation } from '../../../@types/Fees.js'
@@ -38,8 +45,23 @@ import { getNonceAsNumber } from '../utils/nonceHandler.js'
 import { PolicyServer } from '../../policyServer/index.js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { checkAddressOnAccessList } from '../../../utils/accessList.js'
+import { ensureConsumerAllowedForPersistentStorageLocalfsFileObject } from '../../persistentStorage/PersistentStorageFactory.js'
+import { resolveComputeFileObject } from '../../c2d/compute_engine_docker.js'
 
-export class PaidComputeStartHandler extends CommandHandler {
+export class CommonComputeHandler extends CommandHandler {
+  validate(command: PaidComputeStartCommand): ValidateParams {
+    return {
+      valid: true
+    }
+  }
+
+  // eslint-disable-next-line require-await
+  async handle(task: PaidComputeStartCommand): Promise<P2PCommandResponse> {
+    return null
+  }
+}
+
+export class PaidComputeStartHandler extends CommonComputeHandler {
   validate(command: PaidComputeStartCommand): ValidateParams {
     const commandValidation = validateCommandParameters(command, [
       'environment',
@@ -79,9 +101,8 @@ export class PaidComputeStartHandler extends CommandHandler {
     if (authValidationResponse.status.httpStatus !== 200) {
       return authValidationResponse
     }
-
+    const node = this.getOceanNode()
     try {
-      const node = this.getOceanNode()
       // split compute env (which is already in hash-envId format) and get the hash
       // then get env which might contain dashes as well
       const eIndex = task.environment.indexOf('-')
@@ -102,8 +123,10 @@ export class PaidComputeStartHandler extends CommandHandler {
         }
       }
 
+      let allEnvs: ComputeEnvironment[]
       try {
-        env = await engine.getComputeEnvironment(null, task.environment)
+        allEnvs = await engine.getComputeEnvironments()
+        env = allEnvs.find((e) => e.id === task.environment)
         if (!env) {
           return {
             stream: null,
@@ -133,7 +156,7 @@ export class PaidComputeStartHandler extends CommandHandler {
         }
       }
       try {
-        await engine.checkIfResourcesAreAvailable(task.resources, env, false)
+        await engine.checkIfResourcesAreAvailable(task.resources, env, false, allEnvs)
       } catch (e) {
         if (task.queueMaxWaitTime > 0) {
           CORE_LOGGER.verbose(
@@ -168,7 +191,7 @@ export class PaidComputeStartHandler extends CommandHandler {
       }
 
       const { algorithm } = task
-      const config = await getConfiguration()
+      const config = node.getConfig()
 
       const accessGranted = await validateAccess(
         task.consumerAddress,
@@ -185,11 +208,30 @@ export class PaidComputeStartHandler extends CommandHandler {
         }
       }
 
+      const policyServer = new PolicyServer()
+      for (const elem of [task.algorithm, ...task.datasets]) {
+        // resolve encrypted / documentId+serviceId references so persistent-storage ACL
+        // is validated here too (not only plaintext file objects)
+        const resolvedFileObject =
+          (await resolveComputeFileObject(elem)) ?? elem.fileObject
+        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
+          node,
+          task.consumerAddress,
+          resolvedFileObject
+        )
+        if (psAccess) {
+          return psAccess
+        }
+      }
+
+      // ACL preflight is confirmed above before attempting checksum retrieval,
+      // so unauthorized consumers get an explicit ACL denial instead of a generic 500.
       const algoChecksums = await getAlgoChecksums(
         task.algorithm.documentId,
         task.algorithm.serviceId,
         node,
-        config
+        config,
+        task.consumerAddress
       )
 
       const isRawCodeAlgorithm = task.algorithm.meta?.rawcode
@@ -207,8 +249,7 @@ export class PaidComputeStartHandler extends CommandHandler {
           }
         }
       }
-      const policyServer = new PolicyServer()
-      // check algo
+      // check algo and datasets (orders, credentials, etc.)
       for (const elem of [...[task.algorithm], ...task.datasets]) {
         const result: any = { validOrder: false }
         if ('documentId' in elem && elem.documentId) {
@@ -243,9 +284,10 @@ export class PaidComputeStartHandler extends CommandHandler {
               }
             }
           }
-          const config = await getConfiguration()
-          const { chainId } = config.supportedNetworks[ddoChainId]
           const oceanNode = this.getOceanNode()
+          const config = oceanNode.getConfig()
+          const { chainId } = config.supportedNetworks[ddoChainId]
+
           const blockchain = oceanNode.getBlockchain(chainId)
           if (!blockchain) {
             return {
@@ -425,11 +467,9 @@ export class PaidComputeStartHandler extends CommandHandler {
                 stream: null,
                 status: {
                   httpStatus: 400,
-                  error: `Algorithm ${task.algorithm.documentId} with serviceId ${
-                    task.algorithm.serviceId
-                  } not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${
-                    task.datasets[safeIndex].serviceId
-                  }`
+                  error: `Algorithm ${
+                    task.algorithm.documentId
+                  } not allowed to run on the dataset: ${ddoInstance.getDid()}`
                 }
               }
             }
@@ -532,6 +572,10 @@ export class PaidComputeStartHandler extends CommandHandler {
         task.maxJobDuration
       )
       let agreementId
+      CORE_LOGGER.logMessage(
+        `escrow.createLock cost=${cost} token=${task.payment.token} chainId=${task.payment.chainId} resources=${JSON.stringify(task.resources)} maxJobDuration=${task.maxJobDuration}`,
+        true
+      )
       try {
         agreementId = await engine.escrow.createLock(
           task.payment.chainId,
@@ -564,6 +608,19 @@ export class PaidComputeStartHandler extends CommandHandler {
           }
         }
       }
+      const isValidOutputBucket = await validateOutputBucket(
+        node,
+        task.outputBucketId,
+        task.output,
+        task.consumerAddress
+      )
+      if (isValidOutputBucket.status.httpStatus !== 200) {
+        return isValidOutputBucket
+      }
+      const isValidOutput = await validateOutput(node, task.output, node.getConfig())
+      if (isValidOutput.status.httpStatus !== 200) {
+        return isValidOutput
+      }
       try {
         const response = await engine.startComputeJob(
           task.datasets,
@@ -578,13 +635,15 @@ export class PaidComputeStartHandler extends CommandHandler {
             token: task.payment.token,
             lockTx: agreementId,
             claimTx: null,
+            cancelTx: null,
             cost: 0
           },
           jobId,
           task.metadata,
           task.additionalViewers,
           task.queueMaxWaitTime,
-          task.encryptedDockerRegistryAuth
+          task.encryptedDockerRegistryAuth,
+          task.outputBucketId
         )
         CORE_LOGGER.logMessage(
           'ComputeStartCommand Response: ' + JSON.stringify(response, null, 2),
@@ -634,7 +693,7 @@ export class PaidComputeStartHandler extends CommandHandler {
   }
 }
 
-export class FreeComputeStartHandler extends CommandHandler {
+export class FreeComputeStartHandler extends CommonComputeHandler {
   validate(command: FreeComputeStartCommand): ValidateParams {
     const commandValidation = validateCommandParameters(command, [
       'algorithm',
@@ -713,9 +772,37 @@ export class FreeComputeStartHandler extends CommandHandler {
           }
         }
       }
+      const node = this.getOceanNode()
+      const isValidOutputBucket = await validateOutputBucket(
+        node,
+        task.outputBucketId,
+        task.output,
+        task.consumerAddress
+      )
+      if (isValidOutputBucket.status.httpStatus !== 200) {
+        return isValidOutputBucket
+      }
+      const isValidOutput = await validateOutput(node, task.output, node.getConfig())
+      if (isValidOutput.status.httpStatus !== 200) {
+        return isValidOutput
+      }
       const policyServer = new PolicyServer()
+      for (const elem of [task.algorithm, ...task.datasets]) {
+        // resolve encrypted / documentId+serviceId references so persistent-storage ACL
+        // is validated here too (not only plaintext file objects)
+        const resolvedFileObject =
+          (await resolveComputeFileObject(elem)) ?? elem.fileObject
+        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
+          thisNode,
+          task.consumerAddress,
+          resolvedFileObject
+        )
+        if (psAccess) {
+          return psAccess
+        }
+      }
       for (const elem of [...[task.algorithm], ...task.datasets]) {
-        if (!('documentId' in elem)) {
+        if (!('documentId' in elem) || !elem.documentId) {
           continue
         }
         const ddo = await new FindDdoHandler(this.getOceanNode()).findAndFormatDdo(
@@ -744,9 +831,9 @@ export class FreeComputeStartHandler extends CommandHandler {
             }
           }
         }
-        const config = await getConfiguration()
-        const { chainId } = config.supportedNetworks[ddoChainId]
         const oceanNode = this.getOceanNode()
+        const config = oceanNode.getConfig()
+        const { chainId } = config.supportedNetworks[ddoChainId]
         const blockchain = oceanNode.getBlockchain(chainId)
         if (!blockchain) {
           return {
@@ -852,7 +939,8 @@ export class FreeComputeStartHandler extends CommandHandler {
           }
         }
       }
-      const env = await engine.getComputeEnvironment(null, task.environment)
+      const allFreeEnvs = await engine.getComputeEnvironments()
+      const env = allFreeEnvs.find((e) => e.id === task.environment)
       if (!env) {
         return {
           stream: null,
@@ -898,7 +986,7 @@ export class FreeComputeStartHandler extends CommandHandler {
         }
       }
       try {
-        await engine.checkIfResourcesAreAvailable(task.resources, env, true)
+        await engine.checkIfResourcesAreAvailable(task.resources, env, true, allFreeEnvs)
       } catch (e) {
         if (task.queueMaxWaitTime > 0) {
           CORE_LOGGER.verbose(
@@ -946,7 +1034,8 @@ export class FreeComputeStartHandler extends CommandHandler {
         task.metadata,
         task.additionalViewers,
         task.queueMaxWaitTime,
-        task.encryptedDockerRegistryAuth
+        task.encryptedDockerRegistryAuth,
+        task.outputBucketId
       )
 
       CORE_LOGGER.logMessage(
@@ -992,41 +1081,5 @@ async function validateAccess(
   if (access.addresses.includes(consumerAddress)) {
     return true
   }
-
-  const config = await getConfiguration()
-  const { supportedNetworks } = config
-  for (const accessListMap of access.accessLists) {
-    if (!accessListMap) continue
-    for (const chain of Object.keys(accessListMap)) {
-      const { chainId } = supportedNetworks[chain]
-      try {
-        const blockchain = oceanNode.getBlockchain(chainId)
-        if (!blockchain) {
-          CORE_LOGGER.logMessage(
-            `Blockchain instance not available for chain ${chainId}, skipping access list check`,
-            true
-          )
-          continue
-        }
-        const signer = await blockchain.getSigner()
-        for (const accessListAddress of accessListMap[chain]) {
-          const hasAccess = await checkAddressOnAccessList(
-            accessListAddress,
-            consumerAddress,
-            signer
-          )
-          if (hasAccess) {
-            return true
-          }
-        }
-      } catch (error) {
-        CORE_LOGGER.logMessage(
-          `Failed to check access lists on chain ${chain}: ${error.message}`,
-          true
-        )
-      }
-    }
-  }
-
-  return false
+  return await checkAddressOnAccessList(consumerAddress, access.accessLists, oceanNode)
 }

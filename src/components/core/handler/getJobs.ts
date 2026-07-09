@@ -22,7 +22,7 @@ export class GetJobsHandler extends CommandHandler {
     }
 
     try {
-      const { c2d } = this.getOceanNode().getDatabase()
+      const { c2d } = await this.getOceanNode().getDatabase()
       if (!c2d) {
         throw new Error('C2D database not initialized')
       }
@@ -30,10 +30,22 @@ export class GetJobsHandler extends CommandHandler {
       const jobs = await c2d.getJobs(
         task.environments,
         task.fromTimestamp,
-        task.consumerAddrs
+        task.consumerAddrs,
+        undefined,
+        task.runningJobs
       )
+      const sanitizedJobs = jobs.map((job) => {
+        if (job.algorithm) {
+          const { envs, meta, ...restAlgo } = job.algorithm
+          const sanitizedAlgo = meta
+            ? { ...restAlgo, meta: (({ rawcode, ...restMeta }) => restMeta)(meta) }
+            : restAlgo
+          return { ...job, algorithm: sanitizedAlgo }
+        }
+        return job
+      })
       return {
-        stream: Readable.from(JSON.stringify(jobs)),
+        stream: Readable.from(JSON.stringify(sanitizedJobs)),
         status: {
           httpStatus: 200,
           error: null

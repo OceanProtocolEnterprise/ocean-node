@@ -58,18 +58,19 @@ import {
   buildEnvOverrideConfig,
   getMockSupportedNetworks,
   setupEnvironment,
-  tearDownEnvironment
+  tearDownEnvironment,
+  sleep
 } from '../utils/utils.js'
 
 import { ProviderFees, ProviderComputeInitializeResults } from '../../@types/Fees.js'
-import { homedir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { publishAlgoDDO, publishDatasetDDO } from '../data/ddo.js'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' with { type: 'json' }
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
-import { createHash } from 'crypto'
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
+import { createHash, randomBytes } from 'crypto'
 import { EncryptMethod } from '../../@types/fileObject.js'
 import {
   getAlgoChecksums,
@@ -81,10 +82,58 @@ import { DDOManager } from '@oceanprotocol/ddo-js'
 import Dockerode from 'dockerode'
 import { C2DEngineDocker } from '../../components/c2d/compute_engine_docker.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
+import { create256Hash } from '../../utils/crypt.js'
+import fsp from 'fs/promises'
+import path from 'path'
+import { existsSync } from 'fs'
+import {
+  PersistentStorageCreateBucketHandler,
+  PersistentStorageUploadFileHandler
+} from '../../components/core/handler/persistentStorage.js'
+import {
+  deployAndGetAccessListConfig,
+  ensureEnterpriseFeeTokenAllowed
+} from '../utils/contracts.js'
+import * as tar from 'tar'
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+/**
+ * Polls getComputeEnvironments until every environment's resources (and free.resources)
+ * have inUse === 0. Use with the same pattern as the compute tests: pass a callback that
+ * calls ComputeGetEnvironmentsHandler and streamToObject.
+ */
+export async function waitForAllJobsToFinish(
+  oceanNode: OceanNode,
+  options?: { pollIntervalMs?: number; timeoutMs?: number }
+): Promise<void> {
+  const getEnvironmentsTask = {
+    command: PROTOCOL_COMMANDS.COMPUTE_GET_ENVIRONMENTS
+  }
+  const pollIntervalMs = options?.pollIntervalMs ?? 2000
+  const timeoutMs = options?.timeoutMs ?? 120_000
+  const deadline = Date.now() + timeoutMs
 
-describe('Compute', () => {
+  while (true) {
+    const response = await new ComputeGetEnvironmentsHandler(oceanNode).handle(
+      getEnvironmentsTask
+    )
+    const envs = await streamToObject(response.stream as Readable)
+
+    const allIdle = envs.every((env: ComputeEnvironment) => {
+      const resources = env.resources ?? []
+      const freeResources = env.free?.resources ?? []
+      const paidInUse = resources.every((r) => (r.inUse ?? 0) === 0)
+      const freeInUse = freeResources.every((r) => (r.inUse ?? 0) === 0)
+      return paidInUse && freeInUse
+    })
+    if (allIdle) return
+    if (Date.now() >= deadline) {
+      throw new Error(`waitForAllJobsToFinish timed out after ${timeoutMs}ms`)
+    }
+    await sleep(pollIntervalMs)
+  }
+}
+
+describe('**********         Compute', () => {
   let previousConfiguration: OverrideEnvConfig[]
   let config: OceanNodeConfig
   let dbconn: Database
@@ -99,6 +148,7 @@ describe('Compute', () => {
   let publishedAlgoDataset: any
   let jobId: string
   let freeJobId: string
+  let jobWithOutputURL: string
   let datasetOrderTxId: any
   let algoOrderTxId: any
   let paymentToken: any
@@ -144,39 +194,37 @@ describe('Compute', () => {
           '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
           JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-          '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"fees":{"' +
+          '[{"socketPath":"/var/run/docker.sock","environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
             DEVELOPMENT_CHAIN_ID +
             '":[{"feeToken":"' +
             paymentToken +
-            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+            '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]}]'
         ]
       )
     )
     config = await getConfiguration(true)
     dbconn = await Database.init(config.dbConfig)
-    oceanNode = await OceanNode.getInstance(
-      config,
-      dbconn,
-      null,
-      null,
-      null,
-      null,
-      null,
-      true
-    )
-    indexer = new OceanIndexer(
-      dbconn,
-      config.indexingNetworks,
-      oceanNode.blockchainRegistry
-    )
+
+    const staleJobs = await dbconn.c2d.getRunningJobs()
+    for (const job of staleJobs) {
+      await dbconn.c2d.deleteJob(job.jobId)
+    }
+
+    oceanNode = OceanNode.getInstance(config, dbconn, null, null, null, null, null, true)
+    indexer = new OceanIndexer(dbconn, config, oceanNode.blockchainRegistry)
     oceanNode.addIndexer(indexer)
-    oceanNode.addC2DEngines()
+    await oceanNode.addC2DEngines()
 
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
     consumerAccount = (await provider.getSigner(1)) as Signer
     additionalViewerAccount = (await provider.getSigner(2)) as Signer
     nonAllowedAccount = (await provider.getSigner(3)) as Signer
+    await ensureEnterpriseFeeTokenAllowed(
+      provider,
+      artifactsAddresses.development.EnterpriseFeeCollector,
+      paymentToken
+    )
 
     publisherAddress = await publisherAccount.getAddress()
     algoDDO = { ...publishAlgoDDO }
@@ -191,13 +239,20 @@ describe('Compute', () => {
       OceanToken.abi,
       publisherAccount
     )
+    console.log(
+      'initializeResponse.payment.escrowAddress:',
+      artifactsAddresses.development.EnterpriseEscrow
+    )
     escrowContract = new ethers.Contract(
-      artifactsAddresses.development.Escrow,
-      EscrowJson.abi,
+      artifactsAddresses.development.EnterpriseEscrow,
+      EnterpriseEscrowJson.abi,
       publisherAccount
     )
   })
-
+  after(async () => {
+    await oceanNode.tearDownAll()
+    await tearDownEnvironment(previousConfiguration)
+  })
   it('Sets up compute envs', () => {
     assert(oceanNode, 'Failed to instantiate OceanNode')
     assert(config.c2dClusters, 'Failed to get c2dClusters')
@@ -209,6 +264,7 @@ describe('Compute', () => {
     publishedComputeDataset = await publishAsset(computeAsset, publisherAccount)
     publishedAlgoDataset = await publishAsset(algoAsset, publisherAccount)
     const computeDatasetResult = await waitToIndex(
+      oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT
@@ -220,6 +276,7 @@ describe('Compute', () => {
       )
     }
     const algoDatasetResult = await waitToIndex(
+      oceanNode,
       publishedAlgoDataset.ddo.id,
       EVENTS.METADATA_CREATED,
       DEFAULT_TEST_TIMEOUT
@@ -271,6 +328,7 @@ describe('Compute', () => {
     const txReceipt = await setMetaDataTx.wait()
     assert(txReceipt, 'set metadata failed')
     publishedComputeDataset = await waitToIndex(
+      oceanNode,
       publishedComputeDataset.ddo.id,
       EVENTS.METADATA_UPDATED,
       DEFAULT_TEST_TIMEOUT * 2,
@@ -416,8 +474,9 @@ describe('Compute', () => {
     assert(resultParsed.providerFee.validUntil, 'algorithm validUntil does not exist')
     assert(result.datasets[0].validOrder === false, 'incorrect validOrder') // expect false because tx id was not provided and no start order was called before
     assert(result.payment, ' Payment structure does not exists')
+    console.log('artifactsAddresses.development', artifactsAddresses.development)
     assert(
-      result.payment.escrowAddress === artifactsAddresses.development.Escrow,
+      result.payment.escrowAddress === artifactsAddresses.development.EnterpriseEscrow,
       'Incorrect escrow address'
     )
     assert(result.payment.payee === firstEnv.consumerAddress, 'Incorrect payee address')
@@ -640,63 +699,152 @@ describe('Compute', () => {
     assert(response.status.httpStatus === 500, 'Failed to get 500 response')
     assert(!response.stream, 'We should not have a stream')
   })
+  it('should start a compute job with output to URL storage at 172.15.0.7', async () => {
+    // deposit funds and create auth in escrow
+    const consumerAddress = await consumerAccount.getAddress()
+    let balance = await paymentTokenContract.balanceOf(consumerAddress)
+    if (BigInt(balance.toString()) === BigInt(0)) {
+      const mintAmount = ethers.parseUnits('1000', 18)
+      const mintTx = await paymentTokenContract.mint(consumerAddress, mintAmount)
+      await mintTx.wait()
+      balance = await paymentTokenContract.balanceOf(consumerAddress)
+    }
+    const approveTx = await paymentTokenContract
+      .connect(consumerAccount)
+      .approve(initializeResponse.payment.escrowAddress, balance)
+    await approveTx.wait()
 
-  it('should start a compute job with maxed resources', async () => {
-    // first check escrow auth
+    const depositTx = await escrowContract
+      .connect(consumerAccount)
+      .deposit(initializeResponse.payment.token, balance)
+    await depositTx.wait()
 
-    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
-    let funds = await oceanNode.escrow.getUserAvailableFunds(
+    const authorizeTx = await escrowContract
+      .connect(consumerAccount)
+      .authorize(
+        initializeResponse.payment.token,
+        firstEnv.consumerAddress,
+        balance,
+        initializeResponse.payment.minLockSeconds,
+        10
+      )
+    await authorizeTx.wait()
+
+    const fundsBefore = await oceanNode.escrow.getUserAvailableFunds(
+      DEVELOPMENT_CHAIN_ID,
+      consumerAddress,
+      paymentToken
+    )
+    assert(BigInt(fundsBefore.toString()) > BigInt(0), 'Should have funds in escrow')
+
+    const computeOutput = {
+      remoteStorage: {
+        type: 'url',
+        url: 'http://172.15.0.7:80/',
+        method: 'get'
+      },
+      encryption: {
+        encryptMethod: EncryptMethod.AES,
+        key: randomBytes(32).toString('hex')
+      }
+    }
+    const encryptedOutput = await oceanNode
+      .getKeyManager()
+      .encrypt(
+        new Uint8Array(Buffer.from(JSON.stringify(computeOutput))),
+        EncryptMethod.ECIES
+      )
+
+    const nonce = Date.now().toString()
+    const messageHashBytes = createHashForSignature(
+      await consumerAccount.getAddress(),
+      nonce,
+      PROTOCOL_COMMANDS.COMPUTE_START
+    )
+    const signature = await safeSign(consumerAccount, messageHashBytes)
+    const re = []
+    for (const res of firstEnv.resources) {
+      re.push({ id: res.id, amount: res.min })
+    }
+    const startComputeTask: PaidComputeStartCommand = {
+      command: PROTOCOL_COMMANDS.COMPUTE_START,
+      consumerAddress: await consumerAccount.getAddress(),
+      signature,
+      nonce,
+      environment: firstEnv.id,
+      datasets: [
+        {
+          documentId: publishedComputeDataset.ddo.id,
+          serviceId: publishedComputeDataset.ddo.services[0].id,
+          transferTxId: datasetOrderTxId
+        }
+      ],
+      algorithm: {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: algoOrderTxId,
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      },
+      output: Buffer.from(encryptedOutput).toString('hex'),
+      payment: {
+        chainId: DEVELOPMENT_CHAIN_ID,
+        token: paymentToken
+      },
+      metadata: { key: 'value' },
+      additionalViewers: [await additionalViewerAccount.getAddress()],
+      maxJobDuration: computeJobDuration,
+      resources: re
+    }
+    const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    assert(response, 'Failed to get response')
+    assert(
+      response.status.httpStatus === 200,
+      `Expected 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+    )
+    assert(response.stream, 'Failed to get stream')
+    expect(response.stream).to.be.instanceOf(Readable)
+    const jobs = await streamToObject(response.stream as Readable)
+    assert(jobs[0].jobId, 'Failed to get job id')
+    jobWithOutputURL = jobs[0].jobId
+  })
+
+  it('should fail to start a compute job without escrow funds', async () => {
+    // ensure clean escrow state: no funds, no auths, no locks
+    const funds = await oceanNode.escrow.getUserAvailableFunds(
       DEVELOPMENT_CHAIN_ID,
       await consumerAccount.getAddress(),
       paymentToken
     )
-    // make sure we have 0 funds
     if (BigInt(funds.toString()) > BigInt(0)) {
       await escrowContract
         .connect(consumerAccount)
         .withdraw([initializeResponse.payment.token], [funds])
     }
-    let auth = await oceanNode.escrow.getAuthorizations(
+    const auth = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
       await consumerAccount.getAddress(),
       firstEnv.consumerAddress
     )
     if (auth.length > 0) {
-      // remove any auths
       await escrowContract
         .connect(consumerAccount)
         .authorize(initializeResponse.payment.token, firstEnv.consumerAddress, 0, 0, 0)
     }
-    let locks = await oceanNode.escrow.getLocks(
+    const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
       await consumerAccount.getAddress(),
       firstEnv.consumerAddress
     )
-
-    if (locks.length > 0) {
-      // cancel all locks
-      for (const lock of locks) {
-        try {
-          await escrowContract
-            .connect(consumerAccount)
-            .cancelExpiredLock(
-              lock.jobId,
-              lock.token,
-              lock.payer,
-              firstEnv.consumerAddress
-            )
-        } catch (e) {}
-      }
-      locks = await oceanNode.escrow.getLocks(
-        DEVELOPMENT_CHAIN_ID,
-        paymentToken,
-        await consumerAccount.getAddress(),
-        firstEnv.consumerAddress
-      )
+    for (const lock of locks) {
+      try {
+        await escrowContract
+          .connect(consumerAccount)
+          .cancelExpiredLock(lock.jobId, lock.token, lock.payer, firstEnv.consumerAddress)
+      } catch (e) {}
     }
-    const locksBefore = locks.length
+
     const nonce = Date.now().toString()
     const messageHashBytes = createHashForSignature(
       await consumerAccount.getAddress(),
@@ -727,7 +875,7 @@ describe('Compute', () => {
         transferTxId: algoOrderTxId,
         meta: publishedAlgoDataset.ddo.metadata.algorithm
       },
-      output: {},
+      output: null,
       payment: {
         chainId: DEVELOPMENT_CHAIN_ID,
         token: paymentToken
@@ -738,21 +886,33 @@ describe('Compute', () => {
       additionalViewers: [await additionalViewerAccount.getAddress()],
       maxJobDuration: computeJobDuration,
       resources: re
-      // additionalDatasets?: ComputeAsset[]
-      // output?: ComputeOutput
     }
-    // it should fail, because we don't have funds & auths in escrow
-    let response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
     assert(response.status.httpStatus === 400, 'Failed to get 400 response')
     assert(!response.stream, 'We should not have a stream')
-    // let's put funds in escrow & create an auth
-    balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+  })
+
+  it('should start a compute job with maxed resources', async function () {
+    this.timeout(130_000) // waitForAllJobsToFinish can take up to 120s
+    await waitForAllJobsToFinish(oceanNode)
+    let balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    if (BigInt(balance.toString()) === BigInt(0)) {
+      console.log('Minting')
+      const mintAmount = ethers.parseUnits('1000', 18)
+      const mintTx = await paymentTokenContract.mint(
+        await consumerAccount.getAddress(),
+        mintAmount
+      )
+      await mintTx.wait()
+      balance = await paymentTokenContract.balanceOf(await consumerAccount.getAddress())
+    }
     await paymentTokenContract
       .connect(consumerAccount)
       .approve(initializeResponse.payment.escrowAddress, balance)
     await escrowContract
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
+
     await escrowContract
       .connect(consumerAccount)
       .authorize(
@@ -762,20 +922,12 @@ describe('Compute', () => {
         initializeResponse.payment.minLockSeconds,
         10
       )
-    auth = await oceanNode.escrow.getAuthorizations(
+    const auth = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
       await consumerAccount.getAddress(),
       firstEnv.consumerAddress
     )
-    const authBefore = auth[0]
-    funds = await oceanNode.escrow.getUserAvailableFunds(
-      DEVELOPMENT_CHAIN_ID,
-      await consumerAccount.getAddress(),
-      paymentToken
-    )
-    const fundsBefore = funds
-    assert(BigInt(funds.toString()) > BigInt(0), 'Should have funds in escrow')
     assert(auth.length > 0, 'Should have authorization')
     assert(
       BigInt(auth[0].maxLockedAmount.toString()) > BigInt(0),
@@ -785,19 +937,68 @@ describe('Compute', () => {
       BigInt(auth[0].maxLockCounts.toString()) > BigInt(0),
       ' Should have maxLockCounts in auth'
     )
-    const nonce2 = Date.now().toString()
-    const messageHashBytes2 = createHashForSignature(
+    const authBefore = auth[0]
+
+    const fundsBefore = await oceanNode.escrow.getUserAvailableFunds(
+      DEVELOPMENT_CHAIN_ID,
       await consumerAccount.getAddress(),
-      nonce2,
+      paymentToken
+    )
+    assert(BigInt(fundsBefore.toString()) > BigInt(0), 'Should have funds in escrow')
+
+    const locksBefore = (
+      await oceanNode.escrow.getLocks(
+        DEVELOPMENT_CHAIN_ID,
+        paymentToken,
+        await consumerAccount.getAddress(),
+        firstEnv.consumerAddress
+      )
+    ).length
+
+    const nonce = Date.now().toString()
+    const messageHashBytes = createHashForSignature(
+      await consumerAccount.getAddress(),
+      nonce,
       PROTOCOL_COMMANDS.COMPUTE_START
     )
-    const signature2 = await safeSign(consumerAccount, messageHashBytes2)
-    response = await new PaidComputeStartHandler(oceanNode).handle({
-      ...startComputeTask,
-      nonce: nonce2,
-      signature: signature2
-    })
-    console.log(response)
+    const signature = await safeSign(consumerAccount, messageHashBytes)
+    const re = []
+    for (const res of firstEnv.resources) {
+      re.push({ id: res.id, amount: res.total })
+    }
+    const startComputeTask: PaidComputeStartCommand = {
+      command: PROTOCOL_COMMANDS.COMPUTE_START,
+      consumerAddress: await consumerAccount.getAddress(),
+      signature,
+      nonce,
+      environment: firstEnv.id,
+      datasets: [
+        {
+          documentId: publishedComputeDataset.ddo.id,
+          serviceId: publishedComputeDataset.ddo.services[0].id,
+          transferTxId: datasetOrderTxId
+        }
+      ],
+      algorithm: {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: algoOrderTxId,
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      },
+      output: null,
+      payment: {
+        chainId: DEVELOPMENT_CHAIN_ID,
+        token: paymentToken
+      },
+      metadata: {
+        key: 'value'
+      },
+      additionalViewers: [await additionalViewerAccount.getAddress()],
+      maxJobDuration: computeJobDuration,
+      resources: re
+    }
+    const response = await new PaidComputeStartHandler(oceanNode).handle(startComputeTask)
+    console.log({ response })
     assert(response, 'Failed to get response')
     assert(response.status.httpStatus === 200, 'Failed to get 200 response')
     assert(response.stream, 'Failed to get stream')
@@ -807,29 +1008,35 @@ describe('Compute', () => {
     // eslint-disable-next-line prefer-destructuring
     jobId = jobs[0].jobId
     console.log('**** Started compute job with id: ', jobId)
-    // check escrow
-    funds = await oceanNode.escrow.getUserAvailableFunds(
+
+    // check escrow state changed after job start
+    const fundsAfter = await oceanNode.escrow.getUserAvailableFunds(
       DEVELOPMENT_CHAIN_ID,
       await consumerAccount.getAddress(),
       paymentToken
     )
-    assert(fundsBefore > funds, 'We should have less funds')
-    locks = await oceanNode.escrow.getLocks(
+    assert(fundsBefore > fundsAfter, 'We should have less funds')
+
+    const locksAfter = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
       await consumerAccount.getAddress(),
       firstEnv.consumerAddress
     )
-    assert(locks.length > locksBefore, 'We should have locks')
-    auth = await oceanNode.escrow.getAuthorizations(
+    assert(locksAfter.length > locksBefore, 'We should have locks')
+
+    const authAfter = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
       await consumerAccount.getAddress(),
       firstEnv.consumerAddress
     )
-    assert(auth[0].currentLocks > authBefore.currentLocks, 'We should have running jobs')
     assert(
-      auth[0].currentLockedAmount > authBefore.currentLockedAmount,
+      authAfter[0].currentLocks > authBefore.currentLocks,
+      'We should have running jobs'
+    )
+    assert(
+      authAfter[0].currentLockedAmount > authBefore.currentLockedAmount,
       'We should have higher currentLockedAmount'
     )
   })
@@ -873,7 +1080,7 @@ describe('Compute', () => {
         transferTxId: algoOrderTxId,
         meta: publishedAlgoDataset.ddo.metadata.algorithm
       },
-      output: {},
+      output: null,
       payment: {
         chainId: DEVELOPMENT_CHAIN_ID,
         token: paymentToken
@@ -919,7 +1126,7 @@ describe('Compute', () => {
         transferTxId: algoOrderTxId,
         meta: publishedAlgoDataset.ddo.metadata.algorithm
       },
-      output: {},
+      output: null,
       queueMaxWaitTime: 300 // 5 minutes
       // additionalDatasets?: ComputeAsset[]
       // output?: ComputeOutput
@@ -1301,6 +1508,7 @@ describe('Compute', () => {
 
     it('should getAlgoChecksums', async function () {
       const { ddo, wasTimeout } = await waitToIndex(
+        oceanNode,
         algoDDO.id,
         EVENTS.METADATA_CREATED,
         DEFAULT_TEST_TIMEOUT,
@@ -1328,6 +1536,7 @@ describe('Compute', () => {
     it('should validateAlgoForDataset', async function () {
       this.timeout(DEFAULT_TEST_TIMEOUT * 10)
       const { ddo, wasTimeout } = await waitToIndex(
+        oceanNode,
         algoDDO.id,
         EVENTS.METADATA_CREATED,
         DEFAULT_TEST_TIMEOUT * 2,
@@ -1344,6 +1553,7 @@ describe('Compute', () => {
           config
         )
         const { ddo, wasTimeout } = await waitToIndex(
+          oceanNode,
           datasetDDO.id,
           EVENTS.METADATA_CREATED,
           DEFAULT_TEST_TIMEOUT * 2,
@@ -1714,7 +1924,7 @@ describe('Compute', () => {
           transferTxId: algoOrderTxId,
           meta: publishedAlgoDataset.ddo.metadata.algorithm
         },
-        output: {},
+        output: null,
         encryptedDockerRegistryAuth: encryptedAuth
       }
 
@@ -1771,7 +1981,7 @@ describe('Compute', () => {
           transferTxId: algoOrderTxId,
           meta: publishedAlgoDataset.ddo.metadata.algorithm
         },
-        output: {},
+        output: null,
         encryptedDockerRegistryAuth: encryptedAuth
       }
 
@@ -1985,13 +2195,952 @@ describe('Compute', () => {
     })
   })
 
-  after(async () => {
-    await tearDownEnvironment(previousConfiguration)
-    indexer.stopAllChainIndexers()
+  it('should wait for jobWithOutputURL status 70 and download output from URL', async function () {
+    this.timeout(180_000) // waitForAllJobsToFinish can take up to 180s
+    assert(jobWithOutputURL, 'jobWithOutputURL must be set by previous test')
+    const statusTask: ComputeGetStatusCommand = {
+      command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
+      consumerAddress: null,
+      agreementId: null,
+      jobId: jobWithOutputURL
+    }
+    const deadline = Date.now() + DEFAULT_TEST_TIMEOUT
+    let status: number | null = null
+    while (Date.now() < deadline) {
+      const response = await new ComputeGetStatusHandler(oceanNode).handle(statusTask)
+      assert(response?.status?.httpStatus === 200, 'Failed to get status')
+      const { stream } = response
+      const jobs = await streamToObject(stream as Readable)
+      const [job] = jobs
+      if (job) {
+        const { status: jobStatus } = job
+        if (jobStatus !== undefined) {
+          status = jobStatus
+          if (
+            status === C2DStatusNumber.JobFinished ||
+            status === C2DStatusNumber.JobSettle
+          )
+            break
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    }
+    assert(
+      status === C2DStatusNumber.JobFinished || status === C2DStatusNumber.JobSettle,
+      `Job ${jobWithOutputURL} did not reach status 70 (JobFinished) in time (last status: ${status})`
+    )
+    const outputUrl = `http://172.15.0.7:80/outputs-${jobWithOutputURL}.tar`
+    const downloadResponse = await fetch(outputUrl)
+    assert(
+      downloadResponse.ok,
+      `Failed to download output from ${outputUrl}: ${downloadResponse.status} ${downloadResponse.statusText}`
+    )
+    const body = await downloadResponse.arrayBuffer()
+    assert(body.byteLength > 0, `Output file at ${outputUrl} should be non-empty`)
+    console.log(
+      `**** Downloaded output from ${outputUrl}, size: ${body.byteLength} bytes`
+    )
+  })
+
+  describe('Compute with persistent storage (localfs)', function () {
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
+
+    let psRoot: string
+    let psDockerEngine: C2DEngineDocker | undefined
+    let psSuiteActive = false
+
+    const jobReachedSuccessfulTerminalStatus = (status: number) =>
+      status === C2DStatusNumber.JobFinished || status === C2DStatusNumber.JobSettle
+
+    const getJobConfigurationLog = async (fullJobId: string): Promise<string> => {
+      if (!psDockerEngine) return 'configuration log unavailable: no Docker engine'
+      const innerJobId = fullJobId.slice(fullJobId.indexOf('-') + 1)
+      const configurationLog = path.join(
+        (psDockerEngine as any).getStoragePath(),
+        innerJobId,
+        'data/logs/configuration.log'
+      )
+      try {
+        return await fsp.readFile(configurationLog, 'utf8')
+      } catch (error) {
+        return `configuration log unavailable at ${configurationLog}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      }
+    }
+
+    const waitForComputeJobFinished = async (
+      node: OceanNode,
+      fullJobId: string,
+      timeoutMs: number
+    ) => {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        const r = await new ComputeGetStatusHandler(node).handle({
+          command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
+          consumerAddress: null,
+          agreementId: null,
+          jobId: fullJobId
+        })
+        assert.equal(r.status.httpStatus, 200)
+        const jobs = await streamToObject(r.stream as Readable)
+        const j = jobs[0]
+        if (!j) {
+          await sleep(2000)
+          continue
+        }
+        if (jobReachedSuccessfulTerminalStatus(j.status)) {
+          return j
+        }
+        if (j.dateFinished && !jobReachedSuccessfulTerminalStatus(j.status)) {
+          const configurationLog = await getJobConfigurationLog(fullJobId)
+          assert.fail(
+            `Job ended with status ${j.status} (${j.statusText}) instead of JobFinished or JobSettle.\n` +
+              `Configuration log:\n${configurationLog}`
+          )
+        }
+        await sleep(3000)
+      }
+      assert.fail(
+        `Job ${fullJobId} did not reach JobFinished or JobSettle within ${timeoutMs}ms`
+      )
+    }
+
+    // create a bucket owned by `account` and upload `content` under `fileName`
+    const createBucketAndUpload = async (
+      account: any,
+      fileName: string,
+      content: string | Buffer
+    ): Promise<string> => {
+      const consumerAddress = await account.getAddress()
+      let nonce = Date.now().toString()
+      let signature = await safeSign(
+        account,
+        createHashForSignature(
+          consumerAddress,
+          nonce,
+          PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+        )
+      )
+      const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+        consumerAddress,
+        signature,
+        nonce,
+        accessLists: [],
+        authorization: undefined
+      } as any)
+      assert.equal(createRes.status.httpStatus, 200)
+      const bucketId = (await streamToObject(createRes.stream as Readable))
+        .bucketId as string
+
+      nonce = Date.now().toString()
+      signature = await safeSign(
+        account,
+        createHashForSignature(
+          consumerAddress,
+          nonce,
+          PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+        )
+      )
+      const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+        consumerAddress,
+        signature,
+        nonce,
+        bucketId,
+        fileName,
+        stream: Readable.from(Buffer.isBuffer(content) ? content : Buffer.from(content))
+      } as any)
+      assert.equal(uploadRes.status.httpStatus, 200)
+      return bucketId
+    }
+
+    // ECIES-encrypted file object (hex) wrapping a nodePersistentStorage reference,
+    // mirroring how an encrypted DDO service.files would look
+    const encryptPSFileObject = async (
+      bucketId: string,
+      fileName: string
+    ): Promise<string> => {
+      const data = Uint8Array.from(
+        Buffer.from(
+          JSON.stringify({
+            files: [{ type: 'nodePersistentStorage', bucketId, fileName }]
+          })
+        )
+      )
+      const encrypted = await oceanNode.getKeyManager().encrypt(data, EncryptMethod.ECIES)
+      return Buffer.from(encrypted).toString('hex')
+    }
+
+    const buildFreeStart = async (
+      account: any,
+      datasets: any[],
+      algorithm: any
+    ): Promise<FreeComputeStartCommand> => {
+      const consumerAddress = await account.getAddress()
+      const nonce = Date.now().toString()
+      const signature = await safeSign(
+        account,
+        createHashForSignature(
+          consumerAddress,
+          nonce,
+          PROTOCOL_COMMANDS.FREE_COMPUTE_START
+        )
+      )
+      return {
+        command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
+        consumerAddress,
+        signature,
+        nonce,
+        environment: firstEnv.id,
+        queueMaxWaitTime: 0,
+        datasets,
+        algorithm,
+        output: null
+      }
+    }
+
+    // run a free compute job to completion and return the extracted contents of a
+    // single output file written by the algorithm into /data/outputs
+    const runFreeJobAndReadOutput = async (
+      account: any,
+      datasets: any[],
+      algorithm: any,
+      outputFileName: string
+    ): Promise<string> => {
+      const startTask = await buildFreeStart(account, datasets, algorithm)
+      const startRes = await new FreeComputeStartHandler(oceanNode).handle(startTask)
+      assert.equal(startRes.status.httpStatus, 200, String(startRes.status.error))
+      const started = await streamToObject(startRes.stream as Readable)
+      const fullJobId = started[0].jobId as string
+      const innerJobId = fullJobId.slice(fullJobId.indexOf('-') + 1)
+      await sleep(2000) // give the job a moment to start and create its output directory
+      await waitForComputeJobFinished(oceanNode, fullJobId, 180_000)
+
+      const base = (psDockerEngine as any).getStoragePath() as string
+      const outputsTarPath = path.join(base, innerJobId, 'data/outputs/outputs.tar')
+      /* eslint-disable security/detect-non-literal-fs-filename -- job paths from C2D engine */
+      assert(existsSync(outputsTarPath), `expected outputs archive at ${outputsTarPath}`)
+      const extractDir = await fsp.mkdtemp(path.join(tmpdir(), 'ocean-ps-out-'))
+      try {
+        await tar.x({ file: outputsTarPath, cwd: extractDir }, [
+          `outputs/${outputFileName}`
+        ])
+        const extracted = path.join(extractDir, `outputs/${outputFileName}`)
+        assert(
+          existsSync(extracted),
+          `expected outputs/${outputFileName} inside outputs.tar`
+        )
+        return await fsp.readFile(extracted, 'utf8')
+      } finally {
+        await fsp.rm(extractDir, { recursive: true, force: true })
+      }
+      /* eslint-enable security/detect-non-literal-fs-filename */
+    }
+
+    before(async function () {
+      try {
+        const d = new Dockerode()
+        await d.info()
+      } catch {
+        this.skip()
+      }
+
+      psRoot = await fsp.mkdtemp(path.join(tmpdir(), 'ocean-compute-ps-'))
+      const bucketAllowList = await deployAndGetAccessListConfig(
+        publisherAccount,
+        provider,
+        [
+          publisherAccount,
+          consumerAccount,
+          (await provider.getSigner(2)) as Signer,
+          (await provider.getSigner(3)) as Signer
+        ]
+      )
+      assert(bucketAllowList, 'access list deploy failed for persistent storage')
+
+      const cfg = await getConfiguration(true)
+      cfg.persistentStorage = {
+        enabled: true,
+        type: 'localfs',
+        accessLists: [bucketAllowList],
+        options: { folder: psRoot }
+      }
+
+      const enginesOld = oceanNode.getC2DEngines()
+      if (enginesOld) await enginesOld.stopAllEngines()
+      const km = oceanNode.getKeyManager()
+      const br = oceanNode.blockchainRegistry
+      oceanNode = OceanNode.getInstance(cfg, dbconn, null, null, indexer, km, br, true)
+      oceanNode.addIndexer(indexer)
+      await oceanNode.addC2DEngines()
+
+      const c2dEngines = oceanNode.getC2DEngines()
+      const engines = (c2dEngines as any).engines as C2DEngineDocker[]
+      psDockerEngine = engines.find((e) => e instanceof C2DEngineDocker)
+      if (!psDockerEngine) {
+        this.skip()
+      }
+
+      await waitForAllJobsToFinish(oceanNode)
+      psSuiteActive = true
+    })
+
+    after(async () => {
+      if (!psSuiteActive) return
+      try {
+        const enginesOld = oceanNode.getC2DEngines()
+        if (enginesOld) await enginesOld.stopAllEngines()
+        const cfg = await getConfiguration(true)
+        cfg.persistentStorage = {
+          enabled: false,
+          type: 'localfs',
+          accessLists: [],
+          options: { folder: '/tmp' }
+        }
+        const km = oceanNode.getKeyManager()
+        const br = oceanNode.blockchainRegistry
+        oceanNode = OceanNode.getInstance(cfg, dbconn, null, null, indexer, km, br, true)
+        oceanNode.addIndexer(indexer)
+        await oceanNode.addC2DEngines()
+      } catch (e) {
+        console.error('Compute persistent-storage suite teardown failed:', e)
+      }
+    })
+
+    it('happy path: bind-mounted persistent storage file is readable inside the container', async function () {
+      const consumerAddress = await consumerAccount.getAddress()
+      let nonce = Date.now().toString()
+      let messageHashBytes = createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+      )
+      let signature = await safeSign(consumerAccount, messageHashBytes)
+      const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+        consumerAddress,
+        signature,
+        nonce,
+        accessLists: [],
+        authorization: undefined
+      } as any)
+      assert.equal(createRes.status.httpStatus, 200)
+      const created = await streamToObject(createRes.stream as Readable)
+      const bucketId = created.bucketId as string
+
+      const fileName = 'ps-data.txt'
+      const secret = 'PS_COMPUTE_INTEGRATION_OK\n'
+      nonce = Date.now().toString()
+      messageHashBytes = createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+      )
+      signature = await safeSign(consumerAccount, messageHashBytes)
+      const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+        consumerAddress,
+        signature,
+        nonce,
+        bucketId,
+        fileName,
+        stream: Readable.from(Buffer.from(secret))
+      } as any)
+      assert.equal(uploadRes.status.httpStatus, 200)
+
+      const rawcode = [
+        "const fs = require('fs');",
+        `const p = '/data/persistentStorage/${bucketId}/${fileName}';`,
+        "const out = '/data/outputs/ps-result.txt';",
+        "fs.mkdirSync('/data/outputs', { recursive: true });",
+        "const c = fs.readFileSync(p, 'utf8');",
+        "fs.writeFileSync(out, c, 'utf8');"
+      ].join('\n')
+
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+
+      const initResp = await new ComputeInitializeHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
+        consumerAddress,
+        datasets: [
+          {
+            fileObject: {
+              type: 'nodePersistentStorage',
+              bucketId,
+              fileName
+            } as any
+          }
+        ],
+        algorithm: {
+          meta: {
+            ...algoMeta,
+            rawcode
+          }
+        },
+        environment: firstEnv.id,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: 60
+      } as any)
+      assert.equal(initResp.status.httpStatus, 200, String(initResp.status.error))
+
+      nonce = Date.now().toString()
+      messageHashBytes = createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.FREE_COMPUTE_START
+      )
+      signature = await safeSign(consumerAccount, messageHashBytes)
+
+      const startTask: FreeComputeStartCommand = {
+        command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
+        consumerAddress,
+        signature,
+        nonce,
+        environment: firstEnv.id,
+        queueMaxWaitTime: 0,
+        datasets: [
+          {
+            fileObject: {
+              type: 'nodePersistentStorage',
+              bucketId,
+              fileName
+            } as any
+          }
+        ],
+        algorithm: {
+          meta: {
+            ...algoMeta,
+            rawcode
+          }
+        },
+        output: null
+      }
+
+      const startRes = await new FreeComputeStartHandler(oceanNode).handle(startTask)
+      assert.equal(startRes.status.httpStatus, 200, String(startRes.status.error))
+      const started = await streamToObject(startRes.stream as Readable)
+      const fullJobId = started[0].jobId as string
+      const innerJobId = fullJobId.slice(fullJobId.indexOf('-') + 1)
+
+      await waitForComputeJobFinished(oceanNode, fullJobId, 180_000)
+
+      const base = (psDockerEngine as any).getStoragePath() as string
+      const outputsTarPath = path.join(base, innerJobId, 'data/outputs/outputs.tar')
+      /* eslint-disable security/detect-non-literal-fs-filename -- job paths from C2D engine */
+      assert(
+        existsSync(outputsTarPath),
+        `expected outputs archive at ${outputsTarPath} (algorithm should write into /data/outputs before tar)`
+      )
+      const extractDir = await fsp.mkdtemp(path.join(tmpdir(), 'ocean-ps-tar-'))
+      try {
+        await tar.x(
+          {
+            file: outputsTarPath,
+            cwd: extractDir
+          },
+          ['outputs/ps-result.txt']
+        )
+        const extractedFile = path.join(extractDir, 'outputs/ps-result.txt')
+        assert(
+          existsSync(extractedFile),
+          'expected outputs/ps-result.txt inside outputs.tar'
+        )
+        const written = await fsp.readFile(extractedFile, 'utf8')
+        assert.equal(written, secret)
+      } finally {
+        await fsp.rm(extractDir, { recursive: true, force: true })
+      }
+      /* eslint-enable security/detect-non-literal-fs-filename */
+    })
+
+    it('denies free compute start when consumer is not on the bucket access list', async function () {
+      const ownerAddress = await consumerAccount.getAddress()
+      let nonce = Date.now().toString()
+      let messageHashBytes = createHashForSignature(
+        ownerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+      )
+      let signature = await safeSign(consumerAccount, messageHashBytes)
+      const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+        consumerAddress: ownerAddress,
+        signature,
+        nonce,
+        accessLists: [],
+        authorization: undefined
+      } as any)
+      assert.equal(createRes.status.httpStatus, 200)
+      const created = await streamToObject(createRes.stream as Readable)
+      const bucketId = created.bucketId as string
+
+      const fileName = 'private.txt'
+      nonce = Date.now().toString()
+      messageHashBytes = createHashForSignature(
+        ownerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+      )
+      signature = await safeSign(consumerAccount, messageHashBytes)
+      const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+        consumerAddress: ownerAddress,
+        signature,
+        nonce,
+        bucketId,
+        fileName,
+        stream: Readable.from(Buffer.from('secret'))
+      } as any)
+      assert.equal(uploadRes.status.httpStatus, 200)
+
+      const intruderAddress = await nonAllowedAccount.getAddress()
+      nonce = Date.now().toString()
+      messageHashBytes = createHashForSignature(
+        intruderAddress,
+        nonce,
+        PROTOCOL_COMMANDS.FREE_COMPUTE_START
+      )
+      signature = await safeSign(nonAllowedAccount, messageHashBytes)
+
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+
+      const initResp = await new ComputeInitializeHandler(oceanNode).handle({
+        command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE,
+        consumerAddress: intruderAddress,
+        datasets: [
+          {
+            fileObject: {
+              type: 'nodePersistentStorage',
+              bucketId,
+              fileName
+            } as any
+          }
+        ],
+        algorithm: {
+          meta: {
+            ...algoMeta,
+            rawcode: "console.log('noop');"
+          }
+        },
+        environment: firstEnv.id,
+        payment: {
+          chainId: DEVELOPMENT_CHAIN_ID,
+          token: paymentToken
+        },
+        maxJobDuration: 60
+      } as any)
+      assert.equal(initResp.status.httpStatus, 403, String(initResp.status.error))
+
+      const startTask: FreeComputeStartCommand = {
+        command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
+        consumerAddress: intruderAddress,
+        signature,
+        nonce,
+        environment: firstEnv.id,
+        queueMaxWaitTime: 0,
+        datasets: [
+          {
+            fileObject: {
+              type: 'nodePersistentStorage',
+              bucketId,
+              fileName
+            } as any
+          }
+        ],
+        algorithm: {
+          meta: {
+            ...algoMeta,
+            rawcode: "console.log('noop');"
+          }
+        },
+        output: null
+      }
+
+      const startRes = await new FreeComputeStartHandler(oceanNode).handle(startTask)
+      assert.equal(startRes.status.httpStatus, 403, String(startRes.status.error))
+      assert.include(
+        (startRes.status.error || '').toLowerCase(),
+        'allow',
+        'expected access-denied style message'
+      )
+    })
+
+    it('reads a persistent storage dataset provided as an ENCRYPTED file object', async function () {
+      const fileName = 'enc-ps-data.txt'
+      const secret = 'ENCRYPTED_PS_DATASET_OK\n'
+      const bucketId = await createBucketAndUpload(consumerAccount, fileName, secret)
+      const encryptedFileObject = await encryptPSFileObject(bucketId, fileName)
+
+      const rawcode = [
+        "const fs = require('fs');",
+        `const p = '/data/persistentStorage/${bucketId}/${fileName}';`,
+        "fs.mkdirSync('/data/outputs', { recursive: true });",
+        "fs.writeFileSync('/data/outputs/enc-result.txt', fs.readFileSync(p, 'utf8'), 'utf8');"
+      ].join('\n')
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+
+      const written = await runFreeJobAndReadOutput(
+        consumerAccount,
+        [{ fileObject: encryptedFileObject as any }],
+        { meta: { ...algoMeta, rawcode } },
+        'enc-result.txt'
+      )
+      assert.equal(written, secret)
+    })
+
+    it('runs an ALGORITHM stored in persistent storage (no longer banned)', async function () {
+      const algoFileName = 'algo.js'
+      const inputFileName = 'algo-input.txt'
+      const algoCode = [
+        "const fs = require('fs');",
+        "fs.mkdirSync('/data/outputs', { recursive: true });",
+        "fs.writeFileSync('/data/outputs/algo-result.txt', 'PS_ALGORITHM_OK\\n', 'utf8');"
+      ].join('\n')
+      const bucketId = await createBucketAndUpload(
+        consumerAccount,
+        algoFileName,
+        algoCode
+      )
+      // upload an input file into the same bucket so the job has a dataset
+      await (async () => {
+        const consumerAddress = await consumerAccount.getAddress()
+        const nonce = Date.now().toString()
+        const signature = await safeSign(
+          consumerAccount,
+          createHashForSignature(
+            consumerAddress,
+            nonce,
+            PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+          )
+        )
+        const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+          command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+          consumerAddress,
+          signature,
+          nonce,
+          bucketId,
+          fileName: inputFileName,
+          stream: Readable.from(Buffer.from('input\n'))
+        } as any)
+        assert.equal(uploadRes.status.httpStatus, 200)
+      })()
+
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+      const written = await runFreeJobAndReadOutput(
+        consumerAccount,
+        [
+          {
+            fileObject: {
+              type: 'nodePersistentStorage',
+              bucketId,
+              fileName: inputFileName
+            } as any
+          }
+        ],
+        {
+          meta: { ...algoMeta },
+          fileObject: {
+            type: 'nodePersistentStorage',
+            bucketId,
+            fileName: algoFileName
+          } as any
+        },
+        'algo-result.txt'
+      )
+      assert.equal(written, 'PS_ALGORITHM_OK\n')
+    })
+
+    it('handles a MIX of persistent-storage and non-persistent-storage datasets', async function () {
+      const fileName = 'mixed-ps.txt'
+      const secret = 'MIXED_PS_OK\n'
+      const bucketId = await createBucketAndUpload(consumerAccount, fileName, secret)
+      const encryptedFileObject = await encryptPSFileObject(bucketId, fileName)
+
+      const rawcode = [
+        "const fs = require('fs');",
+        `const ps = fs.readFileSync('/data/persistentStorage/${bucketId}/${fileName}', 'utf8');`,
+        "const inputs = fs.readdirSync('/data/inputs').filter(f => f !== 'algoCustomData.json');",
+        "fs.mkdirSync('/data/outputs', { recursive: true });",
+        "fs.writeFileSync('/data/outputs/mixed-result.txt', ps + '|inputs=' + inputs.length, 'utf8');"
+      ].join('\n')
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+
+      const written = await runFreeJobAndReadOutput(
+        consumerAccount,
+        [
+          { fileObject: encryptedFileObject as any },
+          {
+            fileObject: {
+              type: 'url',
+              method: 'GET',
+              url: 'https://raw.githubusercontent.com/oceanprotocol/test-algorithm/master/javascript/algo.js'
+            } as any
+          }
+        ],
+        { meta: { ...algoMeta, rawcode } },
+        'mixed-result.txt'
+      )
+      // the persistent-storage dataset is bind-mounted, the URL dataset is downloaded
+      // into /data/inputs alongside algoCustomData.json
+      assert(written.startsWith(secret + '|inputs='), `unexpected output: ${written}`)
+      const count = parseInt(written.split('|inputs=')[1], 10)
+      assert(count >= 1, `expected at least one downloaded non-PS input, got ${count}`)
+    })
+
+    it('denies a persistent-storage ALGORITHM when the consumer is not on the bucket ACL', async function () {
+      const algoFileName = 'private-algo.js'
+      const bucketId = await createBucketAndUpload(
+        consumerAccount,
+        algoFileName,
+        "console.log('noop');"
+      )
+
+      const intruder = nonAllowedAccount
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+      const startTask = await buildFreeStart(
+        intruder,
+        [
+          {
+            fileObject: {
+              type: 'nodePersistentStorage',
+              bucketId,
+              fileName: algoFileName
+            } as any
+          }
+        ],
+        {
+          meta: { ...algoMeta },
+          fileObject: {
+            type: 'nodePersistentStorage',
+            bucketId,
+            fileName: algoFileName
+          } as any
+        }
+      )
+      const startRes = await new FreeComputeStartHandler(oceanNode).handle(startTask)
+      assert.equal(startRes.status.httpStatus, 403, String(startRes.status.error))
+      assert.include((startRes.status.error || '').toLowerCase(), 'allow')
+    })
+
+    it('getAlgoChecksums computes a real content checksum for a PUBLISHED persistent-storage algorithm', async function () {
+      this.timeout(DEFAULT_TEST_TIMEOUT * 6)
+      const algoFileName = 'published-algo.js'
+      const algoCode = "console.log('published ps algo');\n"
+      const bucketId = await createBucketAndUpload(
+        consumerAccount,
+        algoFileName,
+        algoCode
+      )
+      const expected = createHash('sha256').update(Buffer.from(algoCode)).digest('hex')
+
+      // publish an algorithm DDO whose (encrypted) service.files points to the bucket file
+      const psAlgoAsset = JSON.parse(JSON.stringify(algoAsset))
+      psAlgoAsset.services[0].files.files = [
+        { type: 'nodePersistentStorage', bucketId, fileName: algoFileName }
+      ]
+      const published = await publishAsset(psAlgoAsset, publisherAccount)
+      assert(published, 'failed to publish persistent-storage algorithm DDO')
+
+      const { ddo, wasTimeout } = await waitToIndex(
+        oceanNode,
+        published.ddo.id,
+        EVENTS.METADATA_CREATED,
+        DEFAULT_TEST_TIMEOUT * 3,
+        true
+      )
+      if (!ddo) {
+        expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
+        return
+      }
+
+      const config = await getConfiguration()
+      const consumerAddress = await consumerAccount.getAddress()
+      const checksums = await getAlgoChecksums(
+        ddo.id,
+        ddo.services[0].id,
+        oceanNode,
+        config,
+        consumerAddress
+      )
+      expect(checksums.files).to.equal(expected)
+      expect(checksums.container).to.not.equal('')
+    })
+
+    describe('Compute output in bucket (outputBucketId)', function () {
+      let outputBucketId: string
+      const seedFileName = 'seed.txt'
+      const resultFileName = 'bucket-result.txt'
+      const seedContent = 'OUTPUT_BUCKET_SEED\n'
+
+      const bucketResultPath = () =>
+        path.join(psRoot, 'buckets', outputBucketId, resultFileName)
+
+      const copyRawcode = (inputFileName: string, appendSuffix = '') =>
+        [
+          "const fs = require('fs');",
+          `const c = fs.readFileSync('/data/persistentStorage/${outputBucketId}/${inputFileName}', 'utf8');`,
+          `fs.writeFileSync('/data/outputs/${resultFileName}', c + '${appendSuffix}', 'utf8');`
+        ].join('\n')
+
+      const startFreeJob = async (
+        inputFileName: string,
+        rawcode: string,
+        opts: { account?: typeof consumerAccount; output?: string } = {}
+      ) => {
+        const account = opts.account ?? consumerAccount
+        const consumerAddress = await account.getAddress()
+        const nonce = Date.now().toString()
+        const signature = await safeSign(
+          account,
+          createHashForSignature(
+            consumerAddress,
+            nonce,
+            PROTOCOL_COMMANDS.FREE_COMPUTE_START
+          )
+        )
+        const startTask: FreeComputeStartCommand = {
+          command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
+          consumerAddress,
+          signature,
+          nonce,
+          environment: firstEnv.id,
+          queueMaxWaitTime: 0,
+          datasets: [
+            {
+              fileObject: {
+                type: 'nodePersistentStorage',
+                bucketId: outputBucketId,
+                fileName: inputFileName
+              } as any
+            }
+          ],
+          algorithm: {
+            meta: { ...publishedAlgoDataset.ddo.metadata.algorithm, rawcode }
+          },
+          output: opts.output ?? null,
+          outputBucketId
+        }
+        return new FreeComputeStartHandler(oceanNode).handle(startTask)
+      }
+
+      const startFreeJobAndWait = async (inputFileName: string, rawcode: string) => {
+        const startRes = await startFreeJob(inputFileName, rawcode)
+        assert.equal(startRes.status.httpStatus, 200, String(startRes.status.error))
+        const started = await streamToObject(startRes.stream as Readable)
+        const fullJobId = started[0].jobId as string
+        const job = await waitForComputeJobFinished(oceanNode, fullJobId, 180_000)
+        return { job, innerJobId: fullJobId.slice(fullJobId.indexOf('-') + 1) }
+      }
+
+      before(async function () {
+        const consumerAddress = await consumerAccount.getAddress()
+        let nonce = Date.now().toString()
+        let signature = await safeSign(
+          consumerAccount,
+          createHashForSignature(
+            consumerAddress,
+            nonce,
+            PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+          )
+        )
+        const createRes = await new PersistentStorageCreateBucketHandler(
+          oceanNode
+        ).handle({
+          command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+          consumerAddress,
+          signature,
+          nonce,
+          accessLists: [],
+          authorization: undefined
+        } as any)
+        assert.equal(createRes.status.httpStatus, 200)
+        outputBucketId = (await streamToObject(createRes.stream as Readable)).bucketId
+
+        nonce = Date.now().toString()
+        signature = await safeSign(
+          consumerAccount,
+          createHashForSignature(
+            consumerAddress,
+            nonce,
+            PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+          )
+        )
+        const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+          command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+          consumerAddress,
+          signature,
+          nonce,
+          bucketId: outputBucketId,
+          fileName: seedFileName,
+          stream: Readable.from(Buffer.from(seedContent))
+        } as any)
+        assert.equal(uploadRes.status.httpStatus, 200)
+      })
+
+      /* eslint-disable security/detect-non-literal-fs-filename -- test paths */
+      it('stores job results directly in the bucket as individual files (no outputs.tar)', async function () {
+        this.timeout(300_000)
+        const { job, innerJobId } = await startFreeJobAndWait(
+          seedFileName,
+          copyRawcode(seedFileName)
+        )
+
+        assert.equal(await fsp.readFile(bucketResultPath(), 'utf8'), seedContent)
+        const files = await oceanNode
+          .getPersistentStorage()
+          .listFiles(outputBucketId, await consumerAccount.getAddress())
+        assert(
+          files.some((f) => f.name === resultFileName),
+          'result file should be listed in the bucket'
+        )
+
+        const base = (psDockerEngine as any).getStoragePath() as string
+        const outputsTarPath = path.join(base, innerJobId, 'data/outputs/outputs.tar')
+        assert(!existsSync(outputsTarPath), 'outputs.tar should not exist')
+        assert(
+          !(job.results || []).some((r: any) => r.type === 'output'),
+          'no output entry expected in results'
+        )
+      })
+
+      it('chains a bucket output file as input of a next job and overwrites on collision', async function () {
+        this.timeout(300_000)
+        await startFreeJobAndWait(resultFileName, copyRawcode(resultFileName, 'CHAINED'))
+
+        assert.equal(
+          await fsp.readFile(bucketResultPath(), 'utf8'),
+          seedContent + 'CHAINED'
+        )
+        const entries = await fsp.readdir(path.join(psRoot, 'buckets', outputBucketId))
+        assert.deepEqual(entries.sort(), [resultFileName, seedFileName].sort())
+      })
+      /* eslint-enable security/detect-non-literal-fs-filename */
+
+      it('rejects a start request with both output and outputBucketId', async function () {
+        const res = await startFreeJob(seedFileName, "console.log('noop');", {
+          output: '0xdeadbeef'
+        })
+        assert.equal(res.status.httpStatus, 400, String(res.status.error))
+        assert.include(String(res.status.error), 'mutually exclusive')
+      })
+
+      it('denies compute start when consumer is not allowed on the output bucket', async function () {
+        const res = await startFreeJob(seedFileName, "console.log('noop');", {
+          account: nonAllowedAccount
+        })
+        assert.equal(res.status.httpStatus, 403, String(res.status.error))
+        assert.include((res.status.error || '').toLowerCase(), 'allow')
+      })
+    })
   })
 })
 
-describe('Compute Access Restrictions', () => {
+describe('**********         Compute Access Restrictions', () => {
   let previousConfiguration: OverrideEnvConfig[]
   let config: OceanNodeConfig
   let dbconn: Database
@@ -2079,7 +3228,7 @@ describe('Compute Access Restrictions', () => {
         serviceId: publishedAlgoDataset.ddo.services[0].id,
         meta: publishedAlgoDataset.ddo.metadata.algorithm
       },
-      output: {}
+      output: null
     }
   }
 
@@ -2110,7 +3259,7 @@ describe('Compute Access Restrictions', () => {
             '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
             JSON.stringify(['0xe2DD09d719Da89e5a3D0F2549c7E24566e947260']),
             `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-            '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"access":{"addresses":["' +
+            '[{"socketPath":"/var/run/docker.sock","environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"access":{"addresses":["' +
               allowedAddress +
               '"],"accessLists":[]},"fees":{"' +
               DEVELOPMENT_CHAIN_ID +
@@ -2118,13 +3267,13 @@ describe('Compute Access Restrictions', () => {
               paymentToken +
               '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"access":{"addresses":["' +
               allowedAddress +
-              '"],"accessLists":[]},"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+              '"],"accessLists":[]},"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]}]'
           ]
         )
       )
       config = await getConfiguration(true)
       dbconn = await Database.init(config.dbConfig)
-      oceanNode = await OceanNode.getInstance(
+      oceanNode = OceanNode.getInstance(
         config,
         dbconn,
         null,
@@ -2134,29 +3283,30 @@ describe('Compute Access Restrictions', () => {
         null,
         true
       )
-      const indexer = new OceanIndexer(
-        dbconn,
-        config.indexingNetworks,
-        oceanNode.blockchainRegistry
-      )
+      const indexer = new OceanIndexer(dbconn, config, oceanNode.blockchainRegistry)
       oceanNode.addIndexer(indexer)
-      oceanNode.addC2DEngines()
+      await oceanNode.addC2DEngines()
 
       publishedComputeDataset = await publishAsset(computeAsset, publisherAccount)
       publishedAlgoDataset = await publishAsset(algoAsset, publisherAccount)
 
       await waitToIndex(
+        oceanNode,
         publishedComputeDataset.ddo.id,
         EVENTS.METADATA_CREATED,
         DEFAULT_TEST_TIMEOUT
       )
       await waitToIndex(
+        oceanNode,
         publishedAlgoDataset.ddo.id,
         EVENTS.METADATA_CREATED,
         DEFAULT_TEST_TIMEOUT
       )
     })
-
+    after(async () => {
+      await oceanNode.tearDownAll()
+      await tearDownEnvironment(previousConfiguration)
+    })
     it('Get compute environments with address restrictions', async () => {
       const getEnvironmentsTask = { command: PROTOCOL_COMMANDS.COMPUTE_GET_ENVIRONMENTS }
       const response = await new ComputeGetEnvironmentsHandler(oceanNode).handle(
@@ -2189,10 +3339,6 @@ describe('Compute Access Restrictions', () => {
       )
       const response = await new FreeComputeStartHandler(oceanNode).handle(command)
       assert(response.status.httpStatus === 403, 'Should get 403 access denied')
-    })
-
-    after(async () => {
-      await tearDownEnvironment(previousConfiguration)
     })
   })
 
@@ -2274,36 +3420,44 @@ describe('Compute Access Restrictions', () => {
             JSON.stringify([
               {
                 socketPath: '/var/run/docker.sock',
-                resources: [{ id: 'disk', total: 10 }],
-                storageExpiry: 604800,
-                maxJobDuration: 3600,
-                minJobDuration: 60,
-                access: {
-                  addresses: [],
-                  accessLists: [{ [DEVELOPMENT_CHAIN_ID]: [accessListAddress] }]
-                },
-                fees: {
-                  [DEVELOPMENT_CHAIN_ID]: [
-                    {
-                      feeToken: paymentToken,
-                      prices: [{ id: 'cpu', price: 1 }]
+                environments: [
+                  {
+                    storageExpiry: 604800,
+                    maxJobDuration: 3600,
+                    minJobDuration: 60,
+                    resources: [
+                      { id: 'cpu', total: 4, max: 4, min: 1, type: 'cpu' },
+                      { id: 'ram', total: 10, max: 10, min: 1, type: 'ram' },
+                      { id: 'disk', total: 10, max: 10, min: 0, type: 'disk' }
+                    ],
+                    access: {
+                      addresses: [],
+                      accessLists: [{ [DEVELOPMENT_CHAIN_ID]: [accessListAddress] }]
+                    },
+                    fees: {
+                      [DEVELOPMENT_CHAIN_ID]: [
+                        {
+                          feeToken: paymentToken,
+                          prices: [{ id: 'cpu', price: 1 }]
+                        }
+                      ]
+                    },
+                    free: {
+                      maxJobDuration: 60,
+                      minJobDuration: 10,
+                      maxJobs: 3,
+                      access: {
+                        addresses: [],
+                        accessLists: [{ [DEVELOPMENT_CHAIN_ID]: [accessListAddress] }]
+                      },
+                      resources: [
+                        { id: 'cpu', max: 1 },
+                        { id: 'ram', max: 1 },
+                        { id: 'disk', max: 1 }
+                      ]
                     }
-                  ]
-                },
-                free: {
-                  maxJobDuration: 60,
-                  minJobDuration: 10,
-                  maxJobs: 3,
-                  access: {
-                    addresses: [],
-                    accessLists: [{ [DEVELOPMENT_CHAIN_ID]: [accessListAddress] }]
-                  },
-                  resources: [
-                    { id: 'cpu', max: 1 },
-                    { id: 'ram', max: 1 },
-                    { id: 'disk', max: 1 }
-                  ]
-                }
+                  }
+                ]
               }
             ])
           ]
@@ -2311,7 +3465,7 @@ describe('Compute Access Restrictions', () => {
       )
       config = await getConfiguration(true)
       dbconn = await Database.init(config.dbConfig)
-      oceanNode = await OceanNode.getInstance(
+      oceanNode = OceanNode.getInstance(
         config,
         dbconn,
         null,
@@ -2321,29 +3475,30 @@ describe('Compute Access Restrictions', () => {
         null,
         true
       )
-      const indexer = new OceanIndexer(
-        dbconn,
-        config.indexingNetworks,
-        oceanNode.blockchainRegistry
-      )
+      const indexer = new OceanIndexer(dbconn, config, oceanNode.blockchainRegistry)
       oceanNode.addIndexer(indexer)
-      oceanNode.addC2DEngines()
+      await oceanNode.addC2DEngines()
 
       publishedComputeDataset = await publishAsset(computeAsset, publisherAccount)
       publishedAlgoDataset = await publishAsset(algoAsset, publisherAccount)
 
       await waitToIndex(
+        oceanNode,
         publishedComputeDataset.ddo.id,
         EVENTS.METADATA_CREATED,
         DEFAULT_TEST_TIMEOUT
       )
       await waitToIndex(
+        oceanNode,
         publishedAlgoDataset.ddo.id,
         EVENTS.METADATA_CREATED,
         DEFAULT_TEST_TIMEOUT
       )
     })
-
+    after(async () => {
+      await oceanNode.tearDownAll()
+      await tearDownEnvironment(previousConfiguration)
+    })
     it('Get compute environments with access list restrictions', async () => {
       const getEnvironmentsTask = { command: PROTOCOL_COMMANDS.COMPUTE_GET_ENVIRONMENTS }
       const response = await new ComputeGetEnvironmentsHandler(oceanNode).handle(
@@ -2367,7 +3522,6 @@ describe('Compute Access Restrictions', () => {
         firstEnv.id
       )
       const response = await new PaidComputeStartHandler(oceanNode).handle(command)
-      console.log(response)
       expect(response.status.httpStatus).to.not.equal(403)
     })
 
@@ -2378,7 +3532,6 @@ describe('Compute Access Restrictions', () => {
         firstEnv.id
       )
       const response = await new PaidComputeStartHandler(oceanNode).handle(command)
-      console.log(response)
       assert(
         response.status.httpStatus === 403,
         `Expected 403 but got ${response.status.httpStatus}: ${response.status.error}`
@@ -2394,10 +3547,6 @@ describe('Compute Access Restrictions', () => {
       const response = await new FreeComputeStartHandler(oceanNode).handle(command)
       console.log(response)
       expect(response.status.httpStatus).to.not.equal(403)
-    })
-
-    after(async () => {
-      await tearDownEnvironment(previousConfiguration)
     })
   })
 
@@ -2433,17 +3582,17 @@ describe('Compute Access Restrictions', () => {
             JSON.stringify([DEVELOPMENT_CHAIN_ID]),
             '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
             `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-            '[{"socketPath":"/var/run/docker.sock","resources":[{"id":"disk","total":10}],"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"paymentClaimInterval":60,"fees":{"' +
+            '[{"socketPath":"/var/run/docker.sock","paymentClaimInterval":60,"environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
               DEVELOPMENT_CHAIN_ID +
               '":[{"feeToken":"' +
               paymentToken +
-              '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]'
+              '","prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"minJobDuration":10,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]}]'
           ]
         )
       )
       config = await getConfiguration(true)
       dbconn = await Database.init(config.dbConfig)
-      oceanNode = await OceanNode.getInstance(
+      oceanNode = OceanNode.getInstance(
         config,
         dbconn,
         null,
@@ -2453,20 +3602,16 @@ describe('Compute Access Restrictions', () => {
         null,
         true
       )
-      const indexer = new OceanIndexer(
-        dbconn,
-        config.indexingNetworks,
-        oceanNode.blockchainRegistry
-      )
+      const indexer = new OceanIndexer(dbconn, config, oceanNode.blockchainRegistry)
       oceanNode.addIndexer(indexer)
-      oceanNode.addC2DEngines()
+      await oceanNode.addC2DEngines()
 
       const provider = new JsonRpcProvider('http://127.0.0.1:8545')
       const publisherAccount = (await provider.getSigner(0)) as Signer
       consumerAccount = (await provider.getSigner(1)) as Signer
       escrowContract = new ethers.Contract(
-        artifactsAddresses.development.Escrow,
-        EscrowJson.abi,
+        artifactsAddresses.development.EnterpriseEscrow,
+        EnterpriseEscrowJson.abi,
         consumerAccount
       )
       paymentTokenContract = new ethers.Contract(
@@ -2495,6 +3640,7 @@ describe('Compute Access Restrictions', () => {
     })
 
     after(async () => {
+      await oceanNode.tearDownAll()
       await tearDownEnvironment(previousConfiguration)
     })
 
@@ -2507,6 +3653,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now,
         status: C2DStatusNumber.PublishingResults,
         statusText: C2DStatusText.PublishingResults,
@@ -2523,6 +3670,7 @@ describe('Compute Access Restrictions', () => {
           token: paymentToken,
           lockTx: '0x123',
           claimTx: '',
+          cancelTx: '',
           cost: 0
         },
         resources: [
@@ -2573,7 +3721,7 @@ describe('Compute Access Restrictions', () => {
       const now = Math.floor(Date.now() / 1000)
       const expiry = 3500
 
-      const providerAddress = await (await oceanNode.getKeyManager()).getEthAddress()
+      const providerAddress = oceanNode.getKeyManager().getEthAddress()
 
       // Clean up existing locks and authorizations first
       const locks = await oceanNode.escrow.getLocks(
@@ -2634,7 +3782,7 @@ describe('Compute Access Restrictions', () => {
 
       const approveTx = await paymentTokenContract
         .connect(consumerAccount)
-        .approve(artifactsAddresses.development.Escrow, balance)
+        .approve(artifactsAddresses.development.EnterpriseEscrow, balance)
       await approveTx.wait()
 
       const depositTx = await escrowContract
@@ -2675,6 +3823,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now.toString(),
         status: C2DStatusNumber.JobSettle,
         statusText: C2DStatusText.JobSettle,
@@ -2691,6 +3840,7 @@ describe('Compute Access Restrictions', () => {
           token: paymentToken,
           lockTx: lockTx || '0x123',
           claimTx: '',
+          cancelTx: '',
           cost: 0
         },
         resources: [
@@ -2742,6 +3892,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now.toString(),
         status: C2DStatusNumber.JobSettle,
         statusText: C2DStatusText.JobSettle,
@@ -2758,6 +3909,7 @@ describe('Compute Access Restrictions', () => {
           token: paymentToken,
           lockTx: '0xexpired',
           claimTx: '',
+          cancelTx: '',
           cost: 0
         },
         resources: [
@@ -2806,6 +3958,7 @@ describe('Compute Access Restrictions', () => {
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
+        jobIdHash: create256Hash(testJobId),
         dateCreated: now,
         status: C2DStatusNumber.JobSettle,
         statusText: C2DStatusText.JobSettle,
@@ -2869,6 +4022,7 @@ describe('Compute Access Restrictions', () => {
         const testJob: DBComputeJob = {
           owner: await consumerAccount.getAddress(),
           jobId: testJobId,
+          jobIdHash: create256Hash(testJobId),
           dateCreated: now.toString(),
           status: C2DStatusNumber.JobSettle,
           statusText: C2DStatusText.JobSettle,
@@ -2931,20 +4085,6 @@ describe('Compute Access Restrictions', () => {
           `Job ${jobId} should be processed`
         )
       }
-    })
-
-    it('should start payment claim timer on engine start', function () {
-      // Verify timer methods exist
-      // Timer might be null if not started yet, or a NodeJS.Timeout if started
-      // We can't easily test the timer directly, but we can verify the method exists
-      assert(
-        typeof (dockerEngine as any).startPaymentTimer === 'function',
-        'startPaymentTimer method should exist'
-      )
-      assert(
-        typeof (dockerEngine as any).claimPayments === 'function',
-        'claimPayments method should exist'
-      )
     })
   })
 })
