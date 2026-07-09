@@ -90,6 +90,9 @@ export interface DCATDistribution {
     'spdx:algorithm': ChecksumAlgorithm
     'spdx:checksumValue': string
   }
+  'dcat:landingPage'?: Array<{
+    '@id': string
+  }>
   'oec:compute'?: DCATCompute
 }
 
@@ -139,6 +142,24 @@ export interface DCATDatatoken {
   symbol?: string
   serviceId?: string
   decimals?: number
+}
+
+export interface DCATAlgorithmContainer {
+  'oec:entrypoint': string
+  'oec:image': string
+  'oec:tag': string
+  'oec:checksum': string
+}
+
+export interface DCATAlgorithm {
+  'oec:language': string
+  'oec:version': string
+  'oec:container': DCATAlgorithmContainer
+}
+
+export interface DCATAdditionalDdo {
+  data: string
+  type: string
 }
 
 export interface DCATService {
@@ -240,6 +261,8 @@ export interface DCATDataset {
   'dct:type'?: string
   'prov:qualifiedAttribution'?: DCATQualifiedAttribution[]
   'oec:accessDetails'?: DCATAccessDetails
+  'oec:algorithm'?: DCATAlgorithm
+  'oec:additionalDdos'?: DCATAdditionalDdo[]
   'oec:chainId'?: number
   'oec:datatokens'?: DCATDatatoken[]
   'oec:event'?: DCATEvent

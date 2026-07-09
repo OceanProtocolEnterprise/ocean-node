@@ -729,14 +729,23 @@ export class FindDdoHandler extends CommandHandler {
 
         if (service.files) {
           distribution['dcat:format'] = distribution['dcat:format'] || 'encrypted'
+
+          if (service.files.length > 0) {
+            const filesStr = service.files.startsWith('0x')
+              ? service.files.substring(2)
+              : service.files
+            distribution['dcat:checksum'] = {
+              '@type': 'spdx:Checksum',
+              'spdx:algorithm': 'SHA-256',
+              'spdx:checksumValue': filesStr.substring(0, 64)
+            }
+          }
         }
 
-        if (service.files && service.files.length > 0) {
-          distribution['dcat:checksum'] = {
-            '@type': 'spdx:Checksum',
-            'spdx:algorithm': 'SHA-256',
-            'spdx:checksumValue': service.files
-          }
+        if (service.links) {
+          distribution['dcat:landingPage'] = Object.keys(service.links).map((key) => ({
+            '@id': service.links[key]
+          }))
         }
 
         distributions.push(distribution)
@@ -882,6 +891,14 @@ export class FindDdoHandler extends CommandHandler {
 
     if (metadata.tags && Array.isArray(metadata.tags) && metadata.tags.length > 0) {
       dcat['dcat:keyword'] = metadata.tags
+      dcat['dcat:theme'] = metadata.tags.map((tag: string) => ({
+        '@id': `http://aims.fao.org/aos/agrovoc/c_${tag}`,
+        '@type': 'skos:Concept',
+        'skos:prefLabel': {
+          '@language': 'en',
+          '@value': tag
+        }
+      }))
     } else if (credentialSubject.services) {
       const serviceTypes = credentialSubject.services
         .map((s: any) => s.type)
@@ -903,17 +920,25 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
-    if (metadata.publisher) {
+    if (
+      metadata.providedBy &&
+      metadata.providedBy.trim &&
+      metadata.providedBy.trim() !== ''
+    ) {
       dcat['dct:publisher'] = {
         '@type': 'foaf:Agent',
-        'foaf:name': metadata.publisher
+        'foaf:name': metadata.providedBy
       }
     }
 
-    if (metadata.contactPoint) {
+    if (
+      metadata.copyrightHolder &&
+      metadata.copyrightHolder.trim &&
+      metadata.copyrightHolder.trim() !== ''
+    ) {
       dcat['dcat:contactPoint'] = {
         '@type': 'foaf:Agent',
-        'foaf:name': metadata.contactPoint
+        'foaf:name': metadata.copyrightHolder
       }
     }
 
@@ -1016,6 +1041,27 @@ export class FindDdoHandler extends CommandHandler {
 
     if (metadata.type) {
       dcat['dct:type'] = metadata.type
+    }
+
+    if (metadata.algorithm) {
+      dcat['oec:algorithm'] = {
+        'oec:language': metadata.algorithm.language,
+        'oec:version': metadata.algorithm.version,
+        'oec:container': {
+          'oec:entrypoint': metadata.algorithm.container.entrypoint,
+          'oec:image': metadata.algorithm.container.image,
+          'oec:tag': metadata.algorithm.container.tag,
+          'oec:checksum': metadata.algorithm.container.checksum
+        }
+      }
+    }
+
+    if (
+      ddoCopy.additionalDdos &&
+      Array.isArray(ddoCopy.additionalDdos) &&
+      ddoCopy.additionalDdos.length > 0
+    ) {
+      dcat['oec:additionalDdos'] = ddoCopy.additionalDdos
     }
 
     dcat['oec:chainId'] = credentialSubject.chainId
