@@ -206,6 +206,11 @@ async function validateNonceAndSignature(
   try {
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
+    CORE_LOGGER.info(
+      `Validating EOA signature for address ${consumer}, hash ${consumerMessage}, signature ${signature}`
+    )
+    CORE_LOGGER.info(` addressFromHashSignature: ${addressFromHashSignature}`)
+    CORE_LOGGER.info(` addressFromBytesSignature: ${addressFromBytesSignature}`)
     if (
       ethers.getAddress(addressFromHashSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase() ||
@@ -215,10 +220,12 @@ async function validateNonceAndSignature(
       return { valid: true }
     }
   } catch (error) {
+    CORE_LOGGER.error(`Error validating EOA signature: ${error.message}`)
     // Continue to smart account check
   }
 
   // Try ERC-1271 (smart account) validation
+  CORE_LOGGER.info('try with ERC-1271 validation')
   try {
     const targetChainId = chainId || Object.keys(config?.supportedNetworks || {})[0]
     if (targetChainId && config?.supportedNetworks?.[targetChainId]) {
@@ -261,7 +268,13 @@ export async function isERC1271Valid(
       provider
     )
     const hashToUse = typeof hash === 'string' ? hash : ethers.hexlify(hash)
+    CORE_LOGGER.info(
+      `Validating ERC-1271 signature for address ${address}, hash ${hashToUse}, signature ${signature}`
+    )
     const result = await contract.isValidSignature(hashToUse, signature)
+    CORE_LOGGER.info(
+      `ERC-1271 signature validation result for address ${address}: ${result}`
+    )
     return result === '0x1626ba7e' // ERC-1271 magic value
   } catch {
     return false
