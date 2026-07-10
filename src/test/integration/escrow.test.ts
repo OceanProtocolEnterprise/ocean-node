@@ -16,6 +16,7 @@ import {
 } from '../../utils/address.js'
 import {
   ENVIRONMENT_VARIABLES,
+  EVENT_HASHES,
   EVENTS,
   PROTOCOL_COMMANDS
 } from '../../utils/constants.js'
@@ -50,6 +51,8 @@ describe('Indexer stores Escrow contract events', () => {
   const lockAmount = parseUnits('10', 18)
   const jobId = BigInt(Date.now())
   const expiry = 7200
+  const authEventSignature = 'Auth(address,address,address,uint256,uint256,uint256)'
+  const authEventTopic = ethers.id(authEventSignature)
 
   let depositTxHash: string
   let authTxHash: string
@@ -70,6 +73,11 @@ describe('Indexer stores Escrow contract events', () => {
     )
 
   before(async () => {
+    EVENT_HASHES[authEventTopic] = {
+      type: EVENTS.ESCROW_AUTH,
+      text: authEventSignature
+    }
+
     previousConfiguration = await setupEnvironment(
       null,
       buildEnvOverrideConfig(
@@ -134,6 +142,7 @@ describe('Indexer stores Escrow contract events', () => {
   after(async () => {
     await oceanNode.tearDownAll()
     await tearDownEnvironment(previousConfiguration)
+    delete EVENT_HASHES[authEventTopic]
   })
 
   it('escrow database is available', function () {
