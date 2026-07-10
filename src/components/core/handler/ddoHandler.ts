@@ -860,7 +860,21 @@ export class FindDdoHandler extends CommandHandler {
     const event = indexedMetadata.event || {}
 
     const config = await getConfiguration()
-    const baseUrl = config?.httpPort ? `http://localhost:${config.httpPort}` : ''
+    let baseUrl = ''
+    if (
+      credentialSubject.services &&
+      Array.isArray(credentialSubject.services) &&
+      credentialSubject.services.length > 0
+    ) {
+      const firstService = credentialSubject.services[0]
+      if (firstService.serviceEndpoint) {
+        baseUrl = firstService.serviceEndpoint.replace(/\/$/, '')
+      }
+    }
+
+    if (!baseUrl && config?.httpPort) {
+      baseUrl = `http://localhost:${config.httpPort}`
+    }
 
     const dcat: DCATDataset = {
       '@context': {
