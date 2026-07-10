@@ -837,7 +837,7 @@ describe('**********         Compute', () => {
       await consumerAccount.getAddress(),
       firstEnv.consumerAddress
     )
-    for (const lock of locks) {
+    for (const lock of locks ?? []) {
       try {
         await escrowContract
           .connect(consumerAccount)
