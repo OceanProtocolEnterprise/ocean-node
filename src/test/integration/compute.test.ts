@@ -3730,16 +3730,14 @@ describe('**********         Compute Access Restrictions', () => {
         await consumerAccount.getAddress(),
         providerAddress
       )
-      if (locks.length > 0) {
-        // Cancel all existing locks
-        for (const lock of locks) {
-          try {
-            await escrowContract
-              .connect(consumerAccount)
-              .cancelExpiredLock(lock.jobId, lock.token, lock.payer, providerAddress)
-          } catch (e) {
-            // Ignore errors
-          }
+      // Cancel all existing locks when the escrow query is available.
+      for (const lock of locks ?? []) {
+        try {
+          await escrowContract
+            .connect(consumerAccount)
+            .cancelExpiredLock(lock.jobId, lock.token, lock.payer, providerAddress)
+        } catch (e) {
+          // Ignore errors
         }
       }
 
