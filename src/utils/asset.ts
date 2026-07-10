@@ -58,7 +58,8 @@ export async function fetchFileMetadata(
       responseType: 'stream',
       timeout: 30000
     })
-    contentType = response.headers['content-type']
+    const responseContentType = response.headers['content-type']
+    contentType = typeof responseContentType === 'string' ? responseContentType : ''
     let totalSize = 0
     for await (const chunk of response.data) {
       totalSize += chunk.length

@@ -109,11 +109,11 @@ export class TypesenseApi {
           transformResponse: [
             (data, headers) => {
               let transformedData = data
+              const contentType = headers?.['content-type']
               if (
-                headers !== undefined &&
                 typeof data === 'string' &&
-                headers['content-type'] &&
-                headers['content-type'].startsWith('application/json')
+                typeof contentType === 'string' &&
+                contentType.startsWith('application/json')
               ) {
                 transformedData = JSON.parse(data)
               }
