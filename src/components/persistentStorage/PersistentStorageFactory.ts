@@ -1,4 +1,5 @@
 import { P2PCommandResponse } from '../../@types/index.js'
+import { isPersistentStorageType } from '../../@types/fileObject.js'
 import type { AccessList } from '../../@types/AccessList.js'
 import type {
   DockerMountObject,
@@ -41,6 +42,7 @@ export type BucketRow = {
   owner: string
   accessListJson: string
   createdAt: number
+  label: string | null
 }
 
 export interface PersistentStorageFileInfo {
@@ -54,6 +56,7 @@ export type CreateBucketResult = {
   bucketId: string
   owner: string
   accessList: AccessList[]
+  label?: string | null
 }
 
 /** Bucket metadata from registry (list APIs and internal filtering). */
@@ -62,6 +65,7 @@ export type PersistentStorageBucketRecord = {
   owner: string
   createdAt: number
   accessLists: AccessList[]
+  label?: string | null
 }
 
 export abstract class PersistentStorageFactory {
@@ -82,7 +86,8 @@ export abstract class PersistentStorageFactory {
         bucketId TEXT PRIMARY KEY,
         owner TEXT NOT NULL,
         accessListJson TEXT NOT NULL,
-        createdAt INTEGER NOT NULL
+        createdAt INTEGER NOT NULL,
+        label TEXT
       );
     `
     this.dbReadyPromise = new Promise<void>((resolve, reject) => {
@@ -91,8 +96,20 @@ export abstract class PersistentStorageFactory {
           reject(err)
           return
         }
-        this.dbReady = true
-        resolve()
+        // Migration: add the label column if it doesn't exist
+        this.db.run(
+          `ALTER TABLE persistent_storage_buckets ADD COLUMN label TEXT`,
+          (alterErr) => {
+            // Ignore "duplicate column name" (expected once the column exists);
+            // surface any other failure instead of starting with a broken schema.
+            if (alterErr && !/duplicate column name/i.test(alterErr.message)) {
+              reject(alterErr)
+              return
+            }
+            this.dbReady = true
+            resolve()
+          }
+        )
       })
     })
   }
@@ -123,7 +140,8 @@ export abstract class PersistentStorageFactory {
 
   public abstract createNewBucket(
     accessList: AccessList[],
-    owner: string
+    owner: string,
+    label?: string
   ): Promise<CreateBucketResult>
 
   public abstract listFiles(
@@ -161,8 +179,44 @@ export abstract class PersistentStorageFactory {
   public abstract getDockerMountObject(
     bucketId: string,
     fileName: string,
-    consumerAddress?: string
+    consumerAddress: string
   ): Promise<DockerMountObject>
+
+  public abstract getDockerOutputMountObject(
+    bucketId: string,
+    consumerAddress: string
+  ): Promise<DockerMountObject>
+
+  /**
+   * Returns a sha256 checksum of a bucket file's contents.
+   * Used to compute algorithm file checksums for compute jobs that reference
+   * persistent storage.
+   */
+  public abstract getFileChecksum(
+    bucketId: string,
+    fileName: string,
+    consumerAddress?: string
+  ): Promise<string>
+
+  /**
+   * Stat-like metadata for a bucket file. ACL is enforced only when
+   * `consumerAddress` is provided (mirrors `getDockerMountObject`).
+   */
+  public abstract getFileInfo(
+    bucketId: string,
+    fileName: string,
+    consumerAddress?: string
+  ): Promise<{ size: number; lastModified: number }>
+
+  /**
+   * Returns a readable stream of a bucket file's contents. ACL is enforced only
+   * when `consumerAddress` is provided. Backs the NodePersistentStorage class.
+   */
+  public abstract getReadableStream(
+    bucketId: string,
+    fileName: string,
+    consumerAddress?: string
+  ): Promise<NodeJS.ReadableStream>
 
   // common functions
   async getBucketAccessList(bucketId: string): Promise<AccessList[]> {
@@ -197,7 +251,8 @@ export abstract class PersistentStorageFactory {
       bucketId: row.bucketId,
       owner: row.owner,
       createdAt: row.createdAt,
-      accessLists: parseBucketAccessListsJson(row.accessListJson)
+      accessLists: parseBucketAccessListsJson(row.accessListJson),
+      label: row.label ?? null
     }))
   }
 
@@ -210,17 +265,19 @@ export abstract class PersistentStorageFactory {
     bucketId: string,
     owner: string,
     accessListJson: string,
-    createdAt: number
+    createdAt: number,
+    label: string | null
   ): Promise<void> {
+    // ON CONFLICT does not touch label, so a re-create never clobbers a rename.
     const sql = `
-      INSERT INTO persistent_storage_buckets (bucketId, owner, accessListJson, createdAt)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO persistent_storage_buckets (bucketId, owner, accessListJson, createdAt, label)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(bucketId) DO UPDATE SET accessListJson=excluded.accessListJson;
     `
     return this.ensureDbReady().then(
       () =>
         new Promise<void>((resolve, reject) => {
-          this.db.run(sql, [bucketId, owner, accessListJson, createdAt], (err) => {
+          this.db.run(sql, [bucketId, owner, accessListJson, createdAt, label], (err) => {
             if (err) reject(err)
             else resolve()
           })
@@ -229,7 +286,7 @@ export abstract class PersistentStorageFactory {
   }
 
   dbGetBucket(bucketId: string): Promise<BucketRow | null> {
-    const sql = `SELECT bucketId, owner, accessListJson, createdAt FROM persistent_storage_buckets WHERE bucketId = ?`
+    const sql = `SELECT bucketId, owner, accessListJson, createdAt, label FROM persistent_storage_buckets WHERE bucketId = ?`
     return this.ensureDbReady().then(
       () =>
         new Promise((resolve, reject) => {
@@ -242,7 +299,7 @@ export abstract class PersistentStorageFactory {
   }
 
   dbListBucketsByOwner(owner: string): Promise<BucketRow[]> {
-    const sql = `SELECT bucketId, owner, accessListJson, createdAt FROM persistent_storage_buckets WHERE owner = ? ORDER BY createdAt ASC`
+    const sql = `SELECT bucketId, owner, accessListJson, createdAt, label FROM persistent_storage_buckets WHERE owner = ? ORDER BY createdAt ASC`
     return this.ensureDbReady().then(
       () =>
         new Promise((resolve, reject) => {
@@ -260,6 +317,23 @@ export abstract class PersistentStorageFactory {
       () =>
         new Promise((resolve, reject) => {
           this.db.run(sql, [bucketId], function (this: RunResult, err) {
+            if (err) reject(err)
+            else resolve(this.changes === 1)
+          })
+        })
+    )
+  }
+
+  dbUpdateBucketLabel(
+    bucketId: string,
+    owner: string,
+    label: string | null
+  ): Promise<boolean> {
+    const sql = `UPDATE persistent_storage_buckets SET label = ? WHERE bucketId = ? AND owner = ?`
+    return this.ensureDbReady().then(
+      () =>
+        new Promise((resolve, reject) => {
+          this.db.run(sql, [label, bucketId, owner], function (this: RunResult, err) {
             if (err) reject(err)
             else resolve(this.changes === 1)
           })
@@ -288,34 +362,39 @@ export abstract class PersistentStorageFactory {
       throw new PersistentStorageAccessDeniedError()
     }
   }
-}
 
-/**
- * Algorithms must not reference node persistent storage; only datasets may use
- * `nodePersistentStorage` / `localfs` file objects.
- */
-export function rejectPersistentStorageFileObjectOnAlgorithm(
-  fileObject: unknown
-): P2PCommandResponse | null {
-  if (fileObject === null || fileObject === undefined || typeof fileObject !== 'object') {
-    return null
-  }
-  const fo = fileObject as { type?: string }
-  if (fo.type === 'nodePersistentStorage' || fo.type === 'localfs') {
-    return {
-      stream: null,
-      status: {
-        httpStatus: 400,
-        error:
-          'Algorithms cannot use node persistent storage file objects; only datasets may reference persistent storage.'
-      }
+  public async updateBucketLabel(
+    bucketId: string,
+    label: string | null | undefined,
+    owner: string
+  ): Promise<string | null> {
+    this.validateBucket(bucketId)
+    const bucket = await this.getBucket(bucketId)
+    if (!bucket) {
+      throw new Error(`Bucket not found: ${bucketId}`)
     }
+    if (normalizeWeb3Address(owner) !== normalizeWeb3Address(bucket.owner)) {
+      throw new PersistentStorageAccessDeniedError()
+    }
+    // Omitted label leaves the name unchanged (PATCH semantics); null/'' clears it.
+    if (label === undefined) {
+      return bucket.label ?? null
+    }
+    const normalized = label && label.trim() ? label.trim() : null
+    const updated = await this.dbUpdateBucketLabel(
+      bucketId,
+      normalizeWeb3Address(bucket.owner),
+      normalized
+    )
+    if (!updated) {
+      throw new Error(`Bucket not found: ${bucketId}`)
+    }
+    return normalized
   }
-  return null
 }
 
 /**
- * When a compute dataset uses a node persistent-storage file (localfs backend),
+ * When a compute dataset or algorithm uses a node persistent-storage file (localfs backend),
  * ensure the consumer is on the bucket ACL before proceeding.
  */
 export async function ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
@@ -327,7 +406,7 @@ export async function ensureConsumerAllowedForPersistentStorageLocalfsFileObject
     return null
   }
   const fo = fileObject as { type?: string; bucketId?: unknown }
-  if (fo.type !== 'nodePersistentStorage') {
+  if (!isPersistentStorageType(fo.type)) {
     return null
   }
   if (typeof fo.bucketId !== 'string' || fo.bucketId.length === 0) {

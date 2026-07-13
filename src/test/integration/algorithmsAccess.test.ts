@@ -45,10 +45,11 @@ import { homedir } from 'os'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
 import { createHash } from 'crypto'
 import { getAlgoChecksums } from '../../components/core/compute/utils.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
+import { ensureEnterpriseFeeTokenAllowed } from '../utils/contracts.js'
 
 describe('**********         Trusted algorithms Flow', () => {
   let previousConfiguration: OverrideEnvConfig[]
@@ -124,14 +125,19 @@ describe('**********         Trusted algorithms Flow', () => {
     provider = new JsonRpcProvider('http://127.0.0.1:8545')
     publisherAccount = (await provider.getSigner(0)) as Signer
     consumerAccount = (await provider.getSigner(1)) as Signer
+    await ensureEnterpriseFeeTokenAllowed(
+      provider,
+      artifactsAddresses.development.EnterpriseFeeCollector,
+      paymentToken
+    )
     paymentTokenContract = new ethers.Contract(
       paymentToken,
       OceanToken.abi,
       publisherAccount
     )
     escrowContract = new ethers.Contract(
-      artifactsAddresses.development.Escrow,
-      EscrowJson.abi,
+      artifactsAddresses.development.EnterpriseEscrow,
+      EnterpriseEscrowJson.abi,
       publisherAccount
     )
   })
@@ -389,7 +395,7 @@ describe('**********         Trusted algorithms Flow', () => {
     const consumerAddress = await consumerAccount.getAddress()
     escrowContract = new ethers.Contract(
       initializeResponse.payment.escrowAddress,
-      EscrowJson.abi,
+      EnterpriseEscrowJson.abi,
       publisherAccount
     )
 

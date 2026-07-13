@@ -11,7 +11,8 @@ import {
   generateUniqueID,
   getAlgoChecksums,
   validateAlgoForDataset,
-  validateOutput
+  validateOutput,
+  validateOutputBucket
 } from './utils.js'
 import {
   ValidateParams,
@@ -44,10 +45,8 @@ import { getNonceAsNumber } from '../utils/nonceHandler.js'
 import { PolicyServer } from '../../policyServer/index.js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { checkAddressOnAccessList } from '../../../utils/accessList.js'
-import {
-  ensureConsumerAllowedForPersistentStorageLocalfsFileObject,
-  rejectPersistentStorageFileObjectOnAlgorithm
-} from '../../persistentStorage/PersistentStorageFactory.js'
+import { ensureConsumerAllowedForPersistentStorageLocalfsFileObject } from '../../persistentStorage/PersistentStorageFactory.js'
+import { resolveComputeFileObject } from '../../c2d/compute_engine_docker.js'
 
 export class CommonComputeHandler extends CommandHandler {
   validate(command: PaidComputeStartCommand): ValidateParams {
@@ -209,11 +208,30 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
         }
       }
 
+      const policyServer = new PolicyServer()
+      for (const elem of [task.algorithm, ...task.datasets]) {
+        // resolve encrypted / documentId+serviceId references so persistent-storage ACL
+        // is validated here too (not only plaintext file objects)
+        const resolvedFileObject =
+          (await resolveComputeFileObject(elem)) ?? elem.fileObject
+        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
+          node,
+          task.consumerAddress,
+          resolvedFileObject
+        )
+        if (psAccess) {
+          return psAccess
+        }
+      }
+
+      // ACL preflight is confirmed above before attempting checksum retrieval,
+      // so unauthorized consumers get an explicit ACL denial instead of a generic 500.
       const algoChecksums = await getAlgoChecksums(
         task.algorithm.documentId,
         task.algorithm.serviceId,
         node,
-        config
+        config,
+        task.consumerAddress
       )
 
       const isRawCodeAlgorithm = task.algorithm.meta?.rawcode
@@ -229,23 +247,6 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
             httpStatus: 500,
             error: errorMessage
           }
-        }
-      }
-      const policyServer = new PolicyServer()
-      const algoPersistentStorageBan = rejectPersistentStorageFileObjectOnAlgorithm(
-        task.algorithm.fileObject
-      )
-      if (algoPersistentStorageBan) {
-        return algoPersistentStorageBan
-      }
-      for (const dataset of task.datasets) {
-        const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
-          node,
-          task.consumerAddress,
-          dataset.fileObject
-        )
-        if (psAccess) {
-          return psAccess
         }
       }
       // check algo and datasets (orders, credentials, etc.)
@@ -466,11 +467,9 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
                 stream: null,
                 status: {
                   httpStatus: 400,
-                  error: `Algorithm ${task.algorithm.documentId} with serviceId ${
-                    task.algorithm.serviceId
-                  } not allowed to run on the dataset: ${ddoInstance.getDid()} with serviceId: ${
-                    task.datasets[safeIndex].serviceId
-                  }`
+                  error: `Algorithm ${
+                    task.algorithm.documentId
+                  } not allowed to run on the dataset: ${ddoInstance.getDid()}`
                 }
               }
             }
@@ -609,6 +608,15 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
           }
         }
       }
+      const isValidOutputBucket = await validateOutputBucket(
+        node,
+        task.outputBucketId,
+        task.output,
+        task.consumerAddress
+      )
+      if (isValidOutputBucket.status.httpStatus !== 200) {
+        return isValidOutputBucket
+      }
       const isValidOutput = await validateOutput(node, task.output, node.getConfig())
       if (isValidOutput.status.httpStatus !== 200) {
         return isValidOutput
@@ -634,7 +642,8 @@ export class PaidComputeStartHandler extends CommonComputeHandler {
           task.metadata,
           task.additionalViewers,
           task.queueMaxWaitTime,
-          task.encryptedDockerRegistryAuth
+          task.encryptedDockerRegistryAuth,
+          task.outputBucketId
         )
         CORE_LOGGER.logMessage(
           'ComputeStartCommand Response: ' + JSON.stringify(response, null, 2),
@@ -764,29 +773,36 @@ export class FreeComputeStartHandler extends CommonComputeHandler {
         }
       }
       const node = this.getOceanNode()
+      const isValidOutputBucket = await validateOutputBucket(
+        node,
+        task.outputBucketId,
+        task.output,
+        task.consumerAddress
+      )
+      if (isValidOutputBucket.status.httpStatus !== 200) {
+        return isValidOutputBucket
+      }
       const isValidOutput = await validateOutput(node, task.output, node.getConfig())
       if (isValidOutput.status.httpStatus !== 200) {
         return isValidOutput
       }
       const policyServer = new PolicyServer()
-      const algoPersistentStorageBanFree = rejectPersistentStorageFileObjectOnAlgorithm(
-        task.algorithm.fileObject
-      )
-      if (algoPersistentStorageBanFree) {
-        return algoPersistentStorageBanFree
-      }
-      for (const dataset of task.datasets) {
+      for (const elem of [task.algorithm, ...task.datasets]) {
+        // resolve encrypted / documentId+serviceId references so persistent-storage ACL
+        // is validated here too (not only plaintext file objects)
+        const resolvedFileObject =
+          (await resolveComputeFileObject(elem)) ?? elem.fileObject
         const psAccess = await ensureConsumerAllowedForPersistentStorageLocalfsFileObject(
           thisNode,
           task.consumerAddress,
-          dataset.fileObject
+          resolvedFileObject
         )
         if (psAccess) {
           return psAccess
         }
       }
       for (const elem of [...[task.algorithm], ...task.datasets]) {
-        if (!('documentId' in elem)) {
+        if (!('documentId' in elem) || !elem.documentId) {
           continue
         }
         const ddo = await new FindDdoHandler(this.getOceanNode()).findAndFormatDdo(
@@ -1018,7 +1034,8 @@ export class FreeComputeStartHandler extends CommonComputeHandler {
         task.metadata,
         task.additionalViewers,
         task.queueMaxWaitTime,
-        task.encryptedDockerRegistryAuth
+        task.encryptedDockerRegistryAuth,
+        task.outputBucketId
       )
 
       CORE_LOGGER.logMessage(
