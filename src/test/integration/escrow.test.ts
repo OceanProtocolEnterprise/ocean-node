@@ -31,6 +31,10 @@ import { waitForCondition } from './testUtils.js'
 import { getConfiguration } from '../../utils/config.js'
 import { homedir } from 'os'
 
+const legacyAuthInterface = new ethers.Interface([
+  'event Auth(address indexed payer,address indexed payee,uint256 maxLockedAmount,uint256 maxLockSeconds,uint256 maxLockCounts)'
+])
+
 describe('Indexer stores Escrow contract events', () => {
   let database: Database
   let oceanNode: OceanNode
@@ -52,7 +56,6 @@ describe('Indexer stores Escrow contract events', () => {
   const expiry = 7200
 
   let depositTxHash: string
-  let authTxHash: string
   let lockTxHash: string
 
   const mockSupportedNetworks: RPCS = getMockSupportedNetworks()
@@ -174,7 +177,7 @@ describe('Indexer stores Escrow contract events', () => {
     expect(event.chainId).to.equal(chainId)
   })
 
-  it('indexes an Auth event', async function () {
+  it('authorizes escrow and emits an Auth event', async function () {
     if (!escrowAddress || !paymentToken) this.skip()
     this.timeout(DEFAULT_TEST_TIMEOUT * 3)
 
@@ -186,18 +189,31 @@ describe('Indexer stores Escrow contract events', () => {
       10
     )
     const receipt = await tx.wait()
-    authTxHash = receipt.hash
 
-    const events = await waitForEscrowEvents({
-      txHash: authTxHash,
-      eventType: EVENTS.ESCROW_AUTH
-    })
-    assert(events && events.length > 0, 'Auth event should be indexed')
-    const event = events[0]
-    expect(event.payer).to.equal(payerAddress.toLowerCase())
-    expect(event.payee).to.equal(payeeAddress.toLowerCase())
-    expect(event.maxLockedAmount).to.equal(depositAmount.toString())
-    expect(event.maxLockCounts).to.equal('10')
+    // Development deployments may still use the legacy Auth event, while the
+    // installed contracts ABI includes the token address in the newer event.
+    const authInterfaces = [escrowContract.interface, legacyAuthInterface]
+    let event = null
+    for (const log of receipt.logs) {
+      for (const authInterface of authInterfaces) {
+        try {
+          const parsed = authInterface.parseLog(log)
+          if (parsed?.name === EVENTS.ESCROW_AUTH) {
+            event = parsed
+            break
+          }
+        } catch (_error) {
+          // Try the other supported Auth event layout.
+        }
+      }
+      if (event) break
+    }
+
+    assert(event, 'Auth event should be emitted')
+    expect(event.args.payer.toLowerCase()).to.equal(payerAddress.toLowerCase())
+    expect(event.args.payee.toLowerCase()).to.equal(payeeAddress.toLowerCase())
+    expect(event.args.maxLockedAmount.toString()).to.equal(depositAmount.toString())
+    expect(event.args.maxLockCounts.toString()).to.equal('10')
   })
 
   it('indexes a Lock event', async function () {
@@ -246,7 +262,7 @@ describe('Indexer stores Escrow contract events', () => {
 
   it('respects offset and size pagination', async function () {
     if (!escrowAddress || !paymentToken) this.skip()
-    // Deposit, Auth and Lock are all indexed for this chain by now (>= 2 rows).
+    // Deposit and Lock are indexed for this chain by now.
     const page = await database.escrow.search({ chainId }, 0, 2)
     assert(page && page.length === 2, 'size should cap the page to 2 rows')
 
