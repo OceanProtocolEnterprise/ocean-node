@@ -31,6 +31,10 @@ import { waitForCondition } from './testUtils.js'
 import { getConfiguration } from '../../utils/config.js'
 import { homedir } from 'os'
 
+const legacyAuthInterface = new ethers.Interface([
+  'event Auth(address indexed payer,address indexed payee,uint256 maxLockedAmount,uint256 maxLockSeconds,uint256 maxLockCounts)'
+])
+
 describe('Indexer stores Escrow contract events', () => {
   let database: Database
   let oceanNode: OceanNode
@@ -186,15 +190,24 @@ describe('Indexer stores Escrow contract events', () => {
     )
     const receipt = await tx.wait()
 
-    const event = receipt.logs
-      .map((log: any) => {
+    // Development deployments may still use the legacy Auth event, while the
+    // installed contracts ABI includes the token address in the newer event.
+    const authInterfaces = [escrowContract.interface, legacyAuthInterface]
+    let event = null
+    for (const log of receipt.logs) {
+      for (const authInterface of authInterfaces) {
         try {
-          return escrowContract.interface.parseLog(log)
+          const parsed = authInterface.parseLog(log)
+          if (parsed?.name === EVENTS.ESCROW_AUTH) {
+            event = parsed
+            break
+          }
         } catch (_error) {
-          return null
+          // Try the other supported Auth event layout.
         }
-      })
-      .find((parsed: any) => parsed?.name === EVENTS.ESCROW_AUTH)
+      }
+      if (event) break
+    }
 
     assert(event, 'Auth event should be emitted')
     expect(event.args.payer.toLowerCase()).to.equal(payerAddress.toLowerCase())
