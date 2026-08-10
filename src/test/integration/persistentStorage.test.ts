@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import fsp from 'fs/promises'
 import os from 'os'
 import path from 'path'
+import { createHash, randomUUID } from 'crypto'
 import { Readable } from 'stream'
 import { getAddress, JsonRpcProvider, Signer } from 'ethers'
 
@@ -12,6 +13,7 @@ import {
   PersistentStorageGetBucketsHandler,
   PersistentStorageGetFileObjectHandler,
   PersistentStorageListFilesHandler,
+  PersistentStorageUpdateBucketHandler,
   PersistentStorageUploadFileHandler
 } from '../../components/core/handler/persistentStorage.js'
 import { StatusHandler } from '../../components/core/handler/statusHandler.js'
@@ -30,6 +32,10 @@ import {
   sleep
 } from '../utils/utils.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
+import { Storage, NodePersistentStorage } from '../../components/storage/index.js'
+import { FileObjectType } from '../../@types/fileObject.js'
+import { PersistentStorageLocalFS } from '../../components/persistentStorage/PersistentStorageLocalFS.js'
+import { FileInfoHandler } from '../../components/core/handler/fileInfoHandler.js'
 
 import { BlockchainRegistry } from '../../components/BlockchainRegistry/index.js'
 import { Blockchain } from '../../utils/blockchain.js'
@@ -132,6 +138,39 @@ describe('**********         Persistent storage handlers (integration)', functio
     const nodeStatus = JSON.parse(body) as OceanNodeStatus
     expect(nodeStatus.persistentStorage).to.be.an('object')
     expect(nodeStatus.persistentStorage?.accessLists).to.be.an('array').with.lengthOf(1)
+  })
+
+  it('getDockerMountObject returns an absolute Source even when folder is relative', async () => {
+    // a relative folder must still produce an absolute bind-mount Source (Docker requires it)
+    const relativeFolder = '.tmp-ps-relative-mount-test'
+    const fakeNode = {
+      getConfig: () => ({
+        persistentStorage: {
+          enabled: true,
+          type: 'localfs',
+          // accessLists: [],
+          options: { folder: relativeFolder }
+        }
+      })
+    } as unknown as OceanNode
+
+    const backend = new PersistentStorageLocalFS(fakeNode)
+    try {
+      const ownerAddress = await consumer.getAddress()
+      const { bucketId } = await backend.createNewBucket([], ownerAddress)
+      const fileName = 'rel.txt'
+      await backend.uploadFile(
+        bucketId,
+        fileName,
+        Readable.from(Buffer.from('x')),
+        ownerAddress
+      )
+
+      const mount = await backend.getDockerMountObject(bucketId, fileName, ownerAddress)
+      expect(path.isAbsolute(mount.Source)).to.equal(true)
+    } finally {
+      await fsp.rm(path.resolve(relativeFolder), { recursive: true, force: true })
+    }
   })
 
   it('create bucket → upload → list → delete (happy path)', async () => {
@@ -309,6 +348,250 @@ describe('**********         Persistent storage handlers (integration)', functio
     expect(obj).to.be.an('object')
     expect(obj.bucketId).to.equal(bucketId)
     expect(obj.fileName).to.equal(fileName)
+  })
+
+  it('getFileChecksum returns the sha256 of the file contents for an allowed consumer', async () => {
+    const consumerAddress = await consumer.getAddress()
+
+    let nonce = Date.now().toString()
+    let signature = await safeSign(
+      consumer,
+      createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+      )
+    )
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [],
+      authorization: undefined
+    } as any)
+    expect(createRes.status.httpStatus).to.equal(200)
+    const bucketId = (await streamToObject(createRes.stream as Readable))
+      .bucketId as string
+
+    const fileName = 'checksum.bin'
+    const body = Buffer.from('persistent-storage-checksum-contents')
+    const expected = createHash('sha256').update(body).digest('hex')
+
+    nonce = Date.now().toString()
+    signature = await safeSign(
+      consumer,
+      createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+      )
+    )
+    const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+      consumerAddress,
+      signature,
+      nonce,
+      bucketId,
+      fileName,
+      stream: Readable.from(body)
+    } as any)
+    expect(uploadRes.status.httpStatus).to.equal(200)
+
+    const ps = oceanNode.getPersistentStorage()
+    const checksum = await ps.getFileChecksum(bucketId, fileName, consumerAddress)
+    expect(checksum).to.equal(expected)
+
+    // a consumer not on the bucket ACL must be denied
+    const intruderAddress = await forbiddenConsumer.getAddress()
+    let denied = false
+    try {
+      await ps.getFileChecksum(bucketId, fileName, intruderAddress)
+    } catch (e) {
+      // only the expected access-denial counts; anything else fails the test
+      expect((e as Error).name).to.equal('PersistentStorageAccessDeniedError')
+      denied = true
+    }
+    expect(denied).to.equal(true)
+  })
+
+  it('getStorageClass returns a working NodePersistentStorage for nodePersistentStorage files', async () => {
+    const consumerAddress = await consumer.getAddress()
+
+    let nonce = Date.now().toString()
+    let signature = await safeSign(
+      consumer,
+      createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+      )
+    )
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [],
+      authorization: undefined
+    } as any)
+    expect(createRes.status.httpStatus).to.equal(200)
+    const bucketId = (await streamToObject(createRes.stream as Readable))
+      .bucketId as string
+
+    const fileName = 'storage-class.txt'
+    const body = Buffer.from('node-persistent-storage-class-contents')
+    const expectedChecksum = createHash('sha256').update(body).digest('hex')
+
+    nonce = Date.now().toString()
+    signature = await safeSign(
+      consumer,
+      createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+      )
+    )
+    const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+      consumerAddress,
+      signature,
+      nonce,
+      bucketId,
+      fileName,
+      stream: Readable.from(body)
+    } as any)
+    expect(uploadRes.status.httpStatus).to.equal(200)
+
+    const fileObject = {
+      type: FileObjectType.NODE_PERSISTENT_STORAGE,
+      bucketId,
+      fileName
+    }
+
+    // factory returns the right class
+    const storage = Storage.getStorageClass(fileObject, config, consumerAddress)
+    expect(storage).to.be.instanceOf(NodePersistentStorage)
+
+    // metadata (with consumer -> checksum present)
+    const info = await storage.fetchSpecificFileMetadata(fileObject as any, true)
+    expect(info.valid).to.equal(true)
+    expect(info.contentLength).to.equal(String(body.length))
+    expect(info.type).to.equal('nodePersistentStorage')
+    expect(info.checksum).to.equal(expectedChecksum)
+
+    // readable stream returns the bytes
+    const { stream } = await storage.getReadableStream()
+    const chunks: Buffer[] = []
+    for await (const chunk of stream as Readable) {
+      chunks.push(Buffer.from(chunk))
+    }
+    expect(Buffer.concat(chunks).toString()).to.equal(body.toString())
+
+    // without a consumer, forceChecksum cannot run the ACL'd checksum -> undefined
+    const noConsumer = Storage.getStorageClass(fileObject, config)
+    const infoNoConsumer = await noConsumer.fetchSpecificFileMetadata(
+      fileObject as any,
+      true
+    )
+    expect(infoNoConsumer.checksum).to.equal(undefined)
+
+    // a consumer not on the bucket ACL is denied when reading
+    const intruderAddress = await forbiddenConsumer.getAddress()
+    const intruderStorage = Storage.getStorageClass(fileObject, config, intruderAddress)
+    let denied = false
+    try {
+      await intruderStorage.getReadableStream()
+    } catch (e) {
+      // only the expected access-denial counts; anything else fails the test
+      expect((e as Error).name).to.equal('PersistentStorageAccessDeniedError')
+      denied = true
+    }
+    expect(denied).to.equal(true)
+  })
+
+  it('fileInfo serves a persistentStorage file only with an allowed consumerAddress', async () => {
+    const consumerAddress = await consumer.getAddress()
+
+    let nonce = Date.now().toString()
+    let signature = await safeSign(
+      consumer,
+      createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+      )
+    )
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [],
+      authorization: undefined
+    } as any)
+    expect(createRes.status.httpStatus).to.equal(200)
+    const bucketId = (await streamToObject(createRes.stream as Readable))
+      .bucketId as string
+
+    const fileName = 'fileinfo.txt'
+    const body = Buffer.from('node-persistent-storage-fileinfo')
+
+    nonce = Date.now().toString()
+    signature = await safeSign(
+      consumer,
+      createHashForSignature(
+        consumerAddress,
+        nonce,
+        PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE
+      )
+    )
+    const uploadRes = await new PersistentStorageUploadFileHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPLOAD_FILE,
+      consumerAddress,
+      signature,
+      nonce,
+      bucketId,
+      fileName,
+      stream: Readable.from(body)
+    } as any)
+    expect(uploadRes.status.httpStatus).to.equal(200)
+
+    const fileObject = {
+      type: FileObjectType.NODE_PERSISTENT_STORAGE,
+      bucketId,
+      fileName
+    }
+
+    // allowed consumer -> metadata returned
+    const okRes = await new FileInfoHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.FILE_INFO,
+      file: fileObject as any,
+      type: FileObjectType.NODE_PERSISTENT_STORAGE,
+      consumerAddress
+    } as any)
+    expect(okRes.status.httpStatus).to.equal(200)
+    const info = await streamToObject(okRes.stream as Readable)
+    expect(info[0].contentLength).to.equal(String(body.length))
+    expect(info[0].type).to.equal('nodePersistentStorage')
+
+    // missing consumerAddress -> rejected at validation
+    const noConsumerRes = await new FileInfoHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.FILE_INFO,
+      file: fileObject as any,
+      type: FileObjectType.NODE_PERSISTENT_STORAGE
+    } as any)
+    expect(noConsumerRes.status.httpStatus).to.not.equal(200)
+
+    // consumer not on the bucket ACL -> backend denies -> error, no metadata
+    const intruderAddress = await forbiddenConsumer.getAddress()
+    const deniedRes = await new FileInfoHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.FILE_INFO,
+      file: fileObject as any,
+      type: FileObjectType.NODE_PERSISTENT_STORAGE,
+      consumerAddress: intruderAddress
+    } as any)
+    expect(deniedRes.status.httpStatus).to.not.equal(200)
   })
 
   it('should not create bucket when consumer is not on allow list', async () => {
@@ -646,6 +929,268 @@ describe('**********         Persistent storage handlers (integration)', functio
 
     expect(validation.valid).to.equal(false)
     expect(validation.reason).to.contain('accessLists')
+  })
+
+  it('creates a bucket with a label and returns it from getBuckets', async () => {
+    const consumerAddress = await consumer.getAddress()
+    await sleep(1000)
+    let nonce = Date.now().toString()
+    let messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+    )
+    let signature = await safeSign(consumer, messageHashBytes)
+    const label = 'my-dataset-bucket'
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [],
+      label,
+      authorization: undefined
+    } as any)
+    expect(createRes.status.httpStatus).to.equal(200)
+    const created = await streamToObject(createRes.stream as Readable)
+    expect(created.label).to.equal(label)
+    const bucketId = created.bucketId as string
+
+    await sleep(1000)
+    nonce = Date.now().toString()
+    messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_BUCKETS
+    )
+    signature = await safeSign(consumer, messageHashBytes)
+    const listRes = await new PersistentStorageGetBucketsHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_BUCKETS,
+      consumerAddress,
+      signature,
+      nonce,
+      owner: consumerAddress,
+      authorization: undefined
+    } as any)
+    expect(listRes.status.httpStatus).to.equal(200)
+    const buckets = await streamToObject(listRes.stream as Readable)
+    const found = buckets.find((b: { bucketId: string }) => b.bucketId === bucketId)
+    expect(found).to.be.an('object')
+    expect(found.label).to.equal(label)
+  })
+
+  it('assigns a friendly default name when no label is provided', async () => {
+    const consumerAddress = await consumer.getAddress()
+    await sleep(1000)
+    const nonce = Date.now().toString()
+    const messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+    )
+    const signature = await safeSign(consumer, messageHashBytes)
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [],
+      authorization: undefined
+    } as any)
+    expect(createRes.status.httpStatus).to.equal(200)
+    const created = await streamToObject(createRes.stream as Readable)
+    expect(created.label).to.be.a('string')
+    expect(created.label.length).to.be.greaterThan(0)
+  })
+
+  it('owner can rename a bucket and getBuckets reflects the new name', async () => {
+    const consumerAddress = await consumer.getAddress()
+    await sleep(1000)
+    let nonce = Date.now().toString()
+    let messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+    )
+    let signature = await safeSign(consumer, messageHashBytes)
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [],
+      label: 'before',
+      authorization: undefined
+    } as any)
+    expect(createRes.status.httpStatus).to.equal(200)
+    const created = await streamToObject(createRes.stream as Readable)
+    const bucketId = created.bucketId as string
+
+    await sleep(1000)
+    nonce = Date.now().toString()
+    messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET
+    )
+    signature = await safeSign(consumer, messageHashBytes)
+    const updateRes = await new PersistentStorageUpdateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      bucketId,
+      label: 'after',
+      authorization: undefined
+    } as any)
+    expect(updateRes.status.httpStatus).to.equal(200)
+    const updated = await streamToObject(updateRes.stream as Readable)
+    expect(updated.label).to.equal('after')
+
+    await sleep(1000)
+    nonce = Date.now().toString()
+    messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_BUCKETS
+    )
+    signature = await safeSign(consumer, messageHashBytes)
+    const listRes = await new PersistentStorageGetBucketsHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_GET_BUCKETS,
+      consumerAddress,
+      signature,
+      nonce,
+      owner: consumerAddress,
+      authorization: undefined
+    } as any)
+    const buckets = await streamToObject(listRes.stream as Readable)
+    const found = buckets.find((b: { bucketId: string }) => b.bucketId === bucketId)
+    expect(found.label).to.equal('after')
+  })
+
+  it('renaming with an empty label clears the name', async () => {
+    const consumerAddress = await consumer.getAddress()
+    await sleep(1000)
+    let nonce = Date.now().toString()
+    let messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+    )
+    let signature = await safeSign(consumer, messageHashBytes)
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [],
+      label: 'temporary',
+      authorization: undefined
+    } as any)
+    const created = await streamToObject(createRes.stream as Readable)
+    const bucketId = created.bucketId as string
+
+    await sleep(1000)
+    nonce = Date.now().toString()
+    messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET
+    )
+    signature = await safeSign(consumer, messageHashBytes)
+    const updateRes = await new PersistentStorageUpdateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      bucketId,
+      label: '',
+      authorization: undefined
+    } as any)
+    expect(updateRes.status.httpStatus).to.equal(200)
+    const updated = await streamToObject(updateRes.stream as Readable)
+    expect(updated.label).to.equal(null)
+  })
+
+  it('non-owner cannot rename a bucket (403)', async () => {
+    // consumer owns the bucket (with an ACL); a different wallet must not rename it,
+    // even if it were on the access list — rename is owner-only.
+    const consumerAddress = await consumer.getAddress()
+    await sleep(1000)
+    let nonce = Date.now().toString()
+    let messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET
+    )
+    let signature = await safeSign(consumer, messageHashBytes)
+    const createRes = await new PersistentStorageCreateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_CREATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      accessLists: [bucketAllowList],
+      authorization: undefined
+    } as any)
+    const created = await streamToObject(createRes.stream as Readable)
+    const bucketId = created.bucketId as string
+
+    const forbiddenConsumerAddress = await forbiddenConsumer.getAddress()
+    nonce = Date.now().toString()
+    messageHashBytes = createHashForSignature(
+      forbiddenConsumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET
+    )
+    signature = await safeSign(forbiddenConsumer, messageHashBytes)
+    const updateRes = await new PersistentStorageUpdateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET,
+      consumerAddress: forbiddenConsumerAddress,
+      signature,
+      nonce,
+      bucketId,
+      label: 'hijacked',
+      authorization: undefined
+    } as any)
+    expect(updateRes.status.httpStatus).to.equal(403)
+    expect(updateRes.status.error).to.contain('not allowed')
+  })
+
+  it('rename returns 404 for an unknown bucket', async () => {
+    const consumerAddress = await consumer.getAddress()
+    await sleep(1000)
+    const nonce = Date.now().toString()
+    const messageHashBytes = createHashForSignature(
+      consumerAddress,
+      nonce,
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET
+    )
+    const signature = await safeSign(consumer, messageHashBytes)
+    const updateRes = await new PersistentStorageUpdateBucketHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET,
+      consumerAddress,
+      signature,
+      nonce,
+      bucketId: randomUUID(),
+      label: 'ghost',
+      authorization: undefined
+    } as any)
+    expect(updateRes.status.httpStatus).to.equal(404)
+  })
+
+  it('rename validate rejects an over-long label', async () => {
+    const validation = await new PersistentStorageUpdateBucketHandler(oceanNode).validate(
+      {
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET,
+        consumerAddress: await consumer.getAddress(),
+        signature: 'x',
+        nonce: '1',
+        bucketId: randomUUID(),
+        label: 'a'.repeat(257)
+      } as any
+    )
+    expect(validation.valid).to.equal(false)
+    expect(validation.reason).to.contain('label')
   })
 
   it('returns error when persistent storage is disabled', async () => {

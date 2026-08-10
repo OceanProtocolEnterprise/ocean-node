@@ -1,7 +1,11 @@
 import { OceanNode } from '../../../OceanNode.js'
 import { AlgoChecksums, ComputeOutput } from '../../../@types/C2D/C2D.js'
 import { OceanNodeConfig } from '../../../@types/OceanNode.js'
-import { StorageObject, EncryptMethod } from '../../../@types/fileObject.js'
+import {
+  StorageObject,
+  EncryptMethod,
+  isPersistentStorageType
+} from '../../../@types/fileObject.js'
 import { getFile } from '../../../utils/file.js'
 import { Storage } from '../../storage/index.js'
 
@@ -23,15 +27,20 @@ export function generateUniqueID(jobStructure: any): string {
 }
 
 export async function getAlgoChecksums(
-  algoDID: string,
-  algoServiceId: string,
+  algoDID: string | undefined,
+  algoServiceId: string | undefined,
   oceanNode: OceanNode,
-  config: OceanNodeConfig
+  config: OceanNodeConfig,
+  consumerAddress?: string
 ): Promise<AlgoChecksums> {
   const checksums: AlgoChecksums = {
     files: '',
     container: '',
     serviceId: algoServiceId
+  }
+  // Raw-code algorithms have no DDO to resolve - skip the lookup (no error logs, no DB hit)
+  if (!algoDID) {
+    return checksums
   }
   try {
     const algoDDO = await new FindDdoHandler(oceanNode).findAndFormatDdo(algoDID)
@@ -41,7 +50,18 @@ export async function getAlgoChecksums(
     }
     const fileArray = await getFile(algoDDO, algoServiceId, oceanNode)
     for (const file of fileArray) {
-      const storage = Storage.getStorageClass(file as StorageObject, config)
+      // persistent storage checksums require a consumerAddress (ACL); guard so a
+      // missing consumer errors instead of silently producing an empty checksum
+      if (isPersistentStorageType((file as any)?.type) && !consumerAddress) {
+        throw new Error(
+          'Unable to compute checksum for persistent storage algorithm file: missing consumerAddress'
+        )
+      }
+      const storage = Storage.getStorageClass(
+        file as StorageObject,
+        config,
+        consumerAddress
+      )
       const fileInfo = await storage.fetchSpecificFileMetadata(
         file as StorageObject,
         true // force checksum
@@ -248,4 +268,55 @@ export async function validateOutput(
       stream: null
     }
   }
+}
+
+export async function validateOutputBucket(
+  node: OceanNode,
+  outputBucketId: string,
+  output: string,
+  consumerAddress: string
+): Promise<P2PCommandResponse> {
+  const success: P2PCommandResponse = {
+    status: {
+      httpStatus: 200,
+      error: null,
+      headers: null
+    },
+    stream: null
+  }
+  const failure = (httpStatus: number, error: string): P2PCommandResponse => ({
+    status: {
+      httpStatus,
+      error,
+      headers: null
+    },
+    stream: null
+  })
+
+  if (!outputBucketId) {
+    return success
+  }
+  if (output) {
+    return failure(400, 'output and outputBucketId are mutually exclusive')
+  }
+  const persistentStorage = node.getPersistentStorage()
+  if (!persistentStorage) {
+    return failure(400, 'Persistent storage is not enabled on this node')
+  }
+  try {
+    persistentStorage.validateBucket(outputBucketId)
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    return failure(400, message)
+  }
+  try {
+    await persistentStorage.assertConsumerAllowedForBucket(
+      consumerAddress,
+      outputBucketId
+    )
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    return failure(403, message)
+  }
+  return success
 }

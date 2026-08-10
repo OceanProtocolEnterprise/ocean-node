@@ -25,7 +25,7 @@ export async function encrypt(
   } else if (algorithm === EncryptMethod.ECIES) {
     const sk = new eciesjs.PrivateKey(privateKey.raw)
     // get public key from Elliptic curve
-    encryptedData = eciesjs.encrypt(sk.publicKey.toHex(), data)
+    encryptedData = Buffer.from(eciesjs.encrypt(sk.publicKey.toHex(), data))
   }
   return encryptedData
 }
@@ -53,7 +53,7 @@ export async function decrypt(
     decryptedData = Buffer.concat([decipher.update(data), decipher.final()])
   } else if (algorithm === EncryptMethod.ECIES) {
     const sk = new eciesjs.PrivateKey(privateKey.raw)
-    decryptedData = eciesjs.decrypt(sk.secret, data)
+    decryptedData = Buffer.from(eciesjs.decrypt(sk.secret, data))
   }
   return decryptedData
 }

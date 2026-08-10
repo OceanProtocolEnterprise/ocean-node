@@ -34,7 +34,8 @@ export class PersistentStorageS3 extends PersistentStorageFactory {
   // eslint-disable-next-line require-await
   async createNewBucket(
     accessList: AccessList[],
-    _owner: string
+    _owner: string,
+    _label?: string
   ): Promise<CreateBucketResult> {
     throw new Error('PersistentStorageS3 is not implemented yet')
   }
@@ -79,8 +80,43 @@ export class PersistentStorageS3 extends PersistentStorageFactory {
   async getDockerMountObject(
     _bucketId: string,
     _fileName: string,
-    _consumerAddress?: string
+    _consumerAddress: string
   ): Promise<DockerMountObject> {
+    throw new Error('PersistentStorageS3 is not implemented yet')
+  }
+
+  // eslint-disable-next-line require-await
+  async getDockerOutputMountObject(
+    _bucketId: string,
+    _consumerAddress: string
+  ): Promise<DockerMountObject> {
+    throw new Error('PersistentStorageS3 is not implemented yet')
+  }
+
+  // eslint-disable-next-line require-await
+  async getFileChecksum(
+    _bucketId: string,
+    _fileName: string,
+    _consumerAddress?: string
+  ): Promise<string> {
+    throw new Error('PersistentStorageS3 is not implemented yet')
+  }
+
+  // eslint-disable-next-line require-await
+  async getFileInfo(
+    _bucketId: string,
+    _fileName: string,
+    _consumerAddress?: string
+  ): Promise<{ size: number; lastModified: number }> {
+    throw new Error('PersistentStorageS3 is not implemented yet')
+  }
+
+  // eslint-disable-next-line require-await
+  async getReadableStream(
+    _bucketId: string,
+    _fileName: string,
+    _consumerAddress?: string
+  ): Promise<NodeJS.ReadableStream> {
     throw new Error('PersistentStorageS3 is not implemented yet')
   }
 }

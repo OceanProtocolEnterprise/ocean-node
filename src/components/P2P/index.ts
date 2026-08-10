@@ -73,6 +73,13 @@ let index = 0
 /** Optional request payload sent as LP frames after the command JSON; ends with an empty LP frame. */
 export type P2PRequestBodyStream = AsyncIterable<Uint8Array | Buffer | string> | Readable
 
+type P2PSendResponse = {
+  status: any
+  stream: AsyncIterable<Uint8Array>
+}
+
+type ContentRoutingCID = Parameters<Libp2p['contentRouting']['findProviders']>[0]
+
 function toUint8ArrayChunk(chunk: unknown): Uint8Array {
   if (chunk instanceof Uint8Array) return chunk
   if (Buffer.isBuffer(chunk)) return new Uint8Array(chunk)
@@ -278,7 +285,12 @@ export class OceanP2P extends EventEmitter {
       const maddr = multiaddr(addr)
 
       const protos = maddr.getComponents()
-      const addressString = maddr.nodeAddress().address
+      const addressString = protos.find((entry) =>
+        ['ip4', 'ip6', 'dns', 'dns4', 'dns6', 'dnsaddr'].includes(entry.name)
+      )?.value
+      if (addressString == null) {
+        return false
+      }
       if (
         protos.some(
           (entry) =>
@@ -768,7 +780,7 @@ export class OceanP2P extends EventEmitter {
     message: string,
     options: { signal: AbortSignal },
     requestBody?: P2PRequestBodyStream
-  ) {
+  ): Promise<P2PSendResponse> {
     let outbound = message
     if (requestBody) {
       const cmd = JSON.parse(message) as Record<string, unknown>
@@ -787,7 +799,7 @@ export class OceanP2P extends EventEmitter {
           try {
             while (true) {
               const chunk = await lp.read()
-              yield chunk.subarray ? chunk.subarray() : chunk
+              yield chunk.subarray()
             }
           } catch {}
         }
@@ -1011,11 +1023,14 @@ export class OceanP2P extends EventEmitter {
     const cid = await cidFromRawString(input)
     const peersFound = []
     try {
-      const f = this._libp2p.contentRouting.findProviders(cid, {
-        queryFuncTimeout: timeout || 20000 // 20 seconds
-        // on timeout the query ends with an abort signal => CodeError: Query aborted
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any)
+      const f = this._libp2p.contentRouting.findProviders(
+        cid as unknown as ContentRoutingCID,
+        {
+          queryFuncTimeout: timeout || 20000 // 20 seconds
+          // on timeout the query ends with an abort signal => CodeError: Query aborted
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any
+      )
 
       for await (const value of f) {
         peersFound.push(value)

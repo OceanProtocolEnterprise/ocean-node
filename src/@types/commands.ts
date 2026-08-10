@@ -75,6 +75,8 @@ export interface FileInfoCommand extends Command {
   fileIndex?: number
   file?: StorageObject
   checksum?: boolean
+  // required only for nodePersistentStorage files, to gate on the bucket ACL
+  consumerAddress?: string
 }
 // group these 2
 export interface DDOCommand extends Command {
@@ -105,6 +107,18 @@ export interface QueryCommand extends Command {
   query: Record<string, any>
   maxResultsPerPage?: number
   pageNumber?: number
+}
+
+export interface GetEscrowEventsCommand extends Command {
+  chainId?: number
+  eventType?: string
+  payer?: string
+  payee?: string
+  token?: string
+  jobId?: string
+  txId?: string
+  offset?: number
+  size?: number
 }
 export interface ReindexCommand extends Command {
   txId: string
@@ -157,6 +171,10 @@ export interface GetFeesCommand extends Command {
 }
 // admin commands
 export interface AdminStopNodeCommand extends SignedCommand {}
+
+export interface AdminStopJobCommand extends SignedCommand {
+  jobId: string // composite format: "<clusterHash>-<actualJobId>"
+}
 export interface AdminReindexTxCommand extends SignedCommand {
   chainId: number
   txId: string
@@ -243,6 +261,7 @@ export interface FreeComputeStartCommand extends Command {
   algorithm: ComputeAlgorithm
   datasets?: ComputeAsset[]
   output?: string // this is always an ECIES encrypted string, that decodes to ComputeOutput interface
+  outputBucketId?: string
   resources?: ComputeResourceRequest[]
   maxJobDuration?: number
   policyServer?: any // object to pass to policy server
@@ -332,6 +351,15 @@ export interface PersistentStorageCreateBucketCommand extends Command {
   signature: string
   nonce: string
   accessLists: AccessList[]
+  label?: string
+}
+
+export interface PersistentStorageUpdateBucketCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  bucketId: string
+  label?: string
 }
 
 export interface PersistentStorageGetBucketsCommand extends Command {
