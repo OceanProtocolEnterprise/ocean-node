@@ -145,6 +145,9 @@ export class FeesHandler extends CommandHandler {
       let accessGrantedDDOLevel = false
       if (credentials) {
         if (isPolicyServerConfigured()) {
+          PROVIDER_LOGGER.info(
+            `Checking credentials for consumer address on policy server: ${task.consumerAddress}`
+          )
           const response = await policyServer.initializePSVerification(
             ddoInstance.getDid(),
             ddo,
@@ -154,6 +157,9 @@ export class FeesHandler extends CommandHandler {
           )
           accessGrantedDDOLevel = response.success
         } else {
+          PROVIDER_LOGGER.info(
+            `Checking credentials for consumer address: ${task.consumerAddress}`
+          )
           accessGrantedDDOLevel = await checkCredentials(
             task.consumerAddress,
             credentials as Credentials,
