@@ -162,6 +162,9 @@ export class FeesHandler extends CommandHandler {
         }
       }
 
+      PROVIDER_LOGGER.info(`credentials: ${JSON.stringify(credentials)}`)
+      PROVIDER_LOGGER.info(`accessGrantedDDOLevel: ${accessGrantedDDOLevel}`)
+
       if (credentials && !accessGrantedDDOLevel) {
         const error = `Error: Access to asset ${ddoInstance.getDid()} was denied`
         PROVIDER_LOGGER.error(error)

@@ -32,6 +32,7 @@ export async function checkCredentials(
   signer: Signer
 ): Promise<boolean> {
   // If credentials are undefined or empty, allow access
+  CORE_LOGGER.info(`Checking credentials for consumer address: ${consumerAddress}`)
   if (!isDefined(credentials)) {
     return true
   }
@@ -52,6 +53,7 @@ export async function checkCredentials(
       matchDeny,
       'deny'
     )
+    CORE_LOGGER.info(`Deny evaluation result: ${JSON.stringify(denyResult)}`)
 
     // If evaluation says to deny, return false
     if (denyResult.shouldDeny) {
@@ -73,7 +75,7 @@ export async function checkCredentials(
       matchAllow,
       'allow'
     )
-
+    CORE_LOGGER.info(`Allow evaluation result: ${JSON.stringify(allowResult)}`)
     return allowResult.shouldAllow
   }
 
