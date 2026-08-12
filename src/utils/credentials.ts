@@ -32,7 +32,6 @@ export async function checkCredentials(
   signer: Signer
 ): Promise<boolean> {
   // If credentials are undefined or empty, allow access
-  CORE_LOGGER.info(`Checking credentials for consumer address: ${consumerAddress}`)
   if (!isDefined(credentials)) {
     return true
   }
@@ -53,8 +52,6 @@ export async function checkCredentials(
       matchDeny,
       'deny'
     )
-    CORE_LOGGER.info(`Deny evaluation result: ${JSON.stringify(denyResult)}`)
-
     // If evaluation says to deny, return false
     if (denyResult.shouldDeny) {
       CORE_LOGGER.logMessage(
@@ -67,11 +64,7 @@ export async function checkCredentials(
   // ========================================
   // STEP 2: Check ALLOW list
   // ========================================
-  CORE_LOGGER.info(
-    `isDefined(credentials.allow): ${isDefined(credentials.allow)}, credentials.allow.length: ${credentials.allow?.length ?? 0}`
-  )
   if (isDefined(credentials.allow) && credentials.allow.length > 0) {
-    CORE_LOGGER.info(`Allow evaluation started for consumer address: ${consumerAddress}`)
     const allowResult = await evaluateCredentialList(
       credentials.allow,
       normalizedAddress,
@@ -79,7 +72,6 @@ export async function checkCredentials(
       matchAllow,
       'allow'
     )
-    CORE_LOGGER.info(`Allow evaluation result: ${JSON.stringify(allowResult)}`)
     return allowResult.shouldAllow
   }
 
@@ -98,20 +90,8 @@ async function evaluateCredentialList(
   listType: 'allow' | 'deny'
 ): Promise<{ shouldAllow: boolean; shouldDeny: boolean }> {
   const matchResults: boolean[] = []
-  CORE_LOGGER.info(
-    `Evaluating ${listType} credential list: count=${credentialList.length}, matchRule=${matchRule}`
-  )
-
-  for (const [index, credential] of credentialList.entries()) {
-    CORE_LOGGER.info(
-      `Evaluating ${listType} credential at index ${index}: type=${String(
-        credential?.type
-      )}`
-    )
+  for (const credential of credentialList) {
     const matchResult = await checkSingleCredential(credential, consumerAddress, signer)
-    CORE_LOGGER.info(
-      `${listType} credential at index ${index} matched: ${String(matchResult)}`
-    )
 
     if (matchResult === null) {
       // Unknown or unsupported credential type
@@ -132,7 +112,6 @@ async function evaluateCredentialList(
 
   // No valid credential checks were performed
   if (matchResults.length === 0) {
-    CORE_LOGGER.info(`No valid results produced for ${listType} credentials`)
     if (listType === 'allow') {
       // No valid allow rules means deny
       return { shouldAllow: false, shouldDeny: false }
@@ -153,9 +132,6 @@ async function evaluateCredentialList(
       // If ALL rules match, deny
       shouldDeny = matchResults.every((r) => r === true)
     }
-    CORE_LOGGER.info(
-      `Deny credentials completed: matchRule=${matchRule}, shouldDeny=${shouldDeny}`
-    )
     return { shouldAllow: false, shouldDeny }
   } else {
     // listType === 'allow'
@@ -168,9 +144,6 @@ async function evaluateCredentialList(
       // ALL rules must match
       shouldAllow = matchResults.every((r) => r === true)
     }
-    CORE_LOGGER.info(
-      `Allow credentials completed: matchRule=${matchRule}, shouldAllow=${shouldAllow}`
-    )
     return { shouldAllow, shouldDeny: false }
   }
 }
@@ -189,7 +162,6 @@ export async function checkSingleCredential(
   signer: Signer | null
 ): Promise<boolean | null> {
   if (!credential || typeof credential.type !== 'string') {
-    CORE_LOGGER.warn('Credential is missing a valid string type')
     return null
   }
   const credentialType = credential.type.toLowerCase()
@@ -221,18 +193,6 @@ export async function checkSingleCredential(
         }
         return []
       }
-    )
-
-    if (normalizedValues.length !== addressCredential.values.length) {
-      CORE_LOGGER.warn(
-        'Address credential contains unsupported values; ignoring invalid entries'
-      )
-    }
-
-    CORE_LOGGER.info(
-      `Address credential normalized: inputCount=${addressCredential.values.length}, validCount=${normalizedValues.length}, hasWildcard=${normalizedValues.includes(
-        '*'
-      )}`
     )
 
     // Check for wildcard (*)
