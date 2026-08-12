@@ -143,6 +143,9 @@ export class FeesHandler extends CommandHandler {
       }
 
       let accessGrantedDDOLevel = false
+      PROVIDER_LOGGER.info(
+        `Checking credentials for consumer address: ${task.consumerAddress} AND credentials: ${JSON.stringify(credentials)}`
+      )
       if (credentials) {
         if (isPolicyServerConfigured()) {
           PROVIDER_LOGGER.info(
