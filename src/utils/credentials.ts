@@ -163,6 +163,10 @@ export async function checkSingleCredential(
   consumerAddress: string,
   signer: Signer | null
 ): Promise<boolean | null> {
+  if (!credential || typeof credential.type !== 'string') {
+    CORE_LOGGER.warn('Credential is missing a valid string type')
+    return null
+  }
   const credentialType = credential.type.toLowerCase()
 
   // ========================================
@@ -172,20 +176,27 @@ export async function checkSingleCredential(
     // Type assertion since we know it's address type
     const addressCredential = credential as any
 
-    if (!isDefined(addressCredential.values) || addressCredential.values.length === 0) {
+    if (
+      !Array.isArray(addressCredential.values) ||
+      addressCredential.values.length === 0
+    ) {
       return false
     }
 
+    const normalizedValues = addressCredential.values
+      .filter((value: unknown): value is string => typeof value === 'string')
+      .map((value: string) => value.toLowerCase())
+
+    if (normalizedValues.length !== addressCredential.values.length) {
+      CORE_LOGGER.warn('Address credential contains non-string values; ignoring them')
+    }
+
     // Check for wildcard (*)
-    const hasWildcard = addressCredential.values.some(
-      (value: string) => value.toLowerCase() === '*'
-    )
-    if (hasWildcard) {
+    if (normalizedValues.includes('*')) {
       return true
     }
 
     // Check if address is in the list
-    const normalizedValues = addressCredential.values.map((v: string) => v.toLowerCase())
     return normalizedValues.includes(consumerAddress.toLowerCase())
   }
 
