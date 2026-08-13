@@ -20,6 +20,7 @@ import { CONFIG_LOGGER } from '../logging/common.js'
 import { LOG_LEVELS_STR, GENERIC_EMOJIS } from '../logging/Logger.js'
 import { OceanNodeConfigSchema } from './schemas.js'
 import { ENV_TO_CONFIG_MAPPING } from './constants.js'
+import { isPolicyServerConfigured } from '../config.js'
 import { fileURLToPath } from 'url'
 import lodash from 'lodash'
 
@@ -281,6 +282,7 @@ export function buildMergedConfig(): OceanNodeConfig {
   config.c2dClusters = buildC2DClusters(
     config.dockerComputeEnvironments as C2DDockerConfig[]
   )
+  config.isPSConfigured = isPolicyServerConfigured()
 
   return config as OceanNodeConfig
 }

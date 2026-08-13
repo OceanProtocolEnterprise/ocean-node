@@ -128,6 +128,7 @@ export async function status(
       version: getPackageVersion(),
       http: config.hasHttp,
       p2p: config.hasP2P,
+      isPSConfigured: config.isPSConfigured,
       provider: [],
       indexer: [],
       escrowAddress: {},
@@ -152,6 +153,7 @@ export async function status(
   nodeStatus.platform.freemem = os.freemem()
   nodeStatus.platform.loadavg = os.loadavg()
   nodeStatus.uptime = process.uptime()
+  nodeStatus.isPSConfigured = config.isPSConfigured
 
   // depends on request
   if (detailed) {

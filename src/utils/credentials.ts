@@ -52,7 +52,6 @@ export async function checkCredentials(
       matchDeny,
       'deny'
     )
-
     // If evaluation says to deny, return false
     if (denyResult.shouldDeny) {
       CORE_LOGGER.logMessage(
@@ -73,7 +72,6 @@ export async function checkCredentials(
       matchAllow,
       'allow'
     )
-
     return allowResult.shouldAllow
   }
 
@@ -163,6 +161,9 @@ export async function checkSingleCredential(
   consumerAddress: string,
   signer: Signer | null
 ): Promise<boolean | null> {
+  if (!credential || typeof credential.type !== 'string') {
+    return null
+  }
   const credentialType = credential.type.toLowerCase()
 
   // ========================================
@@ -172,20 +173,34 @@ export async function checkSingleCredential(
     // Type assertion since we know it's address type
     const addressCredential = credential as any
 
-    if (!isDefined(addressCredential.values) || addressCredential.values.length === 0) {
+    if (
+      !Array.isArray(addressCredential.values) ||
+      addressCredential.values.length === 0
+    ) {
       return false
     }
 
-    // Check for wildcard (*)
-    const hasWildcard = addressCredential.values.some(
-      (value: string) => value.toLowerCase() === '*'
+    const normalizedValues = addressCredential.values.flatMap(
+      (value: unknown): string[] => {
+        if (typeof value === 'string') return [value.toLowerCase()]
+        if (
+          value &&
+          typeof value === 'object' &&
+          'address' in value &&
+          typeof value.address === 'string'
+        ) {
+          return [value.address.toLowerCase()]
+        }
+        return []
+      }
     )
-    if (hasWildcard) {
+
+    // Check for wildcard (*)
+    if (normalizedValues.includes('*')) {
       return true
     }
 
     // Check if address is in the list
-    const normalizedValues = addressCredential.values.map((v: string) => v.toLowerCase())
     return normalizedValues.includes(consumerAddress.toLowerCase())
   }
 

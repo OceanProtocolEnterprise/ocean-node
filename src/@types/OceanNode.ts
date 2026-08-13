@@ -143,6 +143,7 @@ export interface OceanNodeConfig {
   httpCertPath?: string
   httpKeyPath?: string
   enableBenchmark?: boolean
+  isPSConfigured: boolean
   persistentStorage?: PersistentStorageConfig
 }
 
@@ -185,6 +186,7 @@ export interface OceanNodeStatus {
   version: string
   http: boolean
   p2p: boolean
+  isPSConfigured: boolean
   provider: OceanNodeProvider[]
   indexer: OceanNodeIndexer[]
   escrowAddress: AddressPerChain

@@ -313,6 +313,11 @@ export class DownloadHandler extends CommandHandler {
     if (credentials) {
       // if POLICY_SERVER_URL exists, then ocean-node will NOT perform any checks.
       // It will just use the existing code and let PolicyServer decide.
+      CORE_LOGGER.logMessage('Checking DDO level credentials', true)
+      CORE_LOGGER.logMessage(
+        'isPolicyServerConfigured: ' + isPolicyServerConfigured(),
+        true
+      )
       if (isPolicyServerConfigured()) {
         const response = await policyServer.checkDownload(
           ddoInstance.getDid(),
@@ -321,14 +326,24 @@ export class DownloadHandler extends CommandHandler {
           task.consumerAddress,
           task.policyServer
         )
+        CORE_LOGGER.logMessage(
+          'Policy server response: ' + JSON.stringify(response),
+          true
+        )
         accessGrantedDDOLevel = response.success
       } else {
+        CORE_LOGGER.logMessage('Checking DDO level credentials INTERNAL', true)
+        CORE_LOGGER.logMessage(
+          'isPolicyServerConfigured: ' + isPolicyServerConfigured(),
+          true
+        )
         accessGrantedDDOLevel = await checkCredentials(
           task.consumerAddress,
           credentials as Credentials,
           await blockchain.getSigner()
         )
       }
+      CORE_LOGGER.logMessage('DDO level credentials check complete', true)
       if (!accessGrantedDDOLevel) {
         CORE_LOGGER.logMessage(
           `Error: Access to asset ${ddoInstance.getDid()} was denied`,

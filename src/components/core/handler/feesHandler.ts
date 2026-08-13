@@ -16,7 +16,10 @@ import { ProviderInitialize } from '../../../@types/Fees.js'
 import { getNonce } from '../utils/nonceHandler.js'
 import { streamToString } from '../../../utils/util.js'
 import { isOrderingAllowedForAsset } from './downloadHandler.js'
-import { DDOManager } from '@oceanprotocol/ddo-js'
+import { Credentials, DDOManager } from '@oceanprotocol/ddo-js'
+import { checkCredentials } from '../../../utils/credentials.js'
+import { isPolicyServerConfigured } from '../../../utils/index.js'
+import { PolicyServer } from '../../policyServer/index.js'
 
 export class FeesHandler extends CommandHandler {
   validate(command: GetFeesCommand): ValidateParams {
@@ -60,14 +63,164 @@ export class FeesHandler extends CommandHandler {
       }
     }
     const ddoInstance = DDOManager.getDDOClass(ddo)
-    const { services } = ddoInstance.getDDOFields() as any
+    const {
+      chainId: ddoChainId,
+      credentials,
+      services
+    } = ddoInstance.getDDOFields() as any
     const service = services.find((what: any) => what.id === task.serviceId)
     if (!service) {
       errorMsg = 'Invalid serviceId'
     }
-    if (service.type === 'compute') {
+    if (service?.type === 'compute') {
       errorMsg = 'Use the initializeCompute endpoint to initialize compute jobs'
     }
+
+    if (errorMsg) {
+      PROVIDER_LOGGER.logMessageWithEmoji(
+        errorMsg,
+        true,
+        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
+        LOG_LEVELS_STR.LEVEL_ERROR
+      )
+      return {
+        stream: null,
+        status: {
+          httpStatus: 500,
+          error: errorMsg
+        }
+      }
+    }
+
+    const policyServer = new PolicyServer()
+    if (credentials || service.credentials) {
+      if (!task.consumerAddress) {
+        return {
+          stream: null,
+          status: {
+            httpStatus: 400,
+            error: 'consumerAddress is required to check credentials'
+          }
+        }
+      }
+
+      let signer
+      if (!isPolicyServerConfigured()) {
+        const oceanNode = this.getOceanNode()
+        const supportedNetwork = oceanNode.getConfig().supportedNetworks?.[ddoChainId]
+        if (!supportedNetwork) {
+          return {
+            stream: null,
+            status: {
+              httpStatus: 400,
+              error: `Fees handler: Unsupported chain id ${ddoChainId}`
+            }
+          }
+        }
+
+        const blockchain = oceanNode.getBlockchain(supportedNetwork.chainId)
+        if (!blockchain) {
+          return {
+            stream: null,
+            status: {
+              httpStatus: 400,
+              error: `Fees handler: Blockchain instance not available for chain ${supportedNetwork.chainId}`
+            }
+          }
+        }
+
+        const { ready, error } = await blockchain.isNetworkReady()
+        if (!ready) {
+          return {
+            stream: null,
+            status: {
+              httpStatus: 400,
+              error: `Fees handler: ${error}`
+            }
+          }
+        }
+        signer = await blockchain.getSigner()
+      }
+
+      let accessGrantedDDOLevel = false
+      PROVIDER_LOGGER.info(
+        `Checking credentials for consumer address: ${task.consumerAddress} AND credentials: ${JSON.stringify(credentials)}`
+      )
+      if (credentials) {
+        if (isPolicyServerConfigured()) {
+          PROVIDER_LOGGER.info(
+            `Checking credentials for consumer address on policy server: ${task.consumerAddress}`
+          )
+          const response = await policyServer.initializePSVerification(
+            ddoInstance.getDid(),
+            ddo,
+            task.serviceId,
+            task.consumerAddress,
+            task.policyServer
+          )
+          accessGrantedDDOLevel = response.success
+        } else {
+          PROVIDER_LOGGER.info(
+            `Checking credentials for consumer address internal: ${task.consumerAddress}`
+          )
+          accessGrantedDDOLevel = await checkCredentials(
+            task.consumerAddress,
+            credentials as Credentials,
+            signer
+          )
+        }
+      }
+
+      PROVIDER_LOGGER.info(`credentials: ${JSON.stringify(credentials)}`)
+      PROVIDER_LOGGER.info(`accessGrantedDDOLevel: ${accessGrantedDDOLevel}`)
+
+      if (credentials && !accessGrantedDDOLevel) {
+        const error = `Error: Access to asset ${ddoInstance.getDid()} was denied`
+        PROVIDER_LOGGER.error(error)
+        return {
+          stream: null,
+          status: { httpStatus: 403, error }
+        }
+      }
+
+      if (service.credentials) {
+        let accessGrantedServiceLevel: boolean
+        if (isPolicyServerConfigured()) {
+          const response = await policyServer.initializePSVerification(
+            ddoInstance.getDid(),
+            ddo,
+            service.id,
+            task.consumerAddress,
+            task.policyServer
+          )
+          accessGrantedServiceLevel = accessGrantedDDOLevel || response.success
+        } else {
+          PROVIDER_LOGGER.info(
+            'Checking credentials for consumer address internal for service: ' +
+              task.consumerAddress
+          )
+          accessGrantedServiceLevel = await checkCredentials(
+            task.consumerAddress,
+            service.credentials,
+            signer
+          )
+        }
+        PROVIDER_LOGGER.info(
+          `service.credentials: ${JSON.stringify(service.credentials)}`
+        )
+        PROVIDER_LOGGER.info(`accessGrantedServiceLevel: ${accessGrantedServiceLevel}`)
+
+        if (!accessGrantedServiceLevel) {
+          const error = `Error: Access to service with id ${service.id} was denied`
+          PROVIDER_LOGGER.error(error)
+          return {
+            stream: null,
+            status: { httpStatus: 403, error }
+          }
+        }
+      }
+    }
+
     const now = new Date().getTime() / 1000
     let validUntil = service.timeout === 0 ? 0 : now + service.timeout // first, make it service default
     if (task.validUntil && !isNaN(task.validUntil)) {
