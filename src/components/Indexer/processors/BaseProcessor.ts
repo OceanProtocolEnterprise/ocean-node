@@ -271,10 +271,13 @@ export abstract class BaseEventProcessor {
       } else {
         return Date.now().toString()
       }
-    } catch (err) {
+    } catch (err: any) {
+      const responseDetails = err.response
+        ? `status=${err.response.status}, statusText=${err.response.statusText}, body=${JSON.stringify(err.response.data)}`
+        : `code=${err.code ?? 'unknown'}, message=${err.message}`
       INDEXER_LOGGER.log(
         LOG_LEVELS_STR.LEVEL_ERROR,
-        `decryptDDO: Error getting nonce, using timestamp: ${err.message}`
+        `decryptDDO: Error getting nonce from ${decryptorURL} for decrypterAddress=${address}; ${responseDetails}. Using timestamp fallback.`
       )
       return Date.now().toString()
     }
@@ -328,6 +331,21 @@ export abstract class BaseEventProcessor {
               signature,
               nonce
             }
+            INDEXER_LOGGER.log(
+              LOG_LEVELS_STR.LEVEL_INFO,
+              `decryptDDO: Sending decrypt request: ${JSON.stringify({
+                url: `${decryptorURL}/api/services/decrypt`,
+                transactionId: txId || null,
+                chainId,
+                decrypterAddress: ethAddress,
+                dataNftAddress: contractAddress,
+                flags: parseInt(flag),
+                documentHash: metadataHash || null,
+                nonce,
+                hasEncryptedDocument: Boolean(payload.encryptedDocument),
+                hasSignature: Boolean(signature)
+              })}`
+            )
             try {
               const res = await axios({
                 method: 'post',
@@ -375,6 +393,13 @@ export abstract class BaseEventProcessor {
                 throw err
               }
 
+              const responseDetails = err.response
+                ? `status=${err.response.status}, statusText=${err.response.statusText}, body=${JSON.stringify(err.response.data)}`
+                : `code=${err.code ?? 'unknown'}, message=${err.message}`
+              INDEXER_LOGGER.log(
+                LOG_LEVELS_STR.LEVEL_ERROR,
+                `decryptDDO: HTTP request failed for decryptorURL=${decryptorURL}, transactionId=${txId || 'none'}, chainId=${chainId}, decrypterAddress=${ethAddress}; ${responseDetails}`
+              )
               throw err
             }
           })
