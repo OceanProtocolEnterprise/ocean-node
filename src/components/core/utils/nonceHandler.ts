@@ -189,24 +189,7 @@ async function validateNonceAndSignature(
   config: OceanNodeConfig,
   chainId?: string | null
 ): Promise<NonceResponse> {
-  CORE_LOGGER.logMessage(
-    `Validating nonce and signature: ${JSON.stringify({
-      nonce,
-      existingNonce,
-      consumer,
-      command,
-      chainId: chainId || null,
-      signaturePresent: Boolean(signature),
-      signatureLength: signature?.length || 0,
-      signaturePrefix: signature?.slice(0, 10) || null
-    })}`,
-    true
-  )
-
   if (nonce <= existingNonce) {
-    CORE_LOGGER.error(
-      `Nonce validation failed: received nonce ${nonce} is not greater than existing nonce ${existingNonce} for consumer ${consumer}`
-    )
     return {
       valid: false,
       error: 'nonce: ' + nonce + ' is not a valid nonce'
@@ -218,108 +201,46 @@ async function validateNonceAndSignature(
     [ethers.hexlify(ethers.toUtf8Bytes(message))]
   )
   const messageHashBytes = ethers.getBytes(consumerMessage)
-  CORE_LOGGER.logMessage(
-    `Signature verification inputs: ${JSON.stringify({
-      message,
-      consumerMessage,
-      messageHashBytesLength: messageHashBytes.length
-    })}`,
-    true
-  )
 
   // Try EOA signature validation
   try {
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
-    const normalizedConsumer = ethers.getAddress(consumer).toLowerCase()
-    const hashSignatureMatches =
-      ethers.getAddress(addressFromHashSignature).toLowerCase() === normalizedConsumer
-    const bytesSignatureMatches =
-      ethers.getAddress(addressFromBytesSignature).toLowerCase() === normalizedConsumer
-
-    CORE_LOGGER.logMessage(
-      `EOA signature verification result: ${JSON.stringify({
-        normalizedConsumer,
-        addressFromHashSignature,
-        addressFromBytesSignature,
-        hashSignatureMatches,
-        bytesSignatureMatches
-      })}`,
-      true
-    )
-
-    if (hashSignatureMatches || bytesSignatureMatches) {
+    if (
+      ethers.getAddress(addressFromHashSignature)?.toLowerCase() ===
+        ethers.getAddress(consumer)?.toLowerCase() ||
+      ethers.getAddress(addressFromBytesSignature)?.toLowerCase() ===
+        ethers.getAddress(consumer)?.toLowerCase()
+    ) {
       return { valid: true }
     }
   } catch (error) {
-    CORE_LOGGER.error(
-      `EOA signature verification threw an error for consumer ${consumer}: ${error instanceof Error ? error.message : String(error)}`
-    )
     // Continue to smart account check
   }
 
   // Try ERC-1271 (smart account) validation
   try {
     const targetChainId = chainId || Object.keys(config?.supportedNetworks || {})[0]
-    CORE_LOGGER.logMessage(
-      `Starting ERC-1271 signature verification: ${JSON.stringify({
-        consumer,
-        targetChainId: targetChainId || null,
-        networkConfigured: Boolean(
-          targetChainId && config?.supportedNetworks?.[targetChainId]
-        )
-      })}`,
-      true
-    )
     if (targetChainId && config?.supportedNetworks?.[targetChainId]) {
       const provider = new ethers.JsonRpcProvider(
         config.supportedNetworks[targetChainId].rpc
       )
 
       // Try custom hash format (for backward compatibility)
-      const customHashValid = await isERC1271Valid(
-        consumer,
-        consumerMessage,
-        signature,
-        provider
-      )
-      CORE_LOGGER.logMessage(
-        `ERC-1271 custom hash verification result: ${customHashValid}`,
-        true
-      )
-      if (customHashValid) {
+      if (await isERC1271Valid(consumer, consumerMessage, signature, provider)) {
         return { valid: true }
       }
 
       // Try EIP-191 prefixed hash (standard for smart wallets)
       const eip191Hash = ethers.hashMessage(message)
-      const eip191HashValid = await isERC1271Valid(
-        consumer,
-        eip191Hash,
-        signature,
-        provider
-      )
-      CORE_LOGGER.logMessage(
-        `ERC-1271 EIP-191 hash verification result: ${JSON.stringify({
-          eip191Hash,
-          valid: eip191HashValid
-        })}`,
-        true
-      )
-      if (eip191HashValid) {
+      if (await isERC1271Valid(consumer, eip191Hash, signature, provider)) {
         return { valid: true }
       }
     }
   } catch (error) {
-    CORE_LOGGER.error(
-      `ERC-1271 signature verification threw an error for consumer ${consumer}: ${error instanceof Error ? error.message : String(error)}`
-    )
     // Smart account validation failed
   }
 
-  CORE_LOGGER.error(
-    `All signature verification methods failed for consumer ${consumer}, nonce ${nonce}, command ${command}`
-  )
   return {
     valid: false,
     error: 'consumer address and nonce signature mismatch'

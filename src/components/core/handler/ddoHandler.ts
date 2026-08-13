@@ -136,20 +136,6 @@ export class DecryptDdoHandler extends CommandHandler {
       task.command
     )
     if (isAuthRequestValid.status.httpStatus !== 200) {
-      CORE_LOGGER.error(
-        `Decrypt DDO authentication failed: ${JSON.stringify({
-          decrypterAddress: task.decrypterAddress,
-          chainId: task.chainId,
-          transactionId: task.transactionId || null,
-          command: task.command,
-          nonce: task.nonce,
-          caller: task.caller || null,
-          hasAuthorization: Boolean(task.authorization),
-          hasSignature: Boolean(task.signature),
-          status: isAuthRequestValid.status.httpStatus,
-          error: isAuthRequestValid.status.error
-        })}`
-      )
       return isAuthRequestValid
     }
 
