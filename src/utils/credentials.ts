@@ -65,6 +65,16 @@ export async function checkCredentials(
   // STEP 2: Check ALLOW list
   // ========================================
   if (isDefined(credentials.allow) && credentials.allow.length > 0) {
+    CORE_LOGGER.logMessage(
+      `Checking ALLOW list with params: ${JSON.stringify({
+        credentialList: credentials.allow,
+        consumerAddress: normalizedAddress,
+        signerPresent: Boolean(signer),
+        matchRule: matchAllow,
+        listType: 'allow'
+      })}`,
+      true
+    )
     const allowResult = await evaluateCredentialList(
       credentials.allow,
       normalizedAddress,
@@ -72,6 +82,8 @@ export async function checkCredentials(
       matchAllow,
       'allow'
     )
+    CORE_LOGGER.logMessage('Checking ALLOW list credentials', true)
+    CORE_LOGGER.logMessage('ALLOW list result: ' + JSON.stringify(allowResult), true)
     return allowResult.shouldAllow
   }
 

@@ -161,7 +161,7 @@ export class FeesHandler extends CommandHandler {
           accessGrantedDDOLevel = response.success
         } else {
           PROVIDER_LOGGER.info(
-            `Checking credentials for consumer address: ${task.consumerAddress}`
+            `Checking credentials for consumer address internal: ${task.consumerAddress}`
           )
           accessGrantedDDOLevel = await checkCredentials(
             task.consumerAddress,
@@ -195,12 +195,20 @@ export class FeesHandler extends CommandHandler {
           )
           accessGrantedServiceLevel = accessGrantedDDOLevel || response.success
         } else {
+          PROVIDER_LOGGER.info(
+            'Checking credentials for consumer address internal for service: ' +
+              task.consumerAddress
+          )
           accessGrantedServiceLevel = await checkCredentials(
             task.consumerAddress,
             service.credentials,
             signer
           )
         }
+        PROVIDER_LOGGER.info(
+          `service.credentials: ${JSON.stringify(service.credentials)}`
+        )
+        PROVIDER_LOGGER.info(`accessGrantedServiceLevel: ${accessGrantedServiceLevel}`)
 
         if (!accessGrantedServiceLevel) {
           const error = `Error: Access to service with id ${service.id} was denied`
