@@ -217,7 +217,7 @@ async function validateNonceAndSignature(
     ['bytes'],
     [ethers.hexlify(ethers.toUtf8Bytes(message))]
   )
-  const messageHashBytes = ethers.toBeArray(consumerMessage)
+  const messageHashBytes = ethers.getBytes(consumerMessage)
   CORE_LOGGER.logMessage(
     `Signature verification inputs: ${JSON.stringify({
       message,
