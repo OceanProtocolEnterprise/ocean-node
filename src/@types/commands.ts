@@ -330,6 +330,8 @@ export interface PolicyServerInitializeCommand extends Command {
   documentId?: string
   serviceId?: string
   consumerAddress?: string
+  nonce?: string
+  signature?: string
   policyServer?: any
 }
 

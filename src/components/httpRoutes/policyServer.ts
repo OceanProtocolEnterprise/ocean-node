@@ -53,6 +53,9 @@ PolicyServerPassthroughRoute.post(
         documentId: req.body.documentId,
         serviceId: req.body.serviceId,
         consumerAddress: req.body.consumerAddress,
+        nonce: req.body.nonce,
+        signature: req.body.signature,
+        authorization: req.headers?.authorization,
         policyServer: req.body.policyServer,
         caller: req.caller
       })

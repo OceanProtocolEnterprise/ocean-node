@@ -80,6 +80,16 @@ export class PolicyServerInitializeHandler extends CommandHandler {
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
+    const authValidationResponse = await this.validateTokenOrSignature(
+      task.authorization,
+      task.consumerAddress,
+      task.nonce,
+      task.signature,
+      task.command
+    )
+    if (authValidationResponse.status.httpStatus !== 200) {
+      return authValidationResponse
+    }
     // resolve DDO first
     try {
       const database = await this.getOceanNode().getDatabase()
