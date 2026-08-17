@@ -30,6 +30,7 @@ export const ENV_TO_CONFIG_MAPPING = {
   AUTHORIZED_PUBLISHERS_LIST: 'authorizedPublishersList',
   ALLOWED_ADMINS: 'allowedAdmins',
   ALLOWED_ADMINS_LIST: 'allowedAdminsList',
+  SERVICE_TEMPLATES_PATH: 'serviceTemplatesPath',
   DOCKER_COMPUTE_ENVIRONMENTS: 'dockerComputeEnvironments',
   DOCKER_REGISTRY_AUTHS: 'dockerRegistrysAuth',
   P2P_BOOTSTRAP_NODES: 'p2pConfig.bootstrapNodes',
