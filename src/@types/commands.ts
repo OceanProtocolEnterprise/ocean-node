@@ -324,6 +324,9 @@ export interface JobStatus {
 
 export interface PolicyServerPassthroughCommand extends Command {
   policyServerPassthrough?: any
+  consumerAddress?: string
+  nonce?: string
+  signature?: string
 }
 
 export interface PolicyServerInitializeCommand extends Command {
