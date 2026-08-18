@@ -63,6 +63,7 @@ const TEMPLATE_ID = 'nginx-demo'
 const MAX_DURATION = 600 // serviceOnDemand.maxDurationSeconds
 const SERVICE_DURATION = 300 // long-lived service used through tests (d)→(l)
 const EXPIRY_DURATION = 60 // short service for the expiry-cron test
+const TEST_ESCROW_MAX_LOCK_SECONDS = 24 * 60 * 60
 const PORT_RANGE_START = 39000
 const PORT_RANGE_END = 39500
 
@@ -123,7 +124,7 @@ describe('**********         Service on Demand', () => {
     return Buffer.from(enc).toString('hex')
   }
 
-  async function fundEscrow(beneficiaryNodeAddr: string, durationForLock: number) {
+  async function fundEscrow(beneficiaryNodeAddr: string) {
     // Always mint a large top-up rather than only when the balance is 0. Integration suites
     // share one dev chain and run in sequence; by the time this suite runs, earlier suites
     // (e.g. compute) have left locked funds against the same (token, payer, node beneficiary)
@@ -144,12 +145,29 @@ describe('**********         Service on Demand', () => {
     await (
       await escrowContract.connect(consumerAccount).deposit(paymentToken, balance)
     ).wait()
-    const minLockSeconds = oceanNode.escrow.getMinLockTime(durationForLock)
     await (
       await escrowContract
         .connect(consumerAccount)
-        .authorize(paymentToken, beneficiaryNodeAddr, balance, minLockSeconds, 100)
+        .authorize(
+          paymentToken,
+          beneficiaryNodeAddr,
+          balance,
+          TEST_ESCROW_MAX_LOCK_SECONDS,
+          100
+        )
     ).wait()
+
+    const [authorization] = await escrowContract.getAuthorizations(
+      paymentToken,
+      consumerAddress,
+      beneficiaryNodeAddr
+    )
+    assert(authorization, 'Escrow authorization was not created')
+    assert(
+      BigInt(authorization.maxLockSeconds.toString()) >=
+        BigInt(oceanNode.escrow.getMinLockTime(MAX_DURATION)),
+      'Escrow authorization does not cover the maximum service duration'
+    )
     return await oceanNode.escrow.getUserAvailableFunds(
       DEVELOPMENT_CHAIN_ID,
       consumerAddress,
@@ -412,7 +430,7 @@ describe('**********         Service on Demand', () => {
   })
 
   it('(c) funds the escrow for the consumer', async () => {
-    const funds = await fundEscrow(servicesEnv.consumerAddress, MAX_DURATION)
+    const funds = await fundEscrow(servicesEnv.consumerAddress)
     assert(BigInt(funds.toString()) > BigInt(0), 'Should have funds in escrow')
   })
 
