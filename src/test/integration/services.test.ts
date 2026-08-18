@@ -92,7 +92,6 @@ describe('**********         Service on Demand', () => {
   let consumerAddress: string
   let paymentToken: any
   let paymentTokenContract: any
-  let escrowAddress: string
   let escrowContract: any
   let artifactsAddresses: any
   let serviceTemplatesPath: string
@@ -139,7 +138,9 @@ describe('**********         Service on Demand', () => {
     await mintTx.wait()
     const balance = await paymentTokenContract.balanceOf(consumerAddress)
     await (
-      await paymentTokenContract.connect(consumerAccount).approve(escrowAddress, balance)
+      await paymentTokenContract
+        .connect(consumerAccount)
+        .approve(artifactsAddresses.development.EnterpriseEscrow, balance)
     ).wait()
     await (
       await escrowContract.connect(consumerAccount).deposit(paymentToken, balance)
@@ -365,14 +366,11 @@ describe('**********         Service on Demand', () => {
       OceanToken.abi,
       publisherAccount
     )
-    const resolvedEscrowAddress =
-      await oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID)
-    assert(
-      resolvedEscrowAddress,
-      `No escrow contract configured for chain ${DEVELOPMENT_CHAIN_ID}`
+    escrowContract = new ethers.Contract(
+      artifactsAddresses.development.EnterpriseEscrow,
+      EscrowJson.abi,
+      publisherAccount
     )
-    escrowAddress = resolvedEscrowAddress
-    escrowContract = new ethers.Contract(escrowAddress, EscrowJson.abi, publisherAccount)
   })
 
   after(async function () {
