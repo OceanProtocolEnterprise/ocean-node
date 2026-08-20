@@ -241,7 +241,10 @@ jobs:
         with:
           repository: 'oceanprotocol/ocean-cli'
           path: 'ocean-cli'
-          ref: feature/next-node-4
+          # Pin the last compatible revision. Newer revisions treat an existing
+          # escrow authorization as success, while the current system test expects
+          # the repeated invalid authorization to fail.
+          ref: 88d707e49179a24bc0394731a50c121661bf8740
       - name: Checkout Ocean-js
         uses: actions/checkout@v4
         with:
