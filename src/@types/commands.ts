@@ -301,6 +301,15 @@ export interface ComputeGetStatusCommand extends Command {
   consumerAddress?: string
   jobId?: string
   agreementId?: string
+  // Runtime metrics (runtimeMetrics) on the returned jobs, honored ONLY for the authenticated
+  // owner (consumerAddress + signature/nonce, or an authorization token).
+  // undefined (default) ⇒ attached when the caller carries owner credentials, silently omitted
+  // otherwise (an unauthenticated status call behaves exactly as it always did);
+  // true ⇒ explicitly required: missing/invalid credentials answer 400/401 instead;
+  // false ⇒ never attached.
+  includeMetrics?: boolean
+  nonce?: string
+  signature?: string
 }
 
 export interface ValidateChainId {
@@ -324,11 +333,6 @@ export interface JobStatus {
 
 export interface PolicyServerPassthroughCommand extends Command {
   policyServerPassthrough?: any
-  // caller identity, verified by this node before anything is forwarded to the policy server.
-  // either the inherited "authorization" token, or consumerAddress + nonce + signature
-  consumerAddress?: string
-  nonce?: string
-  signature?: string
 }
 
 export interface PolicyServerInitializeCommand extends Command {
@@ -458,6 +462,9 @@ export interface ServiceGetStatusCommand extends Command {
   nonce: string
   signature: string
   serviceId?: string
+  // Runtime metrics (runtimeMetrics) on the returned services. Included BY DEFAULT — safe
+  // because this command is already authenticated + owner-scoped. Pass false to opt out.
+  includeMetrics?: boolean
 }
 
 // Node-wide service listing (SERVICE_LIST), shaped like GetJobsCommand. Authenticated

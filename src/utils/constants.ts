@@ -483,6 +483,21 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.DB_TYPE,
     required: false
   },
+  DB_INIT_MAX_ATTEMPTS: {
+    name: 'DB_INIT_MAX_ATTEMPTS',
+    value: process.env.DB_INIT_MAX_ATTEMPTS,
+    required: false
+  },
+  DB_INIT_RETRY_DELAY: {
+    name: 'DB_INIT_RETRY_DELAY',
+    value: process.env.DB_INIT_RETRY_DELAY,
+    required: false
+  },
+  DB_INIT_MAX_RETRY_DELAY: {
+    name: 'DB_INIT_MAX_RETRY_DELAY',
+    value: process.env.DB_INIT_MAX_RETRY_DELAY,
+    required: false
+  },
   CRON_DELETE_DB_LOGS: {
     name: 'CRON_DELETE_DB_LOGS',
     value: process.env.CRON_DELETE_DB_LOGS,
@@ -496,6 +511,16 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   DOCKER_COMPUTE_ENVIRONMENTS: {
     name: 'DOCKER_COMPUTE_ENVIRONMENTS',
     value: process.env.DOCKER_COMPUTE_ENVIRONMENTS,
+    required: false
+  },
+  C2D_METRICS_INTERVAL_SECONDS: {
+    name: 'C2D_METRICS_INTERVAL_SECONDS',
+    value: process.env.C2D_METRICS_INTERVAL_SECONDS,
+    required: false
+  },
+  GPU_METRICS: {
+    name: 'GPU_METRICS',
+    value: process.env.GPU_METRICS,
     required: false
   },
   SERVICE_TEMPLATES_PATH: {
