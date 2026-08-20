@@ -241,6 +241,7 @@ jobs:
         with:
           repository: 'oceanprotocol/ocean-cli'
           path: 'ocean-cli'
+          ref: feature/next-node-4
       - name: Checkout Ocean-js
         uses: actions/checkout@v4
         with:
