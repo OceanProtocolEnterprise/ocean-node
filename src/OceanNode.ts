@@ -36,7 +36,6 @@ export interface RequestDataCheck {
   updatedRequestData: RequestLimiter
 }
 export class OceanNode {
-  // eslint-disable-next-line no-use-before-define
   private static instance: OceanNode
   // handlers
   private coreHandlers: CoreHandlersRegistry
@@ -51,7 +50,6 @@ export class OceanNode {
   private persistentStorage: PersistentStorageFactory
   private database: Database
 
-  // eslint-disable-next-line no-useless-constructor
   private constructor(
     private config: OceanNodeConfig,
     private db?: Database,
