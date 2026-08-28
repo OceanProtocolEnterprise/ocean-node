@@ -50,7 +50,6 @@ import { createHash } from 'crypto'
 const MAX_NONCE_RESPONSE_BYTES = 4 * 1024
 const MAX_DDO_RESPONSE_BYTES = 4 * 1024 * 1024
 
-
 export abstract class BaseEventProcessor {
   protected networkId: number
   private config: OceanNodeConfig

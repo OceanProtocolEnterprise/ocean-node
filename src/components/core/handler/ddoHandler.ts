@@ -543,7 +543,7 @@ export class FindDdoHandler extends CommandHandler {
     }
     // assigned once the FindDDO deadline exists; the finally below runs it on
     // every exit path, including the outer-exception one
-    let endFindDdo: () => void = () => { }
+    let endFindDdo: () => void = () => {}
     try {
       const node = this.getOceanNode()
       const p2pNode = node.getP2PNode()
@@ -704,7 +704,7 @@ export class FindDdoHandler extends CommandHandler {
         if (findDdoSignal.aborted) {
           return Promise.reject(findDdoSignal.reason)
         }
-        let onAbort: () => void = () => { }
+        let onAbort: () => void = () => {}
         const aborted = new Promise<never>((resolve, reject) => {
           onAbort = () => reject(findDdoSignal.reason)
           findDdoSignal.addEventListener('abort', onAbort, { once: true })
@@ -840,7 +840,7 @@ export class FindDdoHandler extends CommandHandler {
                 ? provider.multiaddrs.map((ma: any) => ma.toString())
                 : []
 
-            try {
+              try {
                 const response = await p2pNode.sendTo(
                   peer,
                   JSON.stringify(getCommand),
