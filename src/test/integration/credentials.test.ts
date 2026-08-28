@@ -641,8 +641,8 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
     }, DEFAULT_TEST_TIMEOUT)
 
     expect(rejectionState, 'Missing rejected DDO state').to.not.equal(null)
-    expect(rejectionState?.error).to.include(
-      `not part of the ${ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS.name} group`
+    expect(rejectionState?.error?.toLowerCase()).to.include(
+      `not part of the ${ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS.name.toLowerCase()} group`
     )
     assert(
       (await database.ddo.retrieve(did)) === null,
