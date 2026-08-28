@@ -5,26 +5,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Ocean Node is the all-in-one backend for the Ocean Protocol stack. A single Node process
 replaces three legacy components: **Provider** (data access / encryption / compute),
 **Aquarius** (metadata cache) and the **subgraph** (on-chain event indexing). It is a
-TypeScript ESM project (Node 22) that exposes an HTTP API and a libp2p P2P interface, both
+TypeScript ESM project (Node 24) that exposes an HTTP API and a libp2p P2P interface, both
 of which dispatch to the same set of command handlers.
 
 ---
 
 ## 1. Environment & tooling prerequisites
 
-- **Node.js ≥ 22.13 is required** (`.nvmrc` pins `22.22.2`, matching the Dockerfile and CI;
-  `package.json` `engines` requires `>=22.13.0`). Always run `nvm use` (or `source ~/.nvm/nvm.sh && nvm use`) before
+- **Node.js 24 is required** (`.nvmrc` pins `24.19.0` — the current Node 24 LTS "Krypton" —
+  matching the Dockerfile and CI; `package.json` `engines` requires `>=24`, so Node 22 is
+  no longer a supported runtime). The Dockerfile additionally pins each base
+  image by digest, so bumping the version means updating the `sha256:` alongside the tag —
+  resolve it with `docker buildx imagetools inspect node:<version>-trixie`, not from the tag
+  alone. Always run `nvm use` (or `source ~/.nvm/nvm.sh && nvm use`) before
   any `npm`, build, or test command. The wrong Node version fails with errors like
   `Unexpected token 'with'`, missing `GLIBC_2.38`, or — since the SQLite layer uses the
   built-in `node:sqlite` module — `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` on Node < 22.13.
   This is enforced by `.cursor/rules/tests-nvm.mdc` and the in-repo `CLAUDE.md`.
-- **`postinstall` runs `scripts/fix-libp2p-http-utils.js`** — a patch applied to a libp2p
-  dependency. Expect it to run on every `npm install`; don't remove it.
+- **There is no `postinstall` step.** `npm install` is plain. (Historically a `postinstall`
+  ran `scripts/fix-libp2p-http-utils.js` to default a missing URL port to 443/80 in
+  `@libp2p/http-utils`; upstream shipped that fix in `2.0.3`, so both the hook and the
+  script were removed.)
 - **Docker + docker-compose** are needed for the metadata database (Typesense or
   Elasticsearch) and for C2D (Compute-to-Data) via the local Docker socket.
-- TypeScript config: ESM (`module: esnext`, `target: ES2022`, `moduleResolution: node`),
-  `experimentalDecorators` + `emitDecoratorMetadata` enabled, `rootDir: ./src`,
-  `outDir: ./dist`. All local imports use the `.js` extension (compiled ESM convention).
+- TypeScript config: **TypeScript 6**, ESM (`module: esnext`, `target: ES2022`,
+  `moduleResolution: node`), `experimentalDecorators` + `emitDecoratorMetadata` enabled,
+  `rootDir: ./src`, `outDir: ./dist`. Most local imports use the `.js` extension
+  (compiled ESM convention), though ~31 relative imports still omit it.
+  - `strict` is **on**, with two documented exceptions: `strictNullChecks: false` and
+    `useUnknownInCatchVariables: false`. Turning either on is a real project (~1324 and
+    ~389 errors); do it subsystem by subsystem, not in passing.
+  - Two things must be done before TypeScript 7: `moduleResolution` has to move off
+    `node10` (`ignoreDeprecations: "6.0"` only defers it, and `nodenext` currently costs
+    ~123 errors), and `typescript-eslint` has to support TS 7 — its peer range is
+    `>=4.8.4 <6.1.0`, so it pins us below 7 today.
 
 ### Only-mandatory config: `PRIVATE_KEY`
 
@@ -63,13 +77,20 @@ The Dockerfile uses the identical CMD. The compiled entry point is `dist/index.j
 ### Lint / format
 
 ```bash
-npm run lint       # eslint (.ts,.tsx) + type-check
+npm run lint       # eslint + type-check
 npm run lint:fix   # eslint --fix
 npm run format     # prettier --write '**/*.{js,jsx,ts,tsx}'
 ```
 
-ESLint extends `oceanprotocol` + `prettier/recommended`. Notable rules: `require-await`
-is an **error**, `no-unused-vars` is an **error**, empty catch blocks are allowed. Prettier:
+ESLint 10 with flat config in `eslint.config.js` (there is no `.eslintrc`/`.eslintignore`).
+`eslint-config-oceanprotocol` is **not** used — it is pinned to eslint ^8 and cannot follow
+eslint to flat config, so the preset is composed in-repo from `@eslint/js`,
+`typescript-eslint`, `eslint-plugin-security`, `eslint-plugin-promise` and
+`eslint-plugin-prettier`. Only `**/*.ts` is linted; `.js` is ignored as build output.
+Notable rules: `require-await` is an **error**, `no-unused-vars` is an **error** (with
+`args: 'none'`, `caughtErrors: 'none'`), empty catch blocks are allowed. `@typescript-eslint`'s
+`recommended` set is deliberately *not* extended, and a few rules that eslint 9/10 and the
+newer plugins added are switched off — see the comments in `eslint.config.js`. Prettier:
 no semicolons, single quotes, `printWidth: 90`, no trailing commas, 2-space tabs.
 
 ### Tests (important build quirk)
@@ -304,7 +325,7 @@ Handler source is grouped under `src/components/core/`:
 
 ## 5. Docker & deployment
 
-Multi-stage `Dockerfile` (builder + slim runner) on `node:22`. The runner ships only
+Multi-stage `Dockerfile` (builder + slim runner) on `node:24`. The runner ships only
 `dist/`, `node_modules`, `schemas/`, and `config.json` (`.dockerignore` excludes all of
 `docs/`) — no service templates. It exposes P2P ports `9000-9003,9005` and
 HTTP `8000`. `docker-entrypoint.sh` handles Docker socket group membership at runtime so C2D
