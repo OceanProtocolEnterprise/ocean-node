@@ -74,6 +74,7 @@ import {
   SERVICE_START_PENDING_STATUSES
 } from '../../@types/C2D/ServiceOnDemand.js'
 import type { ServiceJob } from '../../@types/C2D/ServiceOnDemand.js'
+import type { DockerMountObject } from '../../@types/PersistentStorage.js'
 import { resolveServiceImage } from './serviceResourceMatching.js'
 import {
   buildSnapshot,
@@ -115,6 +116,11 @@ const makeServiceLockHolderId = () =>
 // "Already gone" Docker errors (404 missing, 304 already stopped) are the desired end
 // state of a teardown, so treat them as success.
 const isBenignDockerError = (e: any) => e?.statusCode === 404 || e?.statusCode === 304
+
+// Cap on processes/threads a service container may spawn, to stop a runaway workload from
+// exhausting the host's pid space. Overridable per resource via init.advanced.PidsLimit,
+// which a multi-process (one-worker-per-GPU) model server needs.
+const SERVICE_DEFAULT_PIDS_LIMIT = 512
 
 export class C2DEngineDocker extends C2DEngine {
   private envs: ComputeEnvironment[] = []
@@ -1138,6 +1144,7 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
+  // eslint-disable-next-line require-await
   public override async getComputeEnvironments(
     chainId?: number
   ): Promise<ComputeEnvironment[]> {
@@ -1398,6 +1405,7 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
+  // eslint-disable-next-line require-await
   public override async startComputeJob(
     assets: ComputeAsset[],
     algorithm: ComputeAlgorithm,
@@ -1563,6 +1571,7 @@ export class C2DEngineDocker extends C2DEngine {
     return [cjob]
   }
 
+  // eslint-disable-next-line require-await
   public override async stopComputeJob(
     jobId: string,
     owner: string,
@@ -1583,6 +1592,7 @@ export class C2DEngineDocker extends C2DEngine {
     return statusResults
   }
 
+  // eslint-disable-next-line require-await
   protected async getResults(jobId: string): Promise<ComputeResult[]> {
     const res: ComputeResult[] = []
     let index = 0
@@ -1663,6 +1673,7 @@ export class C2DEngineDocker extends C2DEngine {
     return res
   }
 
+  // eslint-disable-next-line require-await
   public override async getComputeJobStatus(
     consumerAddress?: string,
     agreementId?: string,
@@ -1692,6 +1703,7 @@ export class C2DEngineDocker extends C2DEngine {
     return statusResults
   }
 
+  // eslint-disable-next-line require-await
   public override async getComputeJobResult(
     consumerAddress: string,
     jobId: string,
@@ -1770,6 +1782,7 @@ export class C2DEngineDocker extends C2DEngine {
     return null
   }
 
+  // eslint-disable-next-line require-await
   public override async getStreamableLogs(jobId: string): Promise<NodeJS.ReadableStream> {
     const jobRes: DBComputeJob[] = await this.db.getJob(jobId)
     if (jobRes.length === 0) return null
@@ -1868,6 +1881,7 @@ export class C2DEngineDocker extends C2DEngine {
         this.getC2DConfig().hash
       )
       for (const svc of pendingStarts) {
+        // eslint-disable-next-line no-await-in-loop
         if (!(await this.tryAcquireServiceLifecycleLock(svc.serviceId))) continue
         // Track the promise so stop() can drain it; clean both trackers when it settles.
         const startPromise = this.processServiceStart(svc).finally(() => {
@@ -2028,6 +2042,7 @@ export class C2DEngineDocker extends C2DEngine {
     return 15 * 60 * 1000
   }
 
+  // eslint-disable-next-line require-await
   private async processJob(job: DBComputeJob) {
     CORE_LOGGER.info(
       `Process job ${job.jobId} started: [STATUS: ${job.status}: ${job.statusText}]`
@@ -2262,6 +2277,8 @@ export class C2DEngineDocker extends C2DEngine {
         containerInfo.HostConfig.IpcMode = advancedConfig.IpcMode
       if (advancedConfig.ShmSize)
         containerInfo.HostConfig.ShmSize = advancedConfig.ShmSize
+      if (advancedConfig.PidsLimit)
+        containerInfo.HostConfig.PidsLimit = advancedConfig.PidsLimit
       if (job.algorithm?.meta.container.entrypoint) {
         const newEntrypoint = job.algorithm.meta.container.entrypoint.replace(
           '$ALGO',
@@ -2615,6 +2632,7 @@ export class C2DEngineDocker extends C2DEngine {
     await this.cleanupJob(job)
   }
 
+  // eslint-disable-next-line require-await
   private parseCpusetString(cpuset: string): number[] {
     const cores: number[] = []
     if (!cpuset) return cores
@@ -3605,6 +3623,9 @@ export class C2DEngineDocker extends C2DEngine {
     NanoCpus?: number
     DeviceRequests?: any[]
     CpusetCpus?: string
+    IpcMode?: string
+    ShmSize?: number
+    PidsLimit?: number
   } {
     const connResources: ComputeResource[] =
       this.getC2DConfig().connection?.resources ?? []
@@ -3613,12 +3634,38 @@ export class C2DEngineDocker extends C2DEngine {
     const deviceRequests = this.getDockerDeviceRequest(resources, connResources) ?? []
     const cpusetStr =
       cpu && cpu > 0 ? this.allocateCpus(serviceId, cpu, environment) : null
+    const advanced = this.getDockerAdvancedConfig(resources, connResources)
+    if (advanced.IpcMode || advanced.ShmSize || advanced.PidsLimit) {
+      CORE_LOGGER.debug(
+        `service ${serviceId}: advanced docker config from node resources — ` +
+          `IpcMode=${advanced.IpcMode ?? 'default'} ` +
+          `ShmSize=${advanced.ShmSize || 'default'} ` +
+          `PidsLimit=${advanced.PidsLimit || SERVICE_DEFAULT_PIDS_LIMIT}`
+      )
+    }
     return {
       Memory: ram ? ram * 1024 ** 3 : undefined,
       NanoCpus: cpu ? cpu * 1e9 : undefined,
       DeviceRequests: deviceRequests.length ? deviceRequests : undefined,
-      CpusetCpus: cpusetStr ?? undefined
+      CpusetCpus: cpusetStr ?? undefined,
+      // Deliberately NOT forwarded to services: Devices, Binds, CapAdd, GroupAdd,
+      // SecurityOpt. Those widen the sandbox in ways a long-lived, publicly-port-bound
+      // service does not need, and the compute-job path is a different threat model
+      // (short-lived, no published ports). Add them only with a concrete reason.
+      IpcMode: advanced.IpcMode ?? undefined,
+      ShmSize: advanced.ShmSize > 0 ? advanced.ShmSize : undefined,
+      PidsLimit: advanced.PidsLimit > 0 ? advanced.PidsLimit : undefined
     }
+  }
+
+  // Bind-mount for the job's output bucket, when it has one. Throws instead of returning an
+  // empty list: an unmounted container silently re-downloads its models and writes results
+  // nowhere, so a mount failure must fail the start/restart.
+  private async serviceOutputMounts(job: ServiceJob): Promise<DockerMountObject[]> {
+    if (!job.outputBucketId) return []
+    const ps = OceanNode.getInstance().getPersistentStorage()
+    if (!ps) throw new Error('Persistent storage is not configured on this node')
+    return [await ps.getDockerOutputMountObject(job.outputBucketId, job.owner)]
   }
 
   // Handler-facing: persist the initial Starting record and return immediately so the HTTP
@@ -3640,7 +3687,8 @@ export class C2DEngineDocker extends C2DEngine {
     owner: string,
     payment: DBComputeJobPayment,
     serviceId: string,
-    userData?: string
+    userData?: string,
+    outputBucketId?: string
   ): Promise<ServiceJob | null> {
     const containerImage = resolveServiceImage(
       image,
@@ -3672,6 +3720,7 @@ export class C2DEngineDocker extends C2DEngine {
       exposedPorts,
       endpoints: [],
       userData, // stored as received (ECIES-encrypted); decrypted transiently at container start
+      outputBucketId,
       resources: resources.map((r) => ({ id: r.id, amount: r.amount })),
       payment
     }
@@ -3850,6 +3899,7 @@ export class C2DEngineDocker extends C2DEngine {
       const hostPorts: number[] = []
       try {
         for (let i = 0; i < job.exposedPorts.length; i++) {
+          // eslint-disable-next-line no-await-in-loop
           hostPorts.push(await allocateHostPort(rangeStart, rangeEnd))
         }
       } catch (e) {
@@ -3879,12 +3929,19 @@ export class C2DEngineDocker extends C2DEngine {
         ExposedPorts[`${cp}/tcp`] = {}
       })
 
-      const { Memory, NanoCpus, DeviceRequests, CpusetCpus } =
-        this.buildServiceResourceConstraints(
-          job.resources.map((r) => ({ id: r.id, amount: r.amount })),
-          job.serviceId,
-          job.environment
-        )
+      const {
+        Memory,
+        NanoCpus,
+        DeviceRequests,
+        CpusetCpus,
+        IpcMode,
+        ShmSize,
+        PidsLimit
+      } = this.buildServiceResourceConstraints(
+        job.resources.map((r) => ({ id: r.id, amount: r.amount })),
+        job.serviceId,
+        job.environment
+      )
 
       container = await this.docker.createContainer({
         Image: job.containerImage,
@@ -3901,7 +3958,13 @@ export class C2DEngineDocker extends C2DEngine {
           NetworkMode: network.id,
           SecurityOpt: ['no-new-privileges'], // security plan #5
           CapDrop: ['ALL'],
-          PidsLimit: 512
+          // Operator-configured (init.advanced) or Docker's defaults. Omitting IpcMode and
+          // ShmSize leaves the container with a private 64 MB /dev/shm, which multi-GPU
+          // model servers cannot start in — see buildServiceResourceConstraints().
+          ...(IpcMode ? { IpcMode } : {}),
+          ...(ShmSize ? { ShmSize } : {}),
+          PidsLimit: PidsLimit ?? SERVICE_DEFAULT_PIDS_LIMIT,
+          Mounts: await this.serviceOutputMounts(job)
         }
       })
       CORE_LOGGER.debug(
@@ -4030,6 +4093,7 @@ export class C2DEngineDocker extends C2DEngine {
       const network = this.docker.getNetwork(ref) // dockerode accepts a name or an id
       let info: any
       try {
+        // eslint-disable-next-line no-await-in-loop
         info = await network.inspect()
       } catch (e: any) {
         if (isBenignDockerError(e)) {
@@ -4044,6 +4108,7 @@ export class C2DEngineDocker extends C2DEngine {
           `attached containers=[${attached.map((c) => c.slice(0, 12)).join(',')}])`
       )
       for (const containerId of attached) {
+        // eslint-disable-next-line no-await-in-loop
         await this.docker
           .getContainer(containerId)
           .remove({ force: true })
@@ -4051,6 +4116,7 @@ export class C2DEngineDocker extends C2DEngine {
             if (!isBenignDockerError(e)) throw e
           })
       }
+      // eslint-disable-next-line no-await-in-loop
       await network.remove().catch((e) => {
         if (!isBenignDockerError(e)) throw e
       })
@@ -4762,13 +4828,23 @@ export class C2DEngineDocker extends C2DEngine {
       network = await this.createServiceNetwork(serviceId)
       CORE_LOGGER.debug(`restart ${serviceId}: created network ${network.id}`)
 
-      // 7. Resource constraints
-      const { Memory, NanoCpus, DeviceRequests, CpusetCpus } =
-        this.buildServiceResourceConstraints(
-          job.resources.map((r) => ({ id: r.id, amount: r.amount })),
-          serviceId,
-          job.environment
-        )
+      // 7. Resource constraints. Must resolve identically to the start path: a restart
+      //    creates a NEW container, so anything missed here silently downgrades a running
+      //    service — e.g. a multi-GPU model server that started fine would come back with
+      //    a 64 MB /dev/shm and fail to boot, inside an already-paid window.
+      const {
+        Memory,
+        NanoCpus,
+        DeviceRequests,
+        CpusetCpus,
+        IpcMode,
+        ShmSize,
+        PidsLimit
+      } = this.buildServiceResourceConstraints(
+        job.resources.map((r) => ({ id: r.id, amount: r.amount })),
+        serviceId,
+        job.environment
+      )
 
       // 8. Create and start new container
       container = await this.docker.createContainer({
@@ -4786,7 +4862,10 @@ export class C2DEngineDocker extends C2DEngine {
           NetworkMode: network.id,
           SecurityOpt: ['no-new-privileges'],
           CapDrop: ['ALL'],
-          PidsLimit: 512
+          ...(IpcMode ? { IpcMode } : {}),
+          ...(ShmSize ? { ShmSize } : {}),
+          PidsLimit: PidsLimit ?? SERVICE_DEFAULT_PIDS_LIMIT,
+          Mounts: await this.serviceOutputMounts(job)
         }
       })
       CORE_LOGGER.debug(
