@@ -20,7 +20,7 @@ import { OceanIndexer } from '../../components/Indexer/index.js'
 import { OceanNode } from '../../OceanNode.js'
 import { RPCS, SupportedNetwork } from '../../@types/blockchain.js'
 import { streamToObject } from '../../utils/util.js'
-import { expectedTimeoutFailure, waitToIndex } from './testUtils.js'
+import { expectedTimeoutFailure, waitForCondition, waitToIndex } from './testUtils.js'
 
 import {
   Blockchain,
@@ -147,6 +147,10 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
       null,
       true
     )
+    // A forced singleton replacement tears the previous node down asynchronously. Wait here
+    // before constructing the test indexer so its processor cache cannot be repopulated by an
+    // older indexer carrying another suite's authorization config.
+    await OceanNode.awaitPendingTeardown()
     const indexer = new OceanIndexer(database, config, oceanNode.blockchainRegistry)
     oceanNode.addIndexer(indexer)
     await oceanNode.addC2DEngines()
@@ -629,14 +633,20 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
       nonAuthorizedAccount
     )
 
-    // will timeout
-    const { ddo, wasTimeout } = await waitToIndex(
-      oceanNode,
-      publishedDataset?.ddo.id,
-      EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT
-    )
+    const did = publishedDataset?.ddo.id
+    const database = await oceanNode.getDatabase()
+    const rejectionState = await waitForCondition(async () => {
+      const state = await database.ddoState.retrieve(did)
+      return state?.valid === false ? state : null
+    }, DEFAULT_TEST_TIMEOUT)
 
-    assert(ddo === null && wasTimeout === true, 'DDO should NOT have been indexed')
+    expect(rejectionState, 'Missing rejected DDO state').to.not.equal(null)
+    expect(rejectionState?.error?.toLowerCase()).to.include(
+      `not part of the ${ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS.name.toLowerCase()} group`
+    )
+    assert(
+      (await database.ddo.retrieve(did)) === null,
+      'DDO should NOT have been indexed'
+    )
   })
 })

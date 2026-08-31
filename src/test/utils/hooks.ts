@@ -2,6 +2,7 @@
 // beforeAll() and afterAll() are called before starting the tests
 // and after finishing them respectively.
 
+import type { Context as MochaContext } from 'mocha'
 import { DB_TYPES, ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
 import { CONFIG_LOGGER } from '../../utils/logging/common.js'
 import {
@@ -37,7 +38,7 @@ function getEnvOverrides(): OverrideEnvConfig[] {
       ENVIRONMENT_VARIABLES.DB_URL
     ],
     [
-      'http://localhost:5005/',
+      'http://172.15.0.16:8080/',
       'https://arweave.net/',
       '{ "8996": {"rpc": "http://127.0.0.1:8545", "chainId": 8996, "network": "development", "chunkSize": 100}, "137": {"rpc": "https://polygon.meowrpc.com", "chainId": 137, "network": "polygon", "chunkSize": 100 }}',
       '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
@@ -50,7 +51,9 @@ function getEnvOverrides(): OverrideEnvConfig[] {
 }
 
 export const mochaHooks = {
-  beforeAll() {
+  // mocha invokes root hooks with its Context as `this`, which is where
+  // this.timeout() below comes from
+  beforeAll(this: MochaContext) {
     // get stuff we want to override
     envOverrides = getEnvOverrides()
 
