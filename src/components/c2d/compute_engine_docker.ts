@@ -1601,7 +1601,10 @@ export class C2DEngineDocker extends C2DEngine {
       )
       if (!validation.valid)
         throw new Error(
-          `Cannot find image ${image} for ${env.platform.architecture}. Maybe it does not exist or it's build for other arhitectures.`
+          `Cannot use image ${image} for ${env.platform.architecture}: ${
+            validation.reason ||
+            'the image does not exist or it was built for another architecture'
+          }`
         )
       if (queueMaxWaitTime === 0) {
         job.status = C2DStatusNumber.PullImage
