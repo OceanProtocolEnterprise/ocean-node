@@ -115,6 +115,7 @@ export function fetchEventFromTransaction(
     // Filter and decode logs
     const events = txReceipt.logs
       .map((log: any) => ({
+        address: log.address,
         topics: [...log.topics],
         data: log.data
       }))
