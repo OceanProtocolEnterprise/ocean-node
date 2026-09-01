@@ -327,20 +327,20 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/initializeCompute`, async (req, re
     )
     const { body } = req
     if (!body) {
-      res.status(400).send('Missing required body')
+      res.status(400).json({ error: 'Missing required body' })
       return
     }
 
     body.datasets = body.datasets || []
 
     if (!body.algorithm) {
-      res.status(400).send('Missing algorithm')
+      res.status(400).json({ error: 'Missing algorithm' })
       return
     }
 
     for (const dataset of body.datasets) {
       if (!dataset.documentId) {
-        res.status(400).send('Missing dataset did')
+        res.status(400).json({ error: 'Missing dataset did' })
         return
       }
     }
@@ -354,11 +354,11 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/initializeCompute`, async (req, re
         LOG_LEVELS_STR.LEVEL_ERROR,
         `Stream not found: ${result.status.error}`
       )
-      res.status(result.status.httpStatus).send(result.status.error)
+      res.status(result.status.httpStatus).json({ error: result.status.error })
     }
   } catch (error) {
     HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
-    res.status(500).send('Internal Server Error')
+    res.status(500).json({ error: 'Internal Server Error' })
   }
 })
 
