@@ -50,7 +50,7 @@ import {
 } from '../utils/utils.js'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
 import { EncryptMethod } from '../../@types/fileObject.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
 import { C2DEngineDocker } from '../../components/c2d/compute_engine_docker.js'
@@ -139,7 +139,7 @@ describe('**********         Service on Demand', () => {
     await (
       await paymentTokenContract
         .connect(consumerAccount)
-        .approve(artifactsAddresses.development.Escrow, balance)
+        .approve(await escrowContract.getAddress(), balance)
     ).wait()
     await (
       await escrowContract.connect(consumerAccount).deposit(paymentToken, balance)
@@ -349,9 +349,14 @@ describe('**********         Service on Demand', () => {
       publisherAccount
     )
     escrowContract = new ethers.Contract(
-      artifactsAddresses.development.Escrow,
-      EscrowJson.abi,
+      artifactsAddresses.development.EnterpriseEscrow,
+      EnterpriseEscrowJson.abi,
       publisherAccount
+    )
+    assert.equal(
+      await escrowContract.getAddress(),
+      oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID),
+      'Service tests must fund the same escrow contract used by the node'
     )
   })
 
