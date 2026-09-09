@@ -56,10 +56,6 @@ export async function validateOrderTransaction(
       message: errorMsg
     }
   }
-  const erc20Address = txReceiptMined.to
-  const datatokenContract = new Contract(erc20Address, ERC20Template.abi, signer)
-  const erc721Address = await datatokenContract.getERC721Address()
-
   const orderReusedEvent = fetchEventFromTransaction(
     txReceiptMined,
     EVENTS.ORDER_REUSED,
@@ -84,15 +80,31 @@ export async function validateOrderTransaction(
     contractInterface
   )
   let orderEvent
-  for (const event of OrderStartedEvent) {
-    if (
-      (userAddress?.toLowerCase() === event.args[0]?.toLowerCase() ||
-        userAddress?.toLowerCase() === event.args[1]?.toLowerCase()) &&
-      erc20Address?.toLowerCase() === datatokenAddress?.toLowerCase() &&
-      erc721Address?.toLowerCase() === dataNftAddress?.toLowerCase()
-    ) {
+  for (const event of OrderStartedEvent || []) {
+    const eventDatatokenAddress = event.log.address
+    const userMatches =
+      userAddress?.toLowerCase() === event.args[0]?.toLowerCase() ||
+      userAddress?.toLowerCase() === event.args[1]?.toLowerCase()
+    const datatokenMatches =
+      eventDatatokenAddress?.toLowerCase() === datatokenAddress?.toLowerCase()
+
+    if (!userMatches || !datatokenMatches) continue
+
+    try {
+      const datatokenContract = new Contract(
+        eventDatatokenAddress,
+        ERC20Template.abi,
+        signer
+      )
+      const erc721Address = await datatokenContract.getERC721Address()
+      if (erc721Address?.toLowerCase() !== dataNftAddress?.toLowerCase()) continue
+
       orderEvent = event
       break
+    } catch (error) {
+      CORE_LOGGER.logMessage(
+        `Could not validate datatoken ${eventDatatokenAddress}: ${error}`
+      )
     }
   }
 

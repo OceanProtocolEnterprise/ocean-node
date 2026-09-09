@@ -21,6 +21,7 @@ import { SQLLiteConfigDatabase } from './SQLLiteConfigDatabase.js'
 import { SQLLiteNonceDatabase } from './SQLLiteNonceDatabase.js'
 import { TypesenseSchema } from './TypesenseSchemas.js'
 import { AuthTokenDatabase } from './AuthTokenDatabase.js'
+import { NodeMetricsDatabase } from './sqliteNodeMetrics.js'
 
 export type Schema = ElasticsearchSchema | TypesenseSchema
 
@@ -36,10 +37,34 @@ export class Database {
   sqliteConfig: SQLLiteConfigDatabase
   c2d: C2DDatabase
   authToken: AuthTokenDatabase
+  nodeMetrics: NodeMetricsDatabase
+  // true only when the metadata (Typesense/Elasticsearch) databases were all initialized.
+  // false in DEGRADED mode (metadata DB unreachable) and when no metadata DB is configured.
+  metadataInitialized: boolean = false
 
   constructor(private config: OceanNodeDBConfig) {}
 
-  static async init(config: OceanNodeDBConfig): Promise<Database | null> {
+  // When a metadata (Typesense/Elasticsearch) database fails to initialize we either give up
+  // (return null, so the caller keeps retrying while the DB comes up) or, when allowPartial is
+  // set, return the already-built SQLite core (nonce/config/c2d/authToken) so the node can run
+  // in DEGRADED mode with C2D / nonce / auth available but Indexer and DDO features disabled.
+  private static handleMetadataInitFailure(
+    db: Database,
+    allowPartial: boolean
+  ): Database | null {
+    if (allowPartial) {
+      DATABASE_LOGGER.warn(
+        'Metadata database unreachable — starting in DEGRADED mode: Indexer and DDO features are disabled, C2D / nonce / auth remain available'
+      )
+      return db
+    }
+    return null
+  }
+
+  static async init(
+    config: OceanNodeDBConfig,
+    allowPartial: boolean = false
+  ): Promise<Database | null> {
     const db = new Database(config)
     try {
       db.nonce = await DatabaseFactory.createNonceDatabase(config)
@@ -65,6 +90,14 @@ export class Database {
       DATABASE_LOGGER.error(`Auth database initialization failed: ${error}`)
       return null
     }
+    try {
+      db.nodeMetrics = await DatabaseFactory.createNodeMetricsDatabase()
+    } catch (error) {
+      // Node metrics history is a best-effort, non-critical feature: a failure here must not
+      // stop the node from starting. Leave db.nodeMetrics undefined; the cron jobs and history
+      // handler guard on its presence.
+      DATABASE_LOGGER.error(`Node metrics database initialization failed: ${error}`)
+    }
 
     if (hasValidDBConfiguration(config)) {
       if (USE_DB_TRANSPORT()) {
@@ -76,49 +109,51 @@ export class Database {
         db.ddo = await DatabaseFactory.createDdoDatabase(config)
       } catch (error) {
         DATABASE_LOGGER.error(`DDO database initialization failed: ${error}`)
-        return null
+        return Database.handleMetadataInitFailure(db, allowPartial)
       }
       try {
         db.indexer = await DatabaseFactory.createIndexerDatabase(config)
       } catch (error) {
         DATABASE_LOGGER.error(`Indexer database initialization failed: ${error}`)
-        return null
+        return Database.handleMetadataInitFailure(db, allowPartial)
       }
 
       try {
         db.logs = await DatabaseFactory.createLogDatabase(config)
       } catch (error) {
         DATABASE_LOGGER.error(`Logs database initialization failed: ${error}`)
-        return null
+        return Database.handleMetadataInitFailure(db, allowPartial)
       }
 
       try {
         db.order = await DatabaseFactory.createOrderDatabase(config)
       } catch (error) {
         DATABASE_LOGGER.error(`Order database initialization failed: ${error}`)
-        return null
+        return Database.handleMetadataInitFailure(db, allowPartial)
       }
 
       try {
         db.ddoState = await DatabaseFactory.createDdoStateDatabase(config)
       } catch (error) {
         DATABASE_LOGGER.error(`DDO State database initialization failed: ${error}`)
-        return null
+        return Database.handleMetadataInitFailure(db, allowPartial)
       }
 
       try {
         db.accessList = await DatabaseFactory.createAccessListDatabase(config)
       } catch (error) {
         DATABASE_LOGGER.error(`AccessList database initialization failed: ${error}`)
-        return null
+        return Database.handleMetadataInitFailure(db, allowPartial)
       }
 
       try {
         db.escrow = await DatabaseFactory.createEscrowDatabase(config)
       } catch (error) {
         DATABASE_LOGGER.error(`Escrow database initialization failed: ${error}`)
-        return null
+        return Database.handleMetadataInitFailure(db, allowPartial)
       }
+      // All metadata databases initialized successfully — this is a full (non-degraded) node.
+      db.metadataInitialized = true
     } else {
       DATABASE_LOGGER.info(
         'Invalid DB URL. Only Nonce, C2D, Auth Token and Config Databases are initialized.'

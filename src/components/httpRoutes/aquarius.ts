@@ -15,11 +15,11 @@ export const aquariusRoutes = express.Router()
 export const AQUARIUS_API_BASE_PATH = '/api/aquarius'
 
 aquariusRoutes.get(
-  `${AQUARIUS_API_BASE_PATH}/assets/ddo/:did/:force?`,
+  `${AQUARIUS_API_BASE_PATH}/assets/ddo/:did{/:force}`,
   async (req, res) => {
     try {
       const { did, force } = req.params
-      if (!did || !/^did:ope?/.test(did)) {
+      if (!did || !did.startsWith('did:op')) {
         res.status(400).send('Missing or invalid required parameter: "did"')
         return
       }
@@ -38,11 +38,11 @@ aquariusRoutes.get(
 )
 
 aquariusRoutes.get(
-  `${AQUARIUS_API_BASE_PATH}/assets/metadata/:did/:force?`,
+  `${AQUARIUS_API_BASE_PATH}/assets/metadata/:did{/:force}`,
   async (req, res) => {
     try {
       const { did, force } = req.params
-      if (!did || !/^did:ope?/.test(did)) {
+      if (!did || !did.startsWith('did:op')) {
         res.status(400).send('Missing or invalid required parameter: "did"')
         return
       }

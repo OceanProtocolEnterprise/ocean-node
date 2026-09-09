@@ -265,6 +265,12 @@ export class ComputeInitializeHandler extends CommandHandler {
             credentials,
             metadata
           } = ddoInstance.getDDOFields()
+          if (metadata.type === 'algorithm' && metadata.algorithm?.container) {
+            task.algorithm.meta = {
+              ...metadata.algorithm,
+              container: { ...metadata.algorithm.container }
+            }
+          }
           const isOrdable = isOrderingAllowedForAsset(ddo)
           if (!isOrdable.isOrdable) {
             CORE_LOGGER.error(isOrdable.reason)

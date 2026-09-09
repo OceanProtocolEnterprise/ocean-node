@@ -1,4 +1,3 @@
-import axios from 'axios'
 import { Service, DDOManager, DDO } from '@oceanprotocol/ddo-js'
 import { DDO_IDENTIFIER_PREFIX } from './constants.js'
 import { CORE_LOGGER } from './logging/common.js'
@@ -10,30 +9,35 @@ import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/interfac
 import ERC20Template4 from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template4.sol/ERC20Template4.json' with { type: 'json' }
 import { getContractAddress, getNFTFactory } from '../components/Indexer/utils.js'
 import { HeadersObject } from '../@types/fileObject.js'
+import { fetchHeadersTimeout } from './http.js'
 
 // Notes:
 // Asset as per asset.py on provider, is a class there, while on ocean.Js we only have a type
 // this is an utility to extract information from the Asset services
 export const AssetUtils = {
-  getServiceIndexById(asset: DDO | Record<string, any>, id: string): number | null {
+  getServiceIndexById(asset: DDO, id: string): number | null {
     const ddoInstance = DDOManager.getDDOClass(asset)
     const { services } = ddoInstance.getDDOFields()
+
     for (let c = 0; c < services.length; c++) if (services[c].id === id) return c
     return null
   },
-  getServiceByIndex(asset: DDO | Record<string, any>, index: number): any | null {
+  getServiceByIndex(asset: DDO, index: number) {
     const ddoInstance = DDOManager.getDDOClass(asset)
     const { services } = ddoInstance.getDDOFields()
+
     if (index >= 0 && index < services.length) {
-      return services[index]
+      return services[index] as Service
     }
     return null
   },
 
-  getServiceById(asset: DDO | Record<string, any>, id: string): any | null {
+  getServiceById(asset: DDO, id: string) {
     const ddoInstance = DDOManager.getDDOClass(asset)
     const { services } = ddoInstance.getDDOFields() as any
+
     const filteredServices = services.filter((service: any) => service.id === id)
+
     return filteredServices.length ? filteredServices[0] : null
   }
 }
@@ -51,17 +55,22 @@ export async function fetchFileMetadata(
   const maxLength = isNaN(maxLengthInt) ? 10 * 1024 * 1024 : maxLengthInt
 
   try {
-    const response = await axios({
+    const response = await fetchHeadersTimeout(
       url,
-      method: method || 'get',
-      headers,
-      responseType: 'stream',
-      timeout: 30000
-    })
-    const responseContentType = response.headers['content-type']
-    contentType = typeof responseContentType === 'string' ? responseContentType : ''
+      { method: method || 'GET', headers },
+      30000
+    )
+    if (!response.ok) {
+      // axios threw on non-2xx before hashing — avoid checksumming an error page.
+      // cancel the undrained body so undici releases the socket back to the pool.
+      await response.body?.cancel().catch(() => {})
+      throw new Error(`Request failed with status code ${response.status} (${url})`)
+    }
+    contentType = response.headers.get('content-type') ?? ''
     let totalSize = 0
-    for await (const chunk of response.data) {
+    // web ReadableStream is async-iterable in Node 22; chunks are Uint8Array.
+    // break invokes the iterator's return() which cancels + releases the socket.
+    for await (const chunk of response.body ?? []) {
       totalSize += chunk.length
       contentChecksum.update(chunk)
       if (totalSize > maxLength && !forceChecksum) {

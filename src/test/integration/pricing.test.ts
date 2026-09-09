@@ -18,7 +18,7 @@ import { Database } from '../../components/database/index.js'
 import { OceanIndexer } from '../../components/Indexer/index.js'
 import { RPCS } from '../../@types/blockchain.js'
 import { getEventFromTx } from '../../utils/util.js'
-import { waitToIndex, expectedTimeoutFailure } from './testUtils.js'
+import { waitToIndex } from './testUtils.js'
 import { genericDDO } from '../data/ddo.js'
 import {
   DEVELOPMENT_CHAIN_ID,
@@ -215,21 +215,21 @@ describe('**********         Publish pricing scehmas and assert ddo stats - FRE 
   })
 
   it('should store the ddo in the database and return it ', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
-    const { ddo, wasTimeout } = await waitToIndex(
+    this.timeout(DEFAULT_TEST_TIMEOUT * 7)
+    const { ddo } = await waitToIndex(
       oceanNode,
       assetDID,
       EVENTS.METADATA_CREATED,
-      DEFAULT_TEST_TIMEOUT * 2
+      DEFAULT_TEST_TIMEOUT * 6
     )
-    if (ddo) {
-      resolvedDDO = ddo
-      console.log(`resolved ddo: ${JSON.stringify(resolvedDDO)}`)
-      expect(resolvedDDO.id).to.equal(genericAssetCloned.id)
-    } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
+    assert(ddo, `DDO ${assetDID} was not indexed after metadata creation`)
+    resolvedDDO = ddo
+    console.log(`resolved ddo: ${JSON.stringify(resolvedDDO)}`)
+    expect(resolvedDDO.id).to.equal(genericAssetCloned.id)
   })
 
   it('should get stats for fre', async function () {
+    assert(resolvedDDO, 'DDO was not indexed')
     assert(resolvedDDO.indexedMetadata, 'No stats available')
     assert(resolvedDDO.indexedMetadata.stats.length === 1)
     assert(
@@ -353,35 +353,34 @@ describe('**********         Publish pricing scehmas and assert ddo stats - FRE 
     assert(setMetaDataTxReceipt, 'set metada failed')
   })
   it('should store the updated ddo in the database and return it ', async function () {
-    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
-    const { ddo, wasTimeout } = await waitToIndex(
+    this.timeout(DEFAULT_TEST_TIMEOUT * 7)
+    const { ddo } = await waitToIndex(
       oceanNode,
       genericAssetCloned.id,
       EVENTS.METADATA_UPDATED,
-      DEFAULT_TEST_TIMEOUT * 2,
+      DEFAULT_TEST_TIMEOUT * 6,
       true
     )
+    assert(ddo, `DDO ${genericAssetCloned.id} was not indexed after metadata update`)
     console.log(`updated ddo: ${JSON.stringify(ddo.indexedMetadata.stats)}`)
-    if (ddo) {
-      assert(
-        ddo.indexedMetadata.stats.length === 2,
-        'the 2 pricing schemas were not captured in the stats'
-      )
-      assert(
-        ddo.indexedMetadata.stats[1].prices[0].type === 'dispenser',
-        'type is not dispenser'
-      )
-      assert(
-        ddo.indexedMetadata.stats[1].datatokenAddress ===
-          genericAssetCloned.services[1].datatokenAddress,
-        'mismatch datatoken address'
-      )
-      assert(ddo.indexedMetadata.stats[1].prices[0].price === '0', 'price is not 0')
-      assert(
-        ddo.indexedMetadata.stats[1].prices[0].token ===
-          genericAssetCloned.services[1].datatokenAddress,
-        'mismatch datatoken address'
-      )
-    } else expect(expectedTimeoutFailure(this.test.title)).to.be.equal(wasTimeout)
+    assert(
+      ddo.indexedMetadata.stats.length === 2,
+      'the 2 pricing schemas were not captured in the stats'
+    )
+    assert(
+      ddo.indexedMetadata.stats[1].prices[0].type === 'dispenser',
+      'type is not dispenser'
+    )
+    assert(
+      ddo.indexedMetadata.stats[1].datatokenAddress ===
+        genericAssetCloned.services[1].datatokenAddress,
+      'mismatch datatoken address'
+    )
+    assert(ddo.indexedMetadata.stats[1].prices[0].price === '0', 'price is not 0')
+    assert(
+      ddo.indexedMetadata.stats[1].prices[0].token ===
+        genericAssetCloned.services[1].datatokenAddress,
+      'mismatch datatoken address'
+    )
   })
 })
