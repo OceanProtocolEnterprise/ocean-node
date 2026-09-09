@@ -56,7 +56,11 @@ import { AssetUtils } from '../../utils/asset.js'
 import { FindDdoHandler } from '../core/handler/ddoHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { KeyManager } from '../KeyManager/index.js'
-import { decryptFilesObject, omitDBComputeFieldsFromComputeJob } from './index.js'
+import {
+  decryptFilesObject,
+  omitDBComputeFieldsFromComputeJob,
+  validateJobMetadataSize
+} from './index.js'
 import { ValidateParams } from '../httpRoutes/validateCommands.js'
 import { Service } from '@oceanprotocol/ddo-js'
 import { getOceanTokenAddressForChain } from '../../utils/address.js'
@@ -150,6 +154,12 @@ export class C2DEngineDocker extends C2DEngine {
   // Best-effort GPU metrics collector (NVIDIA/NVML today). Lazily initializes its vendor
   // backends on first use by a GPU job; a pure-CPU node never loads any GPU code.
   private gpuMetrics: GpuMetricsService = new GpuMetricsService()
+  // Host-wide GPU health snapshot: every GPU visible to this process, idle ones included.
+  // Refreshed by refreshHostGpuSnapshot() on the metrics cadence and read (never written) by the
+  // OTel compute gauge callback, same contract as lastAggregate/envResourceSnapshot. Stays
+  // undefined on nodes that declare no GPU resources, so a pure-CPU node never touches NVML.
+  public hostGpuSnapshot?: ComputeGpuAggregate[]
+  private lastHostGpuSampleAt: number = 0
   // Last time the engine-wide metrics roll-up was logged. The loop ticks every 2s but snapshots
   // only refresh once per C2D_METRICS_INTERVAL_SECONDS, so the summary is throttled to match.
   private lastMetricsSummaryAt: number = 0
@@ -533,6 +543,57 @@ export class C2DEngineDocker extends C2DEngine {
       const fees = this.processFeesForEnvironment(envDef.fees, supportedChains)
       const envResources = this.resolveEnvironmentResources(envDef, connectionPool)
 
+      // Service duration cap. The daemon's serviceOnDemand.maxDurationSeconds is a hard
+      // ceiling — an env may tighten it but never raise it, so a larger value is clamped
+      // with a warning (same treatment a resource max above the pool total gets).
+      const daemonServiceCap = this.getMaxServiceDuration()
+      const { maxServiceDuration: envServiceCap } = envDef
+      if (envServiceCap !== undefined && envServiceCap > daemonServiceCap) {
+        CORE_LOGGER.warn(
+          `Environment "${envDef.description || envDef.id || 'unknown'}": ` +
+            `maxServiceDuration (${envServiceCap}) is greater than the daemon's ` +
+            `serviceOnDemand.maxDurationSeconds (${daemonServiceCap}) — clamping to ` +
+            `${daemonServiceCap}. An environment can only lower the daemon cap.`
+        )
+      }
+      const maxServiceDuration = Math.min(
+        envServiceCap ?? daemonServiceCap,
+        daemonServiceCap
+      )
+
+      // Service floor. Mirror image of the cap: the daemon's serviceOnDemand.minDurationSeconds
+      // is a hard floor an env may raise but not undercut, so a smaller per-env value is clamped
+      // up with a warning. Absent, an env falls back to its own minJobDuration, which is what
+      // services were already billed at — so an unconfigured node is unchanged.
+      const daemonServiceFloor = this.getMinServiceDuration()
+      const { minServiceDuration: envServiceFloor } = envDef
+      if (envServiceFloor !== undefined && envServiceFloor < daemonServiceFloor) {
+        CORE_LOGGER.warn(
+          `Environment "${envDef.description || envDef.id || 'unknown'}": ` +
+            `minServiceDuration (${envServiceFloor}) is below the daemon's ` +
+            `serviceOnDemand.minDurationSeconds (${daemonServiceFloor}) — raising to ` +
+            `${daemonServiceFloor}. An environment can only raise the daemon floor.`
+        )
+      }
+      const minServiceDuration = Math.max(
+        envServiceFloor ?? envDef.minJobDuration ?? 0,
+        daemonServiceFloor
+      )
+      // Fatal, unlike the clamps above: those correct a value into a working range, whereas an
+      // empty range leaves the env permanently unusable for services — every SERVICE_START would
+      // 400. Refuse to boot rather than advertise an environment that can never be booked.
+      if (minServiceDuration > maxServiceDuration) {
+        const envName = envDef.description || envDef.id || 'unknown'
+        const message =
+          `Environment "${envName}": minServiceDuration (${minServiceDuration}) exceeds ` +
+          `maxServiceDuration (${maxServiceDuration}) — no service duration can satisfy both, so ` +
+          `every SERVICE_START would be rejected. Fix the environment's minServiceDuration / ` +
+          `maxServiceDuration, or the daemon's serviceOnDemand.minDurationSeconds / ` +
+          `maxDurationSeconds.`
+        CORE_LOGGER.error(message)
+        throw new Error(message)
+      }
+
       const env: ComputeEnvironment = {
         id: '',
         runningJobs: 0,
@@ -551,7 +612,11 @@ export class C2DEngineDocker extends C2DEngine {
         features: {
           computeJobs: envDef.features?.computeJobs ?? true,
           services: envDef.features?.services ?? true
-        }
+        },
+        // Always advertised, even where features.services is false, because they state what
+        // SERVICE_START would enforce — clients gate on features.services, not on absence.
+        minServiceDuration,
+        maxServiceDuration
       }
 
       if (envDef.storageExpiry !== undefined) env.storageExpiry = envDef.storageExpiry
@@ -1490,12 +1555,7 @@ export class C2DEngineDocker extends C2DEngine {
     // TO DO - iterate over resources and get default runtime
     const isFree: boolean = !(payment && payment.lockTx)
 
-    if (metadata && Object.keys(metadata).length > 0) {
-      const metadataSize = JSON.stringify(metadata).length
-      if (metadataSize > 1024) {
-        throw new Error('Metadata size is too large')
-      }
-    }
+    validateJobMetadataSize(metadata)
 
     const envIdWithHash = environment && environment.indexOf('-') > -1
     const env = await this.getComputeEnvironment(
@@ -1601,10 +1661,7 @@ export class C2DEngineDocker extends C2DEngine {
       )
       if (!validation.valid)
         throw new Error(
-          `Cannot use image ${image} for ${env.platform.architecture}: ${
-            validation.reason ||
-            'the image does not exist or it was built for another architecture'
-          }`
+          `Cannot find image ${image} for ${env.platform.architecture}. Maybe it does not exist or it's build for other arhitectures.`
         )
       if (queueMaxWaitTime === 0) {
         job.status = C2DStatusNumber.PullImage
@@ -1933,6 +1990,10 @@ export class C2DEngineDocker extends C2DEngine {
       // Roll this tick's snapshots into one engine-wide line (+ pressure lines) so an admin
       // sees the whole live picture without correlating per-container samples by hand.
       this.logMetricsSummary(jobs, runningServices)
+
+      // Host-wide GPU health (every visible device, idle included) — throttled + best-effort so a
+      // hung or absent NVML can never stall the loop.
+      await this.refreshHostGpuSnapshot()
 
       // Service-on-Demand starts: advance pending service jobs through the start pipeline.
       // Fire-and-forget (NOT awaited): an image pull can take minutes and must not block the
@@ -3112,6 +3173,41 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
+  // Sample the host's GPUs (all of them, not just those held by a running job) so the compute
+  // dashboard shows GPU health even while idle. Throttled to the metrics cadence and strictly
+  // best-effort: a mid-tick throw never disturbs the loop and leaves the previous snapshot in
+  // place, while a completed sample that read no device clears the snapshot — so a GPU that has
+  // dropped off the bus (or NVML gone unavailable) surfaces as a gap, not frozen stale readings.
+  // No-ops entirely on a node that declares no GPU resources, so pure-CPU nodes never touch NVML.
+  private async refreshHostGpuSnapshot(): Promise<void> {
+    try {
+      if (!isMetricsCollectionEnabled()) return
+      const now = Date.now()
+      if (now - (this.lastHostGpuSampleAt ?? 0) < getMetricsIntervalSeconds() * 1000) {
+        return
+      }
+      const connection = await this.getC2DConfig().connection
+      const gpuResources = (connection?.resources ?? []).filter(
+        (r: ComputeResource) => String(r.type).toLowerCase() === 'gpu'
+      )
+      if (gpuResources.length === 0) return // pure-CPU node: never load NVML
+      // Stamp the throttle only once we know there are GPUs worth sampling.
+      this.lastHostGpuSampleAt = now
+      const snapshot = await this.gpuMetrics.sampleHost(gpuResources)
+      this.hostGpuSnapshot = (snapshot ?? []).map((g) => ({
+        resourceId: g.resourceId,
+        vendor: g.vendor,
+        utilizationPercent: g.utilizationPercent ?? undefined,
+        memoryUsedBytes: g.memoryUsedBytes ?? undefined,
+        memoryTotalBytes: g.memoryTotalBytes ?? undefined,
+        temperatureC: g.temperatureC,
+        powerWatts: g.powerWatts
+      }))
+    } catch (e: any) {
+      CORE_LOGGER.debug(`[metrics] host gpu sample failed: ${e?.message}`)
+    }
+  }
+
   // ONE line per sampling interval with the engine's whole live resource picture, plus a
   // "pressure" line for each workload that is close to a limit. This is the admin's entry
   // point into the metrics: `grep '\[metrics\]'` for everything, `grep '\[metrics\] summary'`
@@ -3844,8 +3940,10 @@ export class C2DEngineDocker extends C2DEngine {
     payment: DBComputeJobPayment,
     serviceId: string,
     userData?: string,
+    metadata?: DBComputeJobMetadata,
     outputBucketId?: string
   ): Promise<ServiceJob | null> {
+    validateJobMetadataSize(metadata)
     const containerImage = resolveServiceImage(
       image,
       tag,
@@ -3876,6 +3974,7 @@ export class C2DEngineDocker extends C2DEngine {
       exposedPorts,
       endpoints: [],
       userData, // stored as received (ECIES-encrypted); decrypted transiently at container start
+      metadata,
       outputBucketId,
       resources: resources.map((r) => ({ id: r.id, amount: r.amount })),
       payment
@@ -4772,8 +4871,12 @@ export class C2DEngineDocker extends C2DEngine {
     newAdditionalDockerFiles?: Record<string, string>,
     newUserData?: string,
     newDockerCmd?: string[],
-    newDockerEntrypoint?: string[]
+    newDockerEntrypoint?: string[],
+    newMetadata?: DBComputeJobMetadata
   ): Promise<ServiceJob | null> {
+    // Metadata is independent of the container-param REUSE/RESPEC grouping: validate it up
+    // front so a bad request is rejected before any teardown. Applied to the job below.
+    validateJobMetadataSize(newMetadata)
     // Lifecycle lock: without it the InternalLoop's orphan-recovery (which sees the
     // intermediate Restarting/PullImage/BuildImage status this method persists) tears
     // down the network created here mid-restart → container.start() fails with
@@ -4820,6 +4923,9 @@ export class C2DEngineDocker extends C2DEngine {
       // record that would be double-started with a second escrow lock.
       job.status = ServiceStatusNumber.Restarting
       job.statusText = ServiceStatusText[ServiceStatusNumber.Restarting]
+      // Replace the stored metadata only when the request carries a new bag; otherwise the
+      // original labels are kept untouched (independent of the container-param REUSE/RESPEC).
+      if (newMetadata !== undefined) job.metadata = newMetadata
       await this.db.updateServiceJob(job)
     } catch (e) {
       await this.releaseServiceLifecycleLock(serviceId)

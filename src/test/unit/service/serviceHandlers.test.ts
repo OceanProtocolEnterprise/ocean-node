@@ -58,6 +58,10 @@ const TEMPLATE = {
 
 interface FakeOpts {
   serviceEnabled?: boolean
+  // per-env service cap; omitted → the env inherits the daemon's 86400
+  maxServiceDuration?: number
+  // per-env service floor; omitted → the env has none (no minJobDuration on the fake env)
+  minServiceDuration?: number
   serviceJobInDb?: ServiceJob | null
   cost?: number | null
   envId?: string
@@ -71,7 +75,13 @@ function buildFakes(opts: FakeOpts = {}) {
       computeJobs: true,
       services: opts.serviceEnabled !== false
     },
-    resources: [{ id: 'cpu', kind: 'fungible', total: 8, min: 1, max: 8 }]
+    resources: [{ id: 'cpu', kind: 'fungible', total: 8, min: 1, max: 8 }],
+    ...(opts.maxServiceDuration === undefined
+      ? {}
+      : { maxServiceDuration: opts.maxServiceDuration }),
+    ...(opts.minServiceDuration === undefined
+      ? {}
+      : { minServiceDuration: opts.minServiceDuration })
   }
 
   const escrow = {
@@ -109,6 +119,20 @@ function buildFakes(opts: FakeOpts = {}) {
       hash: 'hash-1',
       connection: { serviceOnDemand: { maxDurationSeconds: 86400 } }
     }),
+    // Mirrors C2DEngine.getMaxServiceDuration by deriving from getC2DConfig, so a test that
+    // re-stubs the cluster's serviceOnDemand block still steers the duration checks.
+    // Mirrors C2DEngine.getMinServiceDuration — the daemon floor, 0 unless a test sets one.
+    getMinServiceDuration: sinon
+      .stub()
+      .callsFake(
+        () => engine.getC2DConfig().connection?.serviceOnDemand?.minDurationSeconds ?? 0
+      ),
+    getMaxServiceDuration: sinon
+      .stub()
+      .callsFake(
+        () =>
+          engine.getC2DConfig().connection?.serviceOnDemand?.maxDurationSeconds ?? 86400
+      ),
     calculateResourcesCost: sinon
       .stub()
       .returns(opts.cost === undefined ? 10 : opts.cost),
@@ -389,6 +413,42 @@ describe('Service handlers', () => {
       expect(callArgs[9]).to.equal(undefined) // dockerEntrypoint
     })
 
+    it('forwards new metadata to engine.restartService (arg 10), independent of RESPEC', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: makeJob() })
+      const metadata = { run: 'v2' }
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        metadata
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      // metadata alone must NOT force RESPEC (no image required)
+      expect(engine.restartService.firstCall.args[10]).to.deep.equal(metadata)
+    })
+
+    it('400 fail-fast when metadata exceeds 1 KB, without calling engine.restartService', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: makeJob() })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        metadata: { blob: 'x'.repeat(1100) }
+      } as any)
+      expect(res.status.httpStatus).to.equal(400)
+      expect(String(res.status.error)).to.contain('Invalid metadata')
+      expect(engine.restartService.called).to.equal(false)
+    })
+
+    it('400 when metadata is malformed (array / non-scalar value), without calling engine.restartService', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: makeJob() })
+      for (const bad of [['a', 'b'], { nested: { x: 1 } }, 42]) {
+        const res = await new ServiceRestartHandler(node).handle({
+          ...baseTask,
+          metadata: bad
+        } as any)
+        expect(res.status.httpStatus).to.equal(400)
+        expect(String(res.status.error)).to.contain('Invalid metadata')
+      }
+      expect(engine.restartService.called).to.equal(false)
+    })
+
     it('400 RESPEC without image — a lone dockerCmd is a partial change, which is rejected', async () => {
       const { node, engine } = buildFakes({ serviceJobInDb: makeJob() })
       const res = await new ServiceRestartHandler(node).handle({
@@ -574,6 +634,47 @@ describe('Service handlers', () => {
       const res = await new ServiceExtendHandler(node).handle({
         ...baseTask,
         additionalDuration: 10000
+      } as any)
+      expect(res.status.httpStatus).to.equal(400)
+    })
+
+    it("400 when the extension is below the env's own minServiceDuration", async () => {
+      const { node, engine } = buildFakes({
+        minServiceDuration: 600,
+        serviceJobInDb: makeJob({ expiresAt: Date.now() + 500 * 1000 })
+      })
+      const res = await new ServiceExtendHandler(node).handle({
+        ...baseTask,
+        additionalDuration: 100
+      } as any)
+      expect(res.status.httpStatus).to.equal(400)
+      // Rejected outright, never priced — a short top-up must not be billed at the full floor.
+      expect(engine.calculateResourcesCost.called).to.equal(false)
+    })
+
+    it('prices an extension by its actual duration, never rounded up to the floor', async () => {
+      const { node, engine } = buildFakes({
+        minServiceDuration: 600,
+        serviceJobInDb: makeJob({ expiresAt: Date.now() + 500 * 1000 })
+      })
+      await new ServiceExtendHandler(node).handle({
+        ...baseTask,
+        additionalDuration: 900
+      } as any)
+      const { args } = engine.calculateResourcesCost.firstCall
+      expect(args[4]).to.equal(900) // the duration actually priced
+      expect(args[5]).to.equal(600) // floor passed, but 900 > 600 so it cannot inflate
+    })
+
+    it("400 when the extension exceeds the env's own maxServiceDuration", async () => {
+      // ~500 s left + 400 s = 900 s: inside the daemon's 86400, outside the env's 600.
+      const { node } = buildFakes({
+        maxServiceDuration: 600,
+        serviceJobInDb: makeJob({ expiresAt: Date.now() + 500 * 1000 })
+      })
+      const res = await new ServiceExtendHandler(node).handle({
+        ...baseTask,
+        additionalDuration: 400
       } as any)
       expect(res.status.httpStatus).to.equal(400)
     })
@@ -947,6 +1048,50 @@ describe('Service handlers', () => {
       expect(res.status.httpStatus).to.equal(400)
     })
 
+    it("400 when duration is below the env's own minServiceDuration", async () => {
+      const { node } = buildFakes({ minServiceDuration: 600 })
+      const res = await new ServiceStartHandler(node).handle({
+        ...baseTask,
+        duration: 300
+      } as any)
+      expect(res.status.httpStatus).to.equal(400)
+    })
+
+    it("200 when duration exactly meets the env's own minServiceDuration", async () => {
+      const { node } = buildFakes({ minServiceDuration: 600 })
+      const res = await new ServiceStartHandler(node).handle({
+        ...baseTask,
+        duration: 600
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+    })
+
+    it('prices a service against its own floor, not the compute-job one', async () => {
+      const { node, engine } = buildFakes({ minServiceDuration: 600 })
+      await new ServiceStartHandler(node).handle({ ...baseTask, duration: 900 } as any)
+      // 6th arg is the billing floor override handed to calculateResourcesCost.
+      expect(engine.calculateResourcesCost.firstCall.args[5]).to.equal(600)
+    })
+
+    it("400 when duration exceeds the env's own maxServiceDuration", async () => {
+      // Well under the daemon's 86400, so only the tighter per-env cap can reject this.
+      const { node } = buildFakes({ maxServiceDuration: 600 })
+      const res = await new ServiceStartHandler(node).handle({
+        ...baseTask,
+        duration: 1200
+      } as any)
+      expect(res.status.httpStatus).to.equal(400)
+    })
+
+    it("200 when duration is within the env's own maxServiceDuration", async () => {
+      const { node } = buildFakes({ maxServiceDuration: 600 })
+      const res = await new ServiceStartHandler(node).handle({
+        ...baseTask,
+        duration: 600
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+    })
+
     it('400 when no pricing for the token (cost null)', async () => {
       const { node } = buildFakes({ cost: null })
       const res = await new ServiceStartHandler(node).handle({ ...baseTask } as any)
@@ -999,6 +1144,42 @@ describe('Service handlers', () => {
       } as any)
       expect(res.status.httpStatus).to.equal(200)
       expect(engine.createServiceJob.lastCall.args.at(-1)).to.equal('bucket-42')
+    })
+
+    it('forwards user metadata to createServiceJob (before outputBucketId)', async () => {
+      const { node, engine } = buildFakes()
+      const metadata = { run: 'experiment-7', attempt: 2, dryRun: false }
+      const res = await new ServiceStartHandler(node).handle({
+        ...baseTask,
+        metadata
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      // signature tail: (..., serviceId, userData, metadata, outputBucketId)
+      expect(engine.createServiceJob.firstCall.args.at(-2)).to.deep.equal(metadata)
+    })
+
+    it('400 fail-fast when metadata exceeds 1 KB, before any job is created', async () => {
+      const { node, engine } = buildFakes()
+      const res = await new ServiceStartHandler(node).handle({
+        ...baseTask,
+        metadata: { blob: 'x'.repeat(1100) }
+      } as any)
+      expect(res.status.httpStatus).to.equal(400)
+      expect(String(res.status.error)).to.contain('Invalid metadata')
+      expect(engine.createServiceJob.called).to.equal(false)
+    })
+
+    it('400 when metadata is malformed (array / nested object / non-scalar value), before any job is created', async () => {
+      const { node, engine } = buildFakes()
+      for (const bad of [['x'], { nested: { a: 1 } }, { arr: [1, 2] }, 'a-string']) {
+        const res = await new ServiceStartHandler(node).handle({
+          ...baseTask,
+          metadata: bad
+        } as any)
+        expect(res.status.httpStatus).to.equal(400)
+        expect(String(res.status.error)).to.contain('Invalid metadata')
+      }
+      expect(engine.createServiceJob.called).to.equal(false)
     })
 
     it('400 with a clear message when outputBucketId is invalid, and no job record is created (fail fast)', async () => {

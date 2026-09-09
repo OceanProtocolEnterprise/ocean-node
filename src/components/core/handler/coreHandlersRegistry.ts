@@ -49,6 +49,7 @@ import {
   GetP2PNetworkStatsHandler,
   FindPeerHandler
 } from './p2p.js'
+import { GetNodeMetricsHandler, GetNodeMetricsHistoryHandler } from './nodeMetrics.js'
 import {
   CreateAuthTokenHandler,
   InvalidateAuthTokenHandler,
@@ -58,6 +59,7 @@ import { GetJobsHandler } from './getJobs.js'
 import {
   PersistentStorageCreateBucketHandler,
   PersistentStorageDeleteFileHandler,
+  PersistentStorageDownloadFileHandler,
   PersistentStorageGetBucketsHandler,
   PersistentStorageGetFileObjectHandler,
   PersistentStorageListFilesHandler,
@@ -215,6 +217,14 @@ export class CoreHandlersRegistry {
     )
     this.registerCoreHandler(PROTOCOL_COMMANDS.FIND_PEER, new FindPeerHandler(node))
     this.registerCoreHandler(
+      PROTOCOL_COMMANDS.GET_NODE_METRICS,
+      new GetNodeMetricsHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.GET_NODE_METRICS_HISTORY,
+      new GetNodeMetricsHistoryHandler(node)
+    )
+    this.registerCoreHandler(
       PROTOCOL_COMMANDS.CREATE_AUTH_TOKEN,
       new CreateAuthTokenHandler(node)
     )
@@ -257,6 +267,10 @@ export class CoreHandlersRegistry {
     this.registerCoreHandler(
       PROTOCOL_COMMANDS.PERSISTENT_STORAGE_DELETE_FILE,
       new PersistentStorageDeleteFileHandler(node)
+    )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.PERSISTENT_STORAGE_DOWNLOAD_FILE,
+      new PersistentStorageDownloadFileHandler(node)
     )
     this.registerCoreHandler(
       PROTOCOL_COMMANDS.GET_ACCESS_LIST,

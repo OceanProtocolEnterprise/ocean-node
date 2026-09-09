@@ -184,13 +184,21 @@ setting it through the environment reaches both.
 - `CRON_DELETE_DB_LOGS`: Delete old logs from database Cron expression. Example: `0 0 * * *` (runs every day at midnight)
 - `CRON_CLEANUP_C2D_STORAGE`: Clear c2d expired resources/storage and delete old jobs. Example: `*/5 * * * *` (runs every 5 minutes)
 
+## Node Metrics History
+
+Powers the `getNodeMetrics` (live snapshot) and `getNodeMetricsHistory` (hourly averages) commands / REST routes. The history layer is SQLite-backed (`databases/nodeMetrics.sqlite`) so it works even with no metadata DB configured. A minute sampler writes the same per-node aggregate the live command returns into a short-lived raw buffer, an hourly roll-up at minute `:05` averages each complete hour into `node_metrics_hourly`, and a daily sweep drops rows older than the retention window. The sampler **warns and skips** (persists no row) when there is no fresh compute aggregate — i.e. `C2D_METRICS_INTERVAL_SECONDS=0` or no engine has sampled yet — so all-zero rows never skew the averages. The live `getNodeMetrics` command still returns a (zeroed) snapshot in that case.
+
+- `NODE_METRICS_HISTORY_ENABLED`: Enable/disable the node-metrics history sampler + roll-up + retention cron jobs. Defaults to enabled whenever a database is available. Set to `false` (also accepts `0`/`no`) to turn the history layer off; the live `getNodeMetrics` command is unaffected. Example: `true`
+- `NODE_METRICS_SAMPLE_CRON`: Cron expression for the minute sampler. Defaults to `* * * * *` (every minute). Example: `* * * * *`
+- `NODE_METRICS_RETENTION_DAYS`: How many days of hourly rows to keep before the daily retention sweep deletes them. Also clamps the range `getNodeMetricsHistory` will return. Defaults to `180` (~6 months). Example: `180`
+
 ## Compute
 
 - `C2D_DOWNLOAD_TIMEOUT`: Timeout (in seconds) for pulling the algorithm docker image during a C2D job. If the pull exceeds this timeout, the job fails with `PullImageFailed` instead of getting stuck. Defaults to `900` (15 minutes). Example: `900`
 
 - `C2D_METRICS_INTERVAL_SECONDS`: How often (in seconds) the node samples live Docker runtime metrics (CPU, RAM, disk, network, block I/O, PIDs, exit info — plus NVIDIA GPU utilization/memory) for running compute jobs and services, persisting a snapshot onto the job record in the C2D database. These metrics are **owner-only**: they are never included in the escrow claim proof and never returned to anyone but the authenticated owner of the job/service. To that owner they come back **by default** on `COMPUTE_GET_STATUS` / `SERVICE_GET_STATUS` (no flag needed — see [API.md](API.md) for the `includeMetrics` override); an unauthenticated status call and the node-wide `serviceList` never return them. Set to `0` to disable collection entirely. Metrics are best-effort (up to one interval of staleness). Defaults to `10`. Example: `10`
 
-- `GPU_METRICS`: Controls the GPU metrics collector. `auto` (default) detects and enables the NVIDIA (NVML) backend when a GPU host is available; `off` disables GPU collection. Requires the optional `koffi` dependency and `libnvidia-ml.so.1` reachable **by the node process** — note that a containerized node does not get the NVIDIA driver libraries just because the host has them, so this is the usual reason GPU metrics are missing (`could not bind libnvidia-ml.so.1`); [compute.md → Troubleshooting GPU metrics](compute.md#troubleshooting-gpu-metrics) lists every warning and its fix. If either is missing, GPU metrics are skipped (no `gpu` field) while container-level metrics continue. AMD and Intel backends are not yet implemented. Cadence reuses `C2D_METRICS_INTERVAL_SECONDS`. Defaults to `auto`. Example: `auto`
+- `GPU_METRICS`: Controls the GPU metrics collector. `auto` (default) detects and enables the NVIDIA (NVML) backend when a GPU host is available; `off` disables GPU collection. Requires the optional `koffi` dependency and `libnvidia-ml.so.1` reachable **by the node process** — note that a containerized node does not get the NVIDIA driver libraries just because the host has them, so this is the usual reason GPU metrics are missing (`could not bind libnvidia-ml.so.1`); [compute.md → Troubleshooting GPU metrics](compute.md#troubleshooting-gpu-metrics) lists every warning and its fix. If either is missing, GPU metrics are skipped (no `gpu` field) while container-level metrics continue. GPU utilization/memory/temperature/power are sampled **host-wide** — every GPU visible to the node process is reported, idle ones included, so a card's health shows even when no job holds it — with an `in_use` label (`true`/`false`) marking devices currently allocated to a job; `ocean_compute_gpu_devices_in_use` counts the allocated ones. The host-wide export runs only when the node declares GPU `ComputeResource`s (`type: "gpu"`) in `DOCKER_COMPUTE_ENVIRONMENTS`; a node with GPUs but no declared GPU resource emits no host GPU gauges even if NVML is available. AMD and Intel backends are not yet implemented. Cadence reuses `C2D_METRICS_INTERVAL_SECONDS`. Defaults to `auto`. Example: `auto`
 
 - `SERVICE_TEMPLATES_PATH`: Path to a folder of operator-published Service-on-Demand template files (`*.json`, validated against the template schema). The folder is re-read on every `serviceTemplates` request, so templates can be added, edited, or removed without restarting the node. Maps to the `serviceTemplatesPath` config field. Defaults to `databases/serviceTemplates/`, which the image does not create — the operator mounts templates into it (a missing folder simply means no templates). See the [Services guide](services.md). Example: `/templates`
 
@@ -216,6 +224,15 @@ The config has a two-level structure:
       { "id": "disk", "total": 50 }
     ],
 
+    "serviceOnDemand": {
+      "enabled": true,
+      "nodeHost": "localhost",
+      "hostPortRange": [30000, 32767],
+      "minDurationSeconds": 0,
+      "maxDurationSeconds": 86400,
+      "allowImageBuild": false
+    },
+
     "environments": [
       {
         "id": "default",
@@ -223,6 +240,8 @@ The config has a two-level structure:
         "storageExpiry": 604800,
         "maxJobDuration": 3600,
         "minJobDuration": 60,
+        "minServiceDuration": 600,
+        "maxServiceDuration": 7200,
         "enableNetwork": false,
         "access": {
           "addresses": ["0x123", "0x456"],
@@ -282,7 +301,9 @@ The config has a two-level structure:
 - **id** *(optional)*: Stable identifier for the environment. Used to compute the environment hash.
 - **description**: Human-readable description.
 - **storageExpiry**: Seconds before compute results expire.
-- **maxJobDuration** / **minJobDuration**: Maximum/minimum job duration in seconds.
+- **maxJobDuration** / **minJobDuration**: Maximum/minimum **compute job** duration in seconds. These do not apply to services.
+- **minServiceDuration** *(optional)*: Minimum **service** duration in seconds, for service-on-demand. SERVICE_START rejects a shorter duration and SERVICE_EXTEND rejects a shorter top-up — it is a minimum purchase, not a rounding rule, so anything accepted is billed for its actual duration (rounded up to whole minutes). Must not exceed `maxServiceDuration`, or the node refuses to start. Omit to fall back to this environment's `minJobDuration` — which is what services were already priced at. A value below the daemon's `serviceOnDemand.minDurationSeconds` is raised to it at startup, with a warning. Advertised to clients as `minServiceDuration`.
+- **maxServiceDuration** *(optional)*: Maximum **service** duration in seconds, for service-on-demand. Omit to inherit the daemon's `serviceOnDemand.maxDurationSeconds` (default 86400). That daemon value is a hard ceiling — an environment can only lower it, and a larger value is clamped at startup with a warning. Advertised to clients on every environment as `maxServiceDuration`.
 - **maxJobs**: Maximum simultaneous paid jobs.
 - **enableNetwork**: Whether algorithm containers can make outbound network connections. Default: `false`
 - **access**: Access control for paid jobs.

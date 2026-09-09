@@ -17,6 +17,7 @@ import type {
 } from '../../../@types/C2D/C2D.js'
 import { generateUniqueID, validateOutputBucket } from '../compute/utils.js'
 import { validateAccess } from '../compute/startCompute.js'
+import { isJobMetadataSizeValid, INVALID_JOB_METADATA_MESSAGE } from '../../c2d/index.js'
 import { decryptUserData, toPublicServiceJob } from './utils.js'
 
 export class ServiceStartHandler extends CommandHandler {
@@ -42,6 +43,8 @@ export class ServiceStartHandler extends CommandHandler {
         return buildInvalidRequestMessage(
           'Provide at most one of "tag", "checksum", "dockerfile"'
         )
+      if (!isJobMetadataSizeValid(command.metadata))
+        return buildInvalidRequestMessage(INVALID_JOB_METADATA_MESSAGE)
     }
     return commandValidation
   }
@@ -134,13 +137,25 @@ export class ServiceStartHandler extends CommandHandler {
         return outputBucketCheck
       }
 
-      // 4. Duration limit
-      const sod = engine.getC2DConfig().connection?.serviceOnDemand
-      const maxDuration = sod?.maxDurationSeconds ?? 86400
+      // 4. Duration limits. Both are per-env, resolved and clamped against the daemon's
+      //    serviceOnDemand bounds at engine start; the daemon values are the fallback for an
+      //    env built without them.
+      const maxDuration = env.maxServiceDuration ?? engine.getMaxServiceDuration()
       if (task.duration > maxDuration)
         return buildInvalidParametersResponse(
           buildInvalidRequestMessage(
             `Duration ${task.duration}s exceeds maximum ${maxDuration}s`
+          )
+        )
+      // Reject rather than silently round up: below the floor the service would be billed for
+      // time it is not granted, and the caller would never learn why it cost what it did.
+      const minDuration =
+        env.minServiceDuration ??
+        Math.max(env.minJobDuration ?? 0, engine.getMinServiceDuration())
+      if (task.duration < minDuration)
+        return buildInvalidParametersResponse(
+          buildInvalidRequestMessage(
+            `Duration ${task.duration}s is below minimum ${minDuration}s`
           )
         )
 
@@ -170,7 +185,9 @@ export class ServiceStartHandler extends CommandHandler {
         env,
         task.payment.chainId,
         task.payment.token,
-        task.duration
+        task.duration,
+        // Services bill against their own floor, never the compute-job one.
+        minDuration
       )
       if (cost === null)
         return buildInvalidParametersResponse(
@@ -250,6 +267,7 @@ export class ServiceStartHandler extends CommandHandler {
         payment,
         serviceId,
         task.userData,
+        task.metadata,
         task.outputBucketId
       )
 

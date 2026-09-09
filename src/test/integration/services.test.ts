@@ -50,7 +50,7 @@ import {
 } from '../utils/utils.js'
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
-import EscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/Escrow.sol/Escrow.json' with { type: 'json' }
+import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
 import { EncryptMethod } from '../../@types/fileObject.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
 import { C2DEngineDocker } from '../../components/c2d/compute_engine_docker.js'
@@ -63,7 +63,6 @@ const TEMPLATE_ID = 'nginx-demo'
 const MAX_DURATION = 600 // serviceOnDemand.maxDurationSeconds
 const SERVICE_DURATION = 300 // long-lived service used through tests (d)→(l)
 const EXPIRY_DURATION = 60 // short service for the expiry-cron test
-const TEST_ESCROW_MAX_LOCK_SECONDS = 24 * 60 * 60
 const PORT_RANGE_START = 39000
 const PORT_RANGE_END = 39500
 
@@ -124,7 +123,7 @@ describe('**********         Service on Demand', () => {
     return Buffer.from(enc).toString('hex')
   }
 
-  async function fundEscrow(beneficiaryNodeAddr: string) {
+  async function fundEscrow(beneficiaryNodeAddr: string, durationForLock: number) {
     // Always mint a large top-up rather than only when the balance is 0. Integration suites
     // share one dev chain and run in sequence; by the time this suite runs, earlier suites
     // (e.g. compute) have left locked funds against the same (token, payer, node beneficiary)
@@ -140,34 +139,17 @@ describe('**********         Service on Demand', () => {
     await (
       await paymentTokenContract
         .connect(consumerAccount)
-        .approve(artifactsAddresses.development.EnterpriseEscrow, balance)
+        .approve(await escrowContract.getAddress(), balance)
     ).wait()
     await (
       await escrowContract.connect(consumerAccount).deposit(paymentToken, balance)
     ).wait()
+    const minLockSeconds = oceanNode.escrow.getMinLockTime(durationForLock)
     await (
       await escrowContract
         .connect(consumerAccount)
-        .authorize(
-          paymentToken,
-          beneficiaryNodeAddr,
-          balance,
-          TEST_ESCROW_MAX_LOCK_SECONDS,
-          100
-        )
+        .authorize(paymentToken, beneficiaryNodeAddr, balance, minLockSeconds, 100)
     ).wait()
-
-    const [authorization] = await escrowContract.getAuthorizations(
-      paymentToken,
-      consumerAddress,
-      beneficiaryNodeAddr
-    )
-    assert(authorization, 'Escrow authorization was not created')
-    assert(
-      BigInt(authorization.maxLockSeconds.toString()) >=
-        BigInt(oceanNode.escrow.getMinLockTime(MAX_DURATION)),
-      'Escrow authorization does not cover the maximum service duration'
-    )
     return await oceanNode.escrow.getUserAvailableFunds(
       DEVELOPMENT_CHAIN_ID,
       consumerAddress,
@@ -368,8 +350,13 @@ describe('**********         Service on Demand', () => {
     )
     escrowContract = new ethers.Contract(
       artifactsAddresses.development.EnterpriseEscrow,
-      EscrowJson.abi,
+      EnterpriseEscrowJson.abi,
       publisherAccount
+    )
+    assert.equal(
+      await escrowContract.getAddress(),
+      oceanNode.escrow.getEscrowContractAddressForChain(DEVELOPMENT_CHAIN_ID),
+      'Service tests must fund the same escrow contract used by the node'
     )
   })
 
@@ -430,7 +417,7 @@ describe('**********         Service on Demand', () => {
   })
 
   it('(c) funds the escrow for the consumer', async () => {
-    const funds = await fundEscrow(servicesEnv.consumerAddress)
+    const funds = await fundEscrow(servicesEnv.consumerAddress, MAX_DURATION)
     assert(BigInt(funds.toString()) > BigInt(0), 'Should have funds in escrow')
   })
 
@@ -510,6 +497,7 @@ describe('**********         Service on Demand', () => {
       serviceId
     } as ServiceGetStatusCommand)
     expect(unauth.status.httpStatus).to.not.equal(200)
+
     // opt-OUT: includeMetrics=false keeps metrics off the response entirely
     const { nonce, signature } = await signFor(
       consumerAccount,
@@ -769,7 +757,7 @@ describe('**********         Service on Demand', () => {
     expect(resp.status.httpStatus).to.equal(400)
   })
 
-  it('(j) SERVICE_EXTEND advances expiresAt and records an extendPayment', async () => {
+  it('(j) SERVICE_EXTEND below the minimum duration → 400', async () => {
     const {
       consumerAddress: addr,
       nonce,
@@ -785,12 +773,31 @@ describe('**********         Service on Demand', () => {
       payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken }
     }
     const resp = await new ServiceExtendHandler(oceanNode).handle(task)
+    expect(resp.status.httpStatus).to.equal(400)
+  })
+
+  it('(j2) SERVICE_EXTEND advances expiresAt and records an extendPayment', async () => {
+    const {
+      consumerAddress: addr,
+      nonce,
+      signature
+    } = await signFor(consumerAccount, PROTOCOL_COMMANDS.SERVICE_EXTEND)
+    const task: ServiceExtendCommand = {
+      command: PROTOCOL_COMMANDS.SERVICE_EXTEND,
+      consumerAddress: addr,
+      nonce,
+      signature,
+      serviceId,
+      additionalDuration: 60,
+      payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken }
+    }
+    const resp = await new ServiceExtendHandler(oceanNode).handle(task)
     assert(
       resp.status.httpStatus === 200,
       `expected 200, got ${resp.status.httpStatus}: ${resp.status?.error ?? ''}`
     )
     const [job] = (await streamToObject(resp.stream as Readable)) as ServiceJob[]
-    expect(job.expiresAt).to.equal(expiresAt + 30 * 1000)
+    expect(job.expiresAt).to.equal(expiresAt + 60 * 1000)
     expect(job.extendPayments?.length).to.equal(1)
     expiresAt = job.expiresAt
   })

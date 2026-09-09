@@ -29,6 +29,16 @@ export interface FindPeerCommand extends Command {
 export interface GetP2PPeersCommand extends Command {}
 export interface GetP2PNetworkStatsCommand extends Command {}
 
+// Live per-node resource snapshot. No params.
+export interface GetNodeMetricsCommand extends Command {}
+
+// Hourly per-node resource history. Both bounds optional; accept epoch ms (number/string) or an
+// ISO-8601 date string. Default range is the last retention window (~6 months) up to now.
+export interface GetNodeMetricsHistoryCommand extends Command {
+  startTime?: number | string
+  stopTime?: number | string
+}
+
 export interface GetAccessListCommand extends Command {
   chainId: number
   contractAddress: string
@@ -411,6 +421,14 @@ export interface PersistentStorageDeleteFileCommand extends Command {
   fileName: string
 }
 
+export interface PersistentStorageDownloadFileCommand extends Command {
+  consumerAddress: string
+  signature: string
+  nonce: string
+  bucketId: string
+  fileName: string
+}
+
 // ── Service On Demand ─────────────────────────────────────────────────
 
 export interface ServiceGetTemplatesCommand extends Command {
@@ -434,6 +452,7 @@ export interface ServiceStartCommand extends Command {
   resources?: ComputeResourceRequest[]
   duration: number // seconds; capped by serviceOnDemand.maxDurationSeconds
   userData?: string // ECIES-encrypted (to the node's public key) JSON object → the container's env-var map
+  metadata?: DBComputeJobMetadata // optional user-defined labels for the service; node-opaque, ≤1 KB
   outputBucketId?: string // persistent-storage bucket bind-mounted at /data/outputs
   payment: { chainId: number; token: string }
 }
@@ -515,6 +534,10 @@ export interface ServiceRestartCommand extends Command {
   userData?: string // ECIES-encrypted (to the node's public key) JSON → container env-var map
   dockerCmd?: string[] // exact container command (Docker exec-form CMD override; no shell)
   dockerEntrypoint?: string[] // container ENTRYPOINT override
+  // NOT a container param — independent of the REUSE/RESPEC discriminator above and never
+  // triggers RESPEC mode. When present it REPLACES the stored metadata; when omitted the
+  // original metadata is kept untouched.
+  metadata?: DBComputeJobMetadata
 }
 
 export interface ServiceExtendCommand extends Command {

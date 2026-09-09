@@ -1,5 +1,6 @@
 import type {
   DBComputeJobPayment,
+  DBComputeJobMetadata,
   ComputeResourceRequestWithPrice,
   ContainerMetricsSnapshot
 } from './C2D.js'
@@ -103,11 +104,23 @@ export interface ServiceTemplatePublic extends Omit<ServiceTemplate, 'envVars'> 
 
 // ── Operational config (per Docker daemon, not global) ────────────────
 
+// Service duration cap applied when a daemon carries no `serviceOnDemand` block, or one
+// that omits `maxDurationSeconds`. Single source of truth for the config schema's default,
+// the SERVICE_START / SERVICE_EXTEND checks and the `maxServiceDuration` every compute
+// environment advertises — those three must never disagree.
+export const DEFAULT_SERVICE_MAX_DURATION_SECONDS = 86400 // 24 h
+
+// Daemon-level service floor when `serviceOnDemand` omits `minDurationSeconds`. Zero means
+// "no daemon floor", so an environment's own minServiceDuration (which itself falls back to
+// minJobDuration) is what applies — keeping an unconfigured node billing exactly as before.
+export const DEFAULT_SERVICE_MIN_DURATION_SECONDS = 0
+
 export interface ServiceOnDemandConfig {
   enabled: boolean
   nodeHost: string // host (or IP) clients use to reach forwarded service ports; e.g. 'localhost'
   hostPortRange?: [number, number] // e.g. [30000, 32767]; specific to this daemon's host
-  maxDurationSeconds?: number // default: 86400 (24 h)
+  minDurationSeconds?: number // default: DEFAULT_SERVICE_MIN_DURATION_SECONDS (no daemon floor)
+  maxDurationSeconds?: number // default: DEFAULT_SERVICE_MAX_DURATION_SECONDS (24 h)
   allowImageBuild?: boolean // default: false — gates Dockerfile-based services per daemon
 }
 
@@ -193,6 +206,12 @@ export interface ServiceJob {
   exposedPorts: number[]
   endpoints: ServiceEndpoint[]
   userData?: string // ECIES(node key) string sent by the client; stored as-is, decrypted only at start/restart; never returned
+  // Arbitrary, node-opaque user labels (≤1 KB when JSON-stringified). Set at SERVICE_START,
+  // optionally replaced at SERVICE_RESTART. Returned only to the owner via toPublicServiceJob
+  // (SERVICE_GET_STATUS is authenticated + owner-scoped) and stripped from the node-wide
+  // SERVICE_LIST (toListedServiceJob). Shares the DBComputeJob.metadata type; note the
+  // compute equivalent is readable by anyone holding the jobId, whereas this is owner-only.
+  metadata?: DBComputeJobMetadata
   outputBucketId?: string // persistent-storage bucket bind-mounted at /data/outputs
   resources: ComputeResourceRequestWithPrice[]
   payment: DBComputeJobPayment // initial start payment

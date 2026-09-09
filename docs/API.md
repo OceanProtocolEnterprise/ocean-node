@@ -1466,6 +1466,129 @@ Every row has `id, eventType, chainId, contract, block, txHash` plus event-speci
 
 ---
 
+## Get Node Metrics
+
+### `HTTP` GET /nodeMetrics
+
+### `HTTP` POST /directCommand
+
+### `P2P` command: getNodeMetrics
+
+#### Description
+
+Returns a live per-node resource snapshot, rolled up across every C2D engine (the same aggregate the telemetry layer exports) blended with host `os` readings. Read-only, no parameters. `hasAggregate` is a freshness flag: when `false`, no engine had a fresh compute aggregate (metrics collection is disabled via `C2D_METRICS_INTERVAL_SECONDS=0`, or nothing has been sampled yet) and every scalar is a structural zero rather than a genuine reading. The snapshot is returned either way.
+
+#### Parameters
+
+| name    | type   | required  | description                     |
+| ------- | ------ | --------- | ------------------------------- |
+| command | string | POST only | command name (`getNodeMetrics`) |
+
+#### Response
+
+```json
+{
+  "collectedAt": 1730370000000,
+  "hasAggregate": true,
+  "cpu": {
+    "usagePercent": 42.5,
+    "coresAllocated": 4,
+    "hostCores": 16,
+    "throttledCount": 0,
+    "loadAverage": [1.2, 1.1, 0.9]
+  },
+  "memory": {
+    "usedBytes": 2147483648,
+    "limitBytes": 8589934592,
+    "hostFreeBytes": 12000000000,
+    "hostTotalBytes": 34359738368
+  },
+  "disk": { "usedBytes": 1073741824 },
+  "network": { "rxBytes": 12345, "txBytes": 6789 },
+  "jobs": { "running": 1, "runningFree": 0, "queued": 0, "queuedFree": 0 },
+  "gpu": [
+    {
+      "resourceId": "0",
+      "vendor": "nvidia",
+      "utilizationPercent": 55,
+      "memoryUsedBytes": 2000000000,
+      "memoryTotalBytes": 16000000000,
+      "temperatureC": 61,
+      "powerWatts": 120
+    }
+  ],
+  "env": [{ "env": "env-hash", "resource": "cpu", "total": 16, "inUse": 4 }],
+  "meta": { "sampledContainers": 1, "oldestSampleAgeSeconds": 8 }
+}
+```
+
+---
+
+## Get Node Metrics History
+
+### `HTTP` GET /nodeMetrics/history?startTime=&stopTime=
+
+### `HTTP` POST /directCommand
+
+### `P2P` command: getNodeMetricsHistory
+
+#### Description
+
+Returns ordered hourly averages of the per-node resource snapshot, persisted to SQLite by the sampler/roll-up cron jobs and retained for `NODE_METRICS_RETENTION_DAYS` (default 180). Scalars are arithmetic means over the hour's minute-samples; `sampleCount` is how many samples fed each bucket; GPU entries are averaged per `resourceId`, env entries per `env`+`resource`. Requires the node-metrics database (returns `503` when unavailable, e.g. history disabled via `NODE_METRICS_HISTORY_ENABLED=false`).
+
+When the requested range includes the current, in-progress hour, the last bucket is a **live** average computed on the fly from the raw samples collected so far this hour (before the top-of-hour roll-up has stored it). It is flagged `"partial": true` and is the only bucket that carries that flag; every completed hour is a finalized, stored average. This lets a caller see fresh data without waiting for the hourly roll-up.
+
+#### Parameters
+
+| name      | type          | required | description                                                                        |
+| --------- | ------------- | -------- | ---------------------------------------------------------------------------------- |
+| command   | string        | POST only | command name (`getNodeMetricsHistory`)                                             |
+| startTime | number/string |          | range start — epoch ms or ISO-8601. Defaults to now minus the retention window     |
+| stopTime  | number/string |          | range end — epoch ms or ISO-8601. Defaults to now                                  |
+
+`startTime` must be earlier than `stopTime` (else `400`); the range is clamped to the retention window and the row count is capped.
+
+#### Request (POST /directCommand)
+
+```json
+{
+  "command": "getNodeMetricsHistory",
+  "startTime": 1727778000000,
+  "stopTime": 1730370000000
+}
+```
+
+#### Response
+
+```json
+{
+  "startTime": 1727778000000,
+  "stopTime": 1730370000000,
+  "count": 1,
+  "buckets": [
+    {
+      "hourStart": 1730368800000,
+      "sampleCount": 60,
+      "cpu": { "usagePercent": 40.1, "coresAllocated": 4, "hostCores": 16, "throttledCount": 0 },
+      "memory": {
+        "usedBytes": 2000000000,
+        "limitBytes": 8589934592,
+        "hostFreeBytes": 12000000000,
+        "hostTotalBytes": 34359738368
+      },
+      "disk": { "usedBytes": 1073741824 },
+      "network": { "rxBytes": 12000, "txBytes": 6000 },
+      "jobs": { "running": 1, "runningFree": 0, "queued": 0, "queuedFree": 0 },
+      "gpu": [{ "resourceId": "0", "vendor": "nvidia", "utilizationPercent": 50 }],
+      "env": [{ "env": "env-hash", "resource": "cpu", "total": 16, "inUse": 4 }],
+      "meta": { "sampledContainers": 1 }
+    }
+  ]
+}
+```
+
+---
+
 # Compute
 
 For starters, you can find a list of algorithms in the [Ocean Algorithms repository](https://github.com/oceanprotocol/algo_dockers) and the docker images in the [Algo Dockerhub](https://hub.docker.com/r/oceanprotocol/algo_dockers/tags).
@@ -1549,6 +1672,8 @@ fetch all compute environments
     "storageExpiry": 604800,
     "maxJobDuration": 3600,
     "minJobDuration": 60,
+    "minServiceDuration": 60,
+    "maxServiceDuration": 86400,
     "resources": [
       { "id": "cpu", "total": 16, "max": 16, "min": 1, "inUse": 0 },
       {
@@ -1574,6 +1699,32 @@ fetch all compute environments
   }
 ]
 ```
+
+`maxJobDuration` / `minJobDuration` apply to **compute jobs**. Services have their own pair,
+and SERVICE_START rejects a `duration` outside it:
+
+- `maxServiceDuration` — the ceiling. Defaults to the daemon's
+  `serviceOnDemand.maxDurationSeconds` and may be **lowered** per environment; a larger per-env
+  value is clamped to the daemon ceiling at startup. SERVICE_EXTEND also caps the resulting
+  remaining window to it.
+- `minServiceDuration` — the floor. SERVICE_START rejects a shorter `duration`, and
+  SERVICE_EXTEND rejects a shorter `additionalDuration`: the floor is a minimum *purchase*, so a
+  smaller one is refused rather than silently billed at the floor. Everything accepted is then
+  priced by its actual duration, rounded up to whole minutes. Defaults to the environment's own
+  `minJobDuration`, and may be **raised** per environment; a value below the daemon's
+  `serviceOnDemand.minDurationSeconds` is clamped up at startup.
+
+Environments on the same engine may therefore report different values for both.
+
+Both fields are additive, and an older node omits them. Their fallbacks differ, so treat each
+separately:
+
+- A missing `maxServiceDuration` means the 86400 s (24 h) default — **not** `maxJobDuration`,
+  which is a different limit and is often much larger, so using it would offer windows the node
+  rejects.
+- A missing `minServiceDuration` means the environment's own `minJobDuration` (raised to the
+  daemon's `serviceOnDemand.minDurationSeconds`, which itself defaults to 0 — no daemon floor).
+  That is exactly what such a node already bills a service at.
 
 ### `HTTP` POST /api/services/freeCompute
 
@@ -2009,6 +2160,40 @@ Return the `fileObject` for a specific file in a bucket (useful for passing refe
 
 ---
 
+### `HTTP` GET /api/services/persistentStorage/buckets/:bucketId/files/:fileName
+
+#### Description
+
+Download a file from a bucket. The response body is the raw file bytes. Enforces the bucket
+access list (the consumer must be the bucket owner or on the bucket ACL). The same operation is
+available as the `persistentStorageDownloadFile` P2P command, which streams the raw bytes back
+identically.
+
+#### Query Parameters
+
+| name            | type   | required | description                                        |
+| --------------- | ------ | -------- | -------------------------------------------------- |
+| consumerAddress | string | v        | consumer address                                   |
+| signature       | string | v        | signed message (consumerAddress + nonce + command) |
+| nonce           | string | v        | request nonce                                      |
+
+#### Response (200)
+
+Raw file bytes, sent with:
+
+- `Content-Type: application/octet-stream`
+- `Content-Disposition: attachment; filename="<fileName>"`
+- `Content-Length` (best-effort)
+
+#### Errors
+
+| status | when                                                        |
+| ------ | ---------------------------------------------------------- |
+| 403    | consumer is not the bucket owner and not on the bucket ACL |
+| 404    | file not found in the bucket                                |
+
+---
+
 ### `HTTP` POST /api/services/persistentStorage/buckets/:bucketId/files/:fileName
 
 #### Description
@@ -2194,6 +2379,7 @@ should keep watching `serviceStatus`, not just stop once they first see `Running
   ],
   "duration": 3600,
   "userData": "<ECIES-encrypted-to-node-pubkey hex>",
+  "metadata": { "run": "experiment-7", "attempt": 2 },
   "payment": { "chainId": 8996, "token": "0x..." }
 }
 ```
@@ -2209,6 +2395,7 @@ should keep watching `serviceStatus`, not just stop once they first see `Running
 | resources                    | object[] |          | `{ id, amount }` requested resources                              |
 | duration                     | number   | v        | seconds; capped by `serviceOnDemand.maxDurationSeconds`           |
 | userData                     | string   |          | ECIES-encrypted (to the node pubkey) JSON of env vars             |
+| metadata                     | object   |          | arbitrary user labels (`string`/`number`/`boolean` values, ≤1 KB JSON); node-opaque. Returned on both `serviceStatus` and `serviceList` |
 | payment                      | object   | v        | `{ chainId, token }`                                              |
 
 #### Response (200)
@@ -2232,7 +2419,8 @@ The immediate response — `Starting`, no endpoints yet. Poll `serviceStatus` fo
 ```
 
 Errors: `403` services disabled on the env / access denied, `400` invalid params (bad address,
-duration, image spec, unavailable resources, or no pricing for the token). Escrow lock/claim now
+duration, image spec, metadata over 1 KB, unavailable resources, or no pricing for the token).
+Escrow lock/claim now
 happens in the background, so escrow failures surface as the job ending in an `Error` / `*Failed`
 status (observed via `serviceStatus`), not as a synchronous `402`.
 
@@ -2259,7 +2447,8 @@ by the authenticated `consumerAddress` are returned.
 
 #### Response (200)
 
-Array of `ServiceJob` (with `userData` stripped). Each entry also carries a sanitized
+Array of `ServiceJob` (with `userData` stripped; any user-supplied `metadata` is kept — this
+path is owner-scoped). Each entry also carries a sanitized
 `runtimeMetrics` object — see [The `runtimeMetrics` object](#the-runtimemetrics-object) for its full
 structure. Included by default here because this command is already authenticated and owner-scoped
 (pass `includeMetrics=false` to omit); the node-wide `serviceList` never returns metrics. Metrics are
@@ -2295,8 +2484,8 @@ shared pools): `Running`/`Restarting`/`Stopping`, the mid-start pipeline states,
 
 Array of `ServiceJob`, **listing-sanitized**: `userData`, `dockerCmd`, `dockerEntrypoint`,
 `dockerfile` and `additionalDockerFiles` are stripped (identity, status, resources,
-endpoints and payment metadata are kept). Use the owner-scoped `serviceStatus` to see a
-service's own configuration.
+endpoints, payment metadata and the owner's `metadata` are kept). Use the owner-scoped
+`serviceStatus` to see a service's own configuration.
 
 ---
 
@@ -2402,6 +2591,7 @@ RESPEC mode (restart on a new image spec — `image` required, plus at most one 
 | userData              | string   |          | ECIES-encrypted (to the node public key) JSON → the container's env-var map                                              |
 | dockerCmd             | string[] |          | exact container command (Docker exec-form CMD override)                                                                  |
 | dockerEntrypoint      | string[] |          | container ENTRYPOINT override                                                                                            |
+| metadata              | object   |          | user labels (≤1 KB JSON). **Not** a container param — independent of REUSE/RESPEC. When present it **replaces** the stored metadata; when omitted the original metadata is kept |
 
 #### Response (200)
 
@@ -2410,8 +2600,9 @@ The `ServiceJob` with a new `containerId` (same `hostPort` and `expiresAt`; the 
 
 #### Response (400)
 
-Not found, expired, payment never claimed, or an invalid respec — a container param was sent
-without `image`, or more than one of `tag`/`checksum`/`dockerfile` was provided.
+Not found, expired, payment never claimed, metadata over 1 KB, or an invalid respec — a
+container param was sent without `image`, or more than one of `tag`/`checksum`/`dockerfile` was
+provided.
 
 #### Response (403)
 

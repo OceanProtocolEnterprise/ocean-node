@@ -8,9 +8,11 @@ import { streamToObject, streamToString } from '../../utils/util.js'
 import {
   PersistentStorageCreateBucketHandler,
   PersistentStorageDeleteFileHandler,
+  PersistentStorageDownloadFileHandler,
   PersistentStorageGetBucketsHandler,
   PersistentStorageGetFileObjectHandler,
   PersistentStorageListFilesHandler,
+  PersistentStorageUpdateBucketHandler,
   PersistentStorageUploadFileHandler
 } from '../core/handler/persistentStorage.js'
 
@@ -38,6 +40,37 @@ persistentStorageRoutes.post(
       res.status(200).json(payload)
     } catch (error) {
       HTTP_LOGGER.error(`PersistentStorage create bucket error: ${error}`)
+      res.status(500).send('Internal Server Error')
+    }
+  }
+)
+
+// Update bucket (rename / set label)
+persistentStorageRoutes.patch(
+  `${SERVICES_API_BASE_PATH}/persistentStorage/buckets/:bucketId`,
+  express.json(),
+  async (req, res) => {
+    try {
+      const response = await new PersistentStorageUpdateBucketHandler(
+        req.oceanNode
+      ).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_UPDATE_BUCKET,
+        consumerAddress: req.query.consumerAddress as string,
+        signature: req.query.signature as string,
+        nonce: req.query.nonce as string,
+        bucketId: req.params.bucketId,
+        label: req.body?.label,
+        authorization: req.headers?.authorization,
+        caller: req.caller
+      } as any)
+      if (!response.stream) {
+        res.status(response.status.httpStatus).send(response.status.error)
+        return
+      }
+      const payload = await streamToObject(response.stream as Readable)
+      res.status(200).json(payload)
+    } catch (error) {
+      HTTP_LOGGER.error(`PersistentStorage update bucket error: ${error}`)
       res.status(500).send('Internal Server Error')
     }
   }
@@ -124,6 +157,57 @@ persistentStorageRoutes.get(
       res.status(200).json(payload)
     } catch (error) {
       HTTP_LOGGER.error(`PersistentStorage get file object error: ${error}`)
+      res.status(500).send('Internal Server Error')
+    }
+  }
+)
+
+// Download a file from a bucket. Response body is the raw file bytes.
+persistentStorageRoutes.get(
+  `${SERVICES_API_BASE_PATH}/persistentStorage/buckets/:bucketId/files/:fileName`,
+  async (req, res) => {
+    try {
+      const response = await new PersistentStorageDownloadFileHandler(
+        req.oceanNode
+      ).handle({
+        command: PROTOCOL_COMMANDS.PERSISTENT_STORAGE_DOWNLOAD_FILE,
+        consumerAddress: req.query.consumerAddress as string,
+        signature: req.query.signature as string,
+        nonce: req.query.nonce as string,
+        bucketId: req.params.bucketId,
+        fileName: req.params.fileName,
+        authorization: req.headers?.authorization,
+        caller: req.caller
+      } as any)
+      if (!response.stream) {
+        res.status(response.status.httpStatus).send(response.status.error)
+        return
+      }
+      res.status(response.status.httpStatus)
+      if (response.status.headers) {
+        // Includes Cache-Control: no-store (authenticated per-user download).
+        res.set(response.status.headers)
+      }
+      const sourceStream = response.stream as Readable
+      // Guard against a mid-flight source error so the request can't hang or crash the process.
+      sourceStream.on('error', (err) => {
+        HTTP_LOGGER.error(`PersistentStorage download stream error: ${err}`)
+        if (!res.headersSent) {
+          res.status(500).send('Internal Server Error')
+        } else {
+          res.end()
+        }
+      })
+      // If the client goes away before the stream finishes, tear down the source
+      // stream so the underlying handle/connection isn't leaked.
+      res.on('close', () => {
+        if (!res.writableEnded) {
+          sourceStream.destroy()
+        }
+      })
+      sourceStream.pipe(res)
+    } catch (error) {
+      HTTP_LOGGER.error(`PersistentStorage download error: ${error}`)
       res.status(500).send('Internal Server Error')
     }
   }
