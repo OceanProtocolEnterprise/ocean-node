@@ -1,6 +1,6 @@
 {
   "name": "ocean-node",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "description": "Ocean Node is used to run all core services in the Ocean stack",
   "author": "Ocean Protocol Foundation",
   "license": "Apache-2.0",
@@ -76,7 +76,7 @@
     "@libp2p/websockets": "^10.1.21",
     "@multiformats/multiaddr": "^13.0.3",
     "@oceanprotocol/contracts": "^2.9.0",
-    "@oceanprotocol/ddo-js": "^0.4.1",
+    "@oceanprotocol/ddo-js": "^1.0.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.221.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
