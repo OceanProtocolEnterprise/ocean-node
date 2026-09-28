@@ -131,7 +131,7 @@ export async function checkNonce(
     if (existingNonce && existingNonce.nonce !== null) {
       previousNonce = existingNonce.nonce
     }
-    CORE_LOGGER.debug(
+    CORE_LOGGER.info(
       `[AA diagnostics] nonce ${JSON.stringify({ consumer, command, chainId: chainId ?? null, nonce, previousNonce })}`
     )
     // check if bigger than previous stored one and validate signature
@@ -278,12 +278,12 @@ async function verifySignatureForConsumer(
     requestedChainId: chainId ?? null,
     consumerMessage
   }
-  CORE_LOGGER.debug(`[AA diagnostics] signature attempt ${JSON.stringify(context)}`)
+  CORE_LOGGER.info(`[AA diagnostics] signature attempt ${JSON.stringify(context)}`)
   // Try EOA signature validation
   try {
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
-    CORE_LOGGER.debug(
+    CORE_LOGGER.info(
       `[AA diagnostics] EOA recovery ${JSON.stringify({ ...context, addressFromHashSignature, addressFromBytesSignature })}`
     )
     if (
@@ -296,7 +296,7 @@ async function verifySignatureForConsumer(
     }
   } catch (error) {
     // Do not log ethers error messages: they can contain signatures and RPC URLs.
-    CORE_LOGGER.debug(
+    CORE_LOGGER.info(
       `[AA diagnostics] EOA recovery threw ${JSON.stringify({ ...context, errorName: error?.name, errorCode: error?.code })}`
     )
     // Continue to smart account check
@@ -305,7 +305,7 @@ async function verifySignatureForConsumer(
   // Try ERC-1271 (smart account) validation
   try {
     const targetChainId = chainId || Object.keys(config?.supportedNetworks || {})[0]
-    CORE_LOGGER.debug(
+    CORE_LOGGER.info(
       `[AA diagnostics] ERC-1271 chain selection ${JSON.stringify({ ...context, targetChainId: targetChainId ?? null, usedFallbackChain: !chainId, networkConfigured: Boolean(targetChainId && config?.supportedNetworks?.[targetChainId]) })}`
     )
     if (targetChainId && config?.supportedNetworks?.[targetChainId]) {
@@ -325,7 +325,7 @@ async function verifySignatureForConsumer(
       }
     }
   } catch (error) {
-    CORE_LOGGER.debug(
+    CORE_LOGGER.info(
       `[AA diagnostics] ERC-1271 setup failed ${JSON.stringify({ ...context, errorName: error?.name, errorCode: error?.code })}`
     )
   }
@@ -348,12 +348,12 @@ export async function isERC1271Valid(
     )
     const hashToUse = typeof hash === 'string' ? hash : ethers.hexlify(hash)
     const result = await contract.isValidSignature(hashToUse, signature)
-    CORE_LOGGER.debug(
+    CORE_LOGGER.info(
       `[AA diagnostics] ERC-1271 result ${JSON.stringify({ address, hash: hashToUse, result, valid: result === '0x1626ba7e' })}`
     )
     return result === '0x1626ba7e' // ERC-1271 magic value
   } catch (error) {
-    CORE_LOGGER.debug(
+    CORE_LOGGER.info(
       `[AA diagnostics] ERC-1271 call failed ${JSON.stringify({ address, hash: typeof hash === 'string' ? hash : ethers.hexlify(hash), errorName: error?.name, errorCode: error?.code })}`
     )
     return false

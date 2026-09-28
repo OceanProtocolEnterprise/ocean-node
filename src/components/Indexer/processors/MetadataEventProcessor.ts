@@ -144,7 +144,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       const isEncryptedMetadata = (parseInt(flag) & 2) !== 0
       stage = 'process-ddo'
       let ddo = await this.processDDO(decryptDDO)
-      INDEXER_LOGGER.debug(
+      INDEXER_LOGGER.info(
         `[AA diagnostics] decrypted DDO summary ${JSON.stringify({ ...diagnosticContext, version: ddo?.version, did: ddo?.id, isEncryptedMetadata, isRemoteMetadata })}`
       )
       if (!isEncryptedMetadata && !this.checkDdoHash(ddo, metadataHash)) {
@@ -376,7 +376,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       const validServiceDatatokens = this.isValidDtAddressFromServices(
         ddoInstance.getDDOFields().services
       )
-      INDEXER_LOGGER.debug(
+      INDEXER_LOGGER.info(
         `[AA diagnostics] pricing eligibility ${JSON.stringify({ ...diagnosticContext, did, validServiceDatatokens, datatokenAddresses: ddoInstance.getDDOFields().services.map((service) => service.datatokenAddress) })}`
       )
 
@@ -450,7 +450,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         ddoUpdatedWithPricing = ddoWithPricing
       }
       stage = 'purgatory'
-      INDEXER_LOGGER.debug(
+      INDEXER_LOGGER.info(
         `[AA diagnostics] before purgatory ${JSON.stringify({ ...diagnosticContext, did, hasDdoWithPricing: Boolean(ddoUpdatedWithPricing) })}`
       )
       // always call, but only create instance once
@@ -470,7 +470,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       }
     } catch (error) {
       // Keep stack frames, but omit the message which can contain RPC credentials/payloads.
-      INDEXER_LOGGER.debug(
+      INDEXER_LOGGER.info(
         `[AA diagnostics] metadata processing failed ${JSON.stringify({
           ...diagnosticContext,
           did,
