@@ -681,83 +681,111 @@ export class FindDdoHandler extends CommandHandler {
     const distributions: DCATDistribution[] = []
     const credentialSubject = ddo.credentialSubject || {}
 
-    if (credentialSubject.services && Array.isArray(credentialSubject.services)) {
-      credentialSubject.services.forEach((service: any) => {
-        const distribution: DCATDistribution = {
-          '@type': 'dcat:Distribution',
-          'dcat:accessURL': service.serviceEndpoint || ''
-        }
-
-        if (service.name) {
-          distribution['dct:title'] = service.name
-        }
-
-        if (service.description) {
-          if (typeof service.description === 'object' && service.description['@value']) {
-            distribution['dct:description'] = service.description['@value']
-          } else if (typeof service.description === 'string') {
-            distribution['dct:description'] = service.description
-          }
-        }
-
-        if (service.type === 'access' && service.serviceEndpoint) {
-          distribution['dcat:downloadURL'] = service.serviceEndpoint
-        }
-
-        if (service.type === 'compute') {
-          distribution['dcat:mediaType'] = 'application/json'
-          distribution['dcat:format'] = 'compute-service'
-
-          if (service.compute) {
-            distribution['oec:compute'] = {
-              'oec:allowNetworkAccess': service.compute.allowNetworkAccess || false,
-              'oec:allowRawAlgorithm': service.compute.allowRawAlgorithm || false,
-              'oec:publisherTrustedAlgorithms':
-                service.compute.publisherTrustedAlgorithms?.map((algo: any) => ({
-                  'oec:did': algo.did,
-                  'oec:filesChecksum': algo.filesChecksum,
-                  'oec:containerSectionChecksum': algo.containerSectionChecksum,
-                  'oec:serviceId': algo.serviceId
-                })),
-              'oec:publisherTrustedAlgorithmPublishers':
-                service.compute.publisherTrustedAlgorithmPublishers || []
-            }
-          }
-        } else if (service.type === 'access') {
-          distribution['dcat:mediaType'] = 'application/octet-stream'
-        }
-
-        if (service.files) {
-          distribution['dcat:format'] = distribution['dcat:format'] || 'encrypted'
-
-          if (service.files.length > 0) {
-            const filesStr = service.files.startsWith('0x')
-              ? service.files.substring(2)
-              : service.files
-            distribution['dcat:checksum'] = {
-              '@type': 'spdx:Checksum',
-              'spdx:algorithm': 'SHA-256',
-              'spdx:checksumValue': filesStr.substring(0, 64)
-            }
-          }
-        }
-
-        if (service.links) {
-          distribution['dcat:landingPage'] = Object.keys(service.links).map((key) => ({
-            '@id': service.links[key]
-          }))
-        }
-
-        distributions.push(distribution)
-      })
+    if (!credentialSubject.services || !Array.isArray(credentialSubject.services)) {
+      return distributions
     }
+
+    credentialSubject.services.forEach((service: any) => {
+      const distribution: DCATDistribution = {
+        '@type': 'dcat:Distribution'
+      }
+
+      if (service.serviceEndpoint) {
+        const endpoint =
+          typeof service.serviceEndpoint === 'string'
+            ? service.serviceEndpoint
+            : service.serviceEndpoint['@id']
+
+        if (endpoint) {
+          distribution['dcat:accessURL'] = { '@id': endpoint }
+        }
+      }
+
+      if (service.name) {
+        distribution['dct:title'] = service.name
+      }
+
+      if (service.description) {
+        if (typeof service.description === 'object' && service.description['@value']) {
+          distribution['dct:description'] = service.description['@value']
+        } else if (typeof service.description === 'string') {
+          distribution['dct:description'] = service.description
+        }
+      }
+
+      if (service.type === 'access' && service.serviceEndpoint) {
+        const endpoint =
+          typeof service.serviceEndpoint === 'string'
+            ? service.serviceEndpoint
+            : service.serviceEndpoint['@id']
+        if (endpoint) {
+          distribution['dcat:downloadURL'] = { '@id': endpoint }
+        }
+      }
+
+      if (service.type === 'compute') {
+        distribution['dcat:mediaType'] = {
+          '@id': 'https://www.iana.org/assignments/media-types/application/json'
+        }
+        distribution['dcat:format'] = 'compute-service'
+
+        if (service.compute) {
+          distribution['oec:compute'] = {
+            'oec:allowNetworkAccess': service.compute.allowNetworkAccess || false,
+            'oec:allowRawAlgorithm': service.compute.allowRawAlgorithm || false,
+            'oec:publisherTrustedAlgorithms':
+              service.compute.publisherTrustedAlgorithms?.map((algo: any) => ({
+                'oec:did': algo.did,
+                'oec:filesChecksum': algo.filesChecksum,
+                'oec:containerSectionChecksum': algo.containerSectionChecksum,
+                'oec:serviceId': algo.serviceId
+              })),
+            'oec:publisherTrustedAlgorithmPublishers':
+              service.compute.publisherTrustedAlgorithmPublishers || []
+          }
+        }
+      } else if (service.type === 'access') {
+        distribution['dcat:mediaType'] = {
+          '@id': 'https://www.iana.org/assignments/media-types/application/octet-stream'
+        }
+      }
+
+      if (service.files) {
+        distribution['dcat:format'] = distribution['dcat:format'] || 'encrypted'
+
+        if (service.files.length > 0) {
+          const filesStr = service.files.startsWith('0x')
+            ? service.files.substring(2)
+            : service.files
+          distribution['dcat:checksum'] = {
+            '@type': 'spdx:Checksum',
+            'spdx:algorithm': {
+              '@id': 'http://spdx.org/rdf/terms#checksumAlgorithm_sha256'
+            },
+            'spdx:checksumValue': {
+              '@type': 'xsd:hexBinary',
+              '@value': filesStr.substring(0, 64)
+            }
+          }
+        }
+      }
+
+      if (service.links) {
+        distribution['dcat:landingPage'] = Object.keys(service.links).map((key) => ({
+          '@id': service.links[key]
+        }))
+      }
+
+      distributions.push(distribution)
+    })
 
     return distributions
   }
 
   private formatQualifiedAttribution(
     metadata: any,
-    nftOwner?: string
+    nftOwner?: string,
+    issuer?: string
   ): DCATQualifiedAttribution[] {
     const attributions: DCATQualifiedAttribution[] = []
 
@@ -780,6 +808,18 @@ export class FindDdoHandler extends CommandHandler {
           }
         })
       }
+    } else if (issuer) {
+      attributions.push({
+        '@type': 'prov:Attribution',
+        'prov:agent': {
+          '@type': 'foaf:Agent',
+          'foaf:name': issuer
+        },
+        'prov:hadRole': {
+          '@id': 'http://inspire.ec.europa.eu/role/author',
+          '@type': 'dct:AgentRole'
+        }
+      })
     } else if (nftOwner) {
       attributions.push({
         '@type': 'prov:Attribution',
@@ -858,6 +898,7 @@ export class FindDdoHandler extends CommandHandler {
     const stats = indexedMetadata.stats || []
     const purgatory = indexedMetadata.purgatory || { state: false }
     const event = indexedMetadata.event || {}
+    const issuer = ddoCopy.issuer || ''
 
     const config = await getConfiguration()
     let baseUrl = ''
@@ -868,13 +909,23 @@ export class FindDdoHandler extends CommandHandler {
     ) {
       const firstService = credentialSubject.services[0]
       if (firstService.serviceEndpoint) {
-        baseUrl = firstService.serviceEndpoint.replace(/\/$/, '')
+        const endpoint =
+          typeof firstService.serviceEndpoint === 'string'
+            ? firstService.serviceEndpoint
+            : firstService.serviceEndpoint['@id']
+        if (endpoint) {
+          baseUrl = endpoint.replace(/\/$/, '')
+        }
       }
     }
 
     if (!baseUrl && config?.httpPort) {
       baseUrl = `http://localhost:${config.httpPort}`
     }
+
+    const vcTimestamp = new Date().toISOString()
+    const assetDid = ddoCopy.id || ''
+    const vcId = assetDid ? `${assetDid}/VC/${vcTimestamp}` : ''
 
     const dcat: DCATDataset = {
       '@context': {
@@ -888,9 +939,10 @@ export class FindDdoHandler extends CommandHandler {
         rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
         skos: 'http://www.w3.org/2004/02/skos/core#',
         spdx: 'http://spdx.org/rdf/terms#',
+        vcard: 'http://www.w3.org/2006/vcard/ns#',
         xsd: 'http://www.w3.org/2001/XMLSchema#'
       },
-      '@id': ddoCopy.id ? `urn:${ddoCopy.id}` : '',
+      '@id': vcId ? `urn:${vcId}` : assetDid ? `urn:${assetDid}` : '',
       '@type': 'dcat:Dataset',
       'dct:title': metadata.name || ''
     }
@@ -943,6 +995,16 @@ export class FindDdoHandler extends CommandHandler {
         '@type': 'foaf:Agent',
         'foaf:name': metadata.providedBy
       }
+    } else if (issuer) {
+      dcat['dct:publisher'] = {
+        '@type': 'foaf:Agent',
+        'foaf:name': issuer
+      }
+    } else if (nft.owner) {
+      dcat['dct:publisher'] = {
+        '@type': 'foaf:Agent',
+        'foaf:name': `NFT Owner: ${nft.owner}`
+      }
     }
 
     if (
@@ -951,16 +1013,37 @@ export class FindDdoHandler extends CommandHandler {
       metadata.copyrightHolder.trim() !== ''
     ) {
       dcat['dcat:contactPoint'] = {
-        '@type': 'foaf:Agent',
-        'foaf:name': metadata.copyrightHolder
+        '@type': 'vcard:Kind',
+        'vcard:fn': metadata.copyrightHolder
+      }
+    } else if (metadata.providedBy && metadata.providedBy.trim() !== '') {
+      dcat['dcat:contactPoint'] = {
+        '@type': 'vcard:Kind',
+        'vcard:fn': metadata.providedBy
+      }
+    } else if (issuer) {
+      dcat['dcat:contactPoint'] = {
+        '@type': 'vcard:Kind',
+        'vcard:fn': issuer
+      }
+    } else if (nft.owner) {
+      dcat['dcat:contactPoint'] = {
+        '@type': 'vcard:Kind',
+        'vcard:fn': `NFT Owner: ${nft.owner}`
       }
     }
 
     if (metadata.license) {
-      if (typeof metadata.license === 'object') {
-        dcat['dct:license'] = metadata.license.name || JSON.stringify(metadata.license)
-      } else {
-        dcat['dct:license'] = metadata.license
+      const licenseValue =
+        typeof metadata.license === 'object'
+          ? metadata.license.name || metadata.license
+          : metadata.license
+
+      if (typeof licenseValue === 'string' && licenseValue.trim() !== '') {
+        dcat['dct:license'] = {
+          '@id': licenseValue,
+          '@type': 'dct:RightsStatement'
+        }
       }
     }
 
@@ -1011,9 +1094,17 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
-    if (baseUrl && ddoCopy.id) {
+    if (metadata.additionalInformation?.['dct:spatial']) {
+      dcat['dct:conformsTo'] = [
+        'http://inspire.ec.europa.eu/schemas/inspire_vs/1.0',
+        'https://semiceu.github.io/GeoDCAT-AP/releases/3.0.0/'
+      ]
+    }
+
+    if (baseUrl && assetDid) {
       dcat['dcat:landingPage'] = {
-        '@id': `${baseUrl}/api/aquarius/assets/ddo/${ddoCopy.id}`
+        '@id': `${baseUrl}/api/aquarius/assets/ddo/${assetDid}`,
+        '@type': 'foaf:Document'
       }
     }
 
@@ -1022,35 +1113,69 @@ export class FindDdoHandler extends CommandHandler {
       dcat['dcat:distribution'] = distributions
     }
 
+    const services = this.formatServicesForDCAT(
+      credentialSubject.services || [],
+      assetDid
+    )
+    if (services.length > 0) {
+      dcat['dcat:service'] = services
+    }
+
     const temporal = this.formatTemporalCoverage(metadata)
     if (temporal) {
       dcat['dct:temporal'] = temporal
     }
 
-    const attributions = this.formatQualifiedAttribution(metadata, nft.owner)
+    const attributions = this.formatQualifiedAttribution(metadata, nft.owner, issuer)
     if (attributions.length > 0) {
       dcat['prov:qualifiedAttribution'] = attributions
     }
 
     if (metadata.language) {
-      dcat['dct:language'] = Array.isArray(metadata.language)
+      const languages = Array.isArray(metadata.language)
         ? metadata.language
         : [metadata.language]
+
+      dcat['dct:language'] = languages.map((lang: string) => {
+        const langMap: Record<string, string> = {
+          en: 'http://publications.europa.eu/resource/authority/language/ENG',
+          de: 'http://publications.europa.eu/resource/authority/language/DEU',
+          fr: 'http://publications.europa.eu/resource/authority/language/FRA',
+          es: 'http://publications.europa.eu/resource/authority/language/SPA',
+          it: 'http://publications.europa.eu/resource/authority/language/ITA'
+        }
+        return { '@id': langMap[lang] || lang }
+      })
     } else {
-      dcat['dct:language'] = ['en']
+      dcat['dct:language'] = [
+        { '@id': 'http://publications.europa.eu/resource/authority/language/ENG' }
+      ]
     }
 
-    if (ddoCopy.id) {
-      dcat['dct:identifier'] = [ddoCopy.id]
+    if (assetDid) {
+      dcat['dct:identifier'] = [assetDid]
     }
 
     if (metadata.license) {
-      dcat['dct:rights'] =
+      const rightsValue =
         typeof metadata.license === 'string' ? metadata.license : metadata.license.name
+
+      if (typeof rightsValue === 'string' && rightsValue.trim() !== '') {
+        dcat['dct:rights'] = {
+          '@id': rightsValue,
+          '@type': 'dct:RightsStatement'
+        }
+      }
     }
 
     if (metadata.accessRights) {
       dcat['dct:accessRights'] = metadata.accessRights
+    } else {
+      const allowList = credentialSubject.credentials?.allow || []
+      const hasRestrictions = allowList.length > 0
+      dcat['dct:accessRights'] =
+        'http://publications.europa.eu/resource/authority/access-right/' +
+        (hasRestrictions ? 'RESTRICTED' : 'PUBLIC')
     }
 
     if (metadata.type) {
@@ -1083,13 +1208,49 @@ export class FindDdoHandler extends CommandHandler {
     dcat['oec:datatokens'] = this.formatDatatokensForDCAT(
       credentialSubject.datatokens || []
     )
-    dcat['oec:services'] = this.formatServicesForDCAT(credentialSubject.services || [])
 
     dcat['oec:purgatory'] = {
       'oec:state': purgatory.state
     }
 
-    if (stats.length > 0) {
+    if (issuer) {
+      dcat['oec:issuer'] = issuer
+    }
+
+    if (
+      nft.owner &&
+      !attributions.some((a) => a['prov:hadRole']?.['@id']?.includes('owner'))
+    ) {
+      if (!dcat['prov:qualifiedAttribution']) {
+        dcat['prov:qualifiedAttribution'] = []
+      }
+      dcat['prov:qualifiedAttribution'].push({
+        '@type': 'prov:Attribution',
+        'prov:agent': {
+          '@type': 'foaf:Agent',
+          'foaf:name': `NFT Owner: ${nft.owner}`
+        },
+        'prov:hadRole': {
+          '@id': 'http://inspire.ec.europa.eu/role/owner',
+          '@type': 'dct:AgentRole'
+        }
+      })
+    }
+
+    const csStats = credentialSubject.stats
+    if (csStats) {
+      dcat['oec:stats'] = {
+        'oec:allocated': csStats.allocated || 0,
+        'oec:orders': csStats.orders || 0
+      }
+      if (csStats.price) {
+        dcat['oec:stats']['oec:price'] = {
+          'oec:tokenAddress': csStats.price.tokenAddress,
+          'oec:tokenSymbol': csStats.price.tokenSymbol || 'EURC',
+          'oec:value': String(csStats.price.value)
+        }
+      }
+    } else if (stats.length > 0) {
       const totalOrders = stats.reduce(
         (sum: number, stat: any) => sum + (stat.orders || 0),
         0
@@ -1149,43 +1310,55 @@ export class FindDdoHandler extends CommandHandler {
     return dcat
   }
 
-  private formatServicesForDCAT(services: any[]): DCATService[] {
+  private formatServicesForDCAT(services: any[], datasetId?: string): DCATService[] {
     if (!services || !Array.isArray(services)) {
       return []
     }
 
     return services.map((service) => {
       const formattedService: DCATService = {
-        id: service.id,
-        type: service.type,
-        name: service.name,
-        datatokenAddress: service.datatokenAddress,
-        files: service.files,
-        timeout: service.timeout,
-        state: service.state
+        '@type': 'dcat:DataService',
+        'dct:title': service.name || `Service ${service.id || ''}`.trim(),
+        'dct:description':
+          typeof service.description === 'object'
+            ? service.description?.['@value'] || ''
+            : service.description || ''
       }
 
-      if (service.description) {
-        formattedService.description = service.description
+      if (service.id) {
+        formattedService['dct:identifier'] = service.id
       }
 
-      if (service.serviceEndpoint && typeof service.serviceEndpoint === 'string') {
-        formattedService.serviceEndpoint = {
-          '@id': service.serviceEndpoint,
-          '@type': 'rdfs:Resource'
+      if (service.serviceEndpoint) {
+        const endpoint =
+          typeof service.serviceEndpoint === 'string'
+            ? service.serviceEndpoint
+            : service.serviceEndpoint['@id']
+        if (endpoint) {
+          formattedService['dcat:endpointURL'] = { '@id': endpoint }
         }
       }
 
+      if (datasetId) {
+        formattedService['dcat:servesDataset'] = { '@id': `urn:${datasetId}` }
+      }
+
+      formattedService['oec:serviceType'] = service.type
+      formattedService['oec:datatokenAddress'] = service.datatokenAddress
+      formattedService['oec:files'] = service.files
+      formattedService['oec:timeout'] = service.timeout
+      formattedService['oec:state'] = service.state
+
       if (service.compute) {
-        formattedService.compute = service.compute
+        formattedService['oec:compute'] = service.compute
       }
 
       if (service.consumerParameters) {
-        formattedService.consumerParameters = service.consumerParameters
+        formattedService['oec:consumerParameters'] = service.consumerParameters
       }
 
       if (service.credentials) {
-        formattedService.credentials = service.credentials
+        formattedService['oec:credentials'] = service.credentials
       }
 
       return formattedService

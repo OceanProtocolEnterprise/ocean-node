@@ -1,4 +1,5 @@
 export type ChecksumAlgorithm = 'SHA-1' | 'SHA-256' | 'SHA-384' | 'SHA-512'
+
 export interface DCATContext {
   '@context': {
     '@vocab'?: string
@@ -11,6 +12,7 @@ export interface DCATContext {
     rdfs: string
     skos: string
     spdx: string
+    vcard: string
     xsd: string
   }
 }
@@ -68,31 +70,44 @@ export interface DCATAgent {
   'foaf:homepage'?: string
 }
 
+export interface DCATContactPoint {
+  '@type': 'vcard:Kind'
+  'vcard:fn': string
+}
+
+export interface DCATRightsStatement {
+  '@id': string
+  '@type': 'dct:RightsStatement'
+}
+
+export interface DCATLanguage {
+  '@id': string
+}
+
+export interface DCATMediaType {
+  '@id': string
+}
+
+export interface DCATChecksum {
+  '@type': 'spdx:Checksum'
+  'spdx:algorithm': { '@id': string }
+  'spdx:checksumValue': {
+    '@type': 'xsd:hexBinary'
+    '@value': string
+  }
+}
+
 export interface DCATDistribution {
   '@type': 'dcat:Distribution'
-  'dcat:accessURL':
-    | string
-    | {
-        '@id': string
-      }
-  'dcat:downloadURL'?:
-    | string
-    | {
-        '@id': string
-      }
+  'dcat:accessURL'?: { '@id': string }
+  'dcat:downloadURL'?: { '@id': string }
   'dct:title'?: string
   'dct:description'?: string
-  'dcat:mediaType'?: string
+  'dcat:mediaType'?: DCATMediaType
   'dcat:format'?: string
   'dcat:byteSize'?: number
-  'dcat:checksum'?: {
-    '@type': 'spdx:Checksum'
-    'spdx:algorithm': ChecksumAlgorithm
-    'spdx:checksumValue': string
-  }
-  'dcat:landingPage'?: Array<{
-    '@id': string
-  }>
+  'dcat:checksum'?: DCATChecksum
+  'dcat:landingPage'?: Array<{ '@id': string }>
   'oec:compute'?: DCATCompute
 }
 
@@ -163,29 +178,20 @@ export interface DCATAdditionalDdo {
 }
 
 export interface DCATService {
-  id?: string
-  type?: string
-  name?: string
-  description?:
-    | string
-    | {
-        '@value': string
-        '@language'?: string
-        '@direction'?: string
-      }
-  serviceEndpoint?:
-    | string
-    | {
-        '@id': string
-        '@type'?: string
-      }
-  datatokenAddress?: string
-  files?: string
-  timeout?: number
-  state?: number
-  compute?: DCATCompute
-  consumerParameters?: any[]
-  credentials?: any
+  '@type': 'dcat:DataService'
+  'dct:title'?: string
+  'dct:description'?: string
+  'dct:identifier'?: string
+  'dcat:endpointURL'?: { '@id': string }
+  'dcat:servesDataset'?: { '@id': string }
+  'oec:serviceType'?: string
+  'oec:datatokenAddress'?: string
+  'oec:files'?: string
+  'oec:timeout'?: number
+  'oec:state'?: number
+  'oec:compute'?: DCATCompute
+  'oec:consumerParameters'?: any[]
+  'oec:credentials'?: any
 }
 
 export interface DCATAccessDetails {
@@ -222,6 +228,7 @@ export interface DCATDataset {
   'dcat:theme'?: DCATThemeConcept[]
   'dcat:version'?: string
   'dcat:distribution'?: DCATDistribution[]
+  'dcat:service'?: DCATService[]
   'dcat:bbox'?: {
     '@type': 'geo:wktLiteral'
     '@value': string
@@ -234,8 +241,9 @@ export interface DCATDataset {
   'dcat:temporalResolution'?: string
   'dcat:landingPage'?: {
     '@id': string
+    '@type': 'foaf:Document'
   }
-  'dcat:contactPoint'?: DCATAgent
+  'dcat:contactPoint'?: DCATContactPoint
   'dct:creator'?: DCATAgent
   'dct:publisher'?: DCATAgent
   'dct:issued'?: {
@@ -246,7 +254,7 @@ export interface DCATDataset {
     '@type': 'xsd:dateTime'
     '@value': string
   }
-  'dct:license'?: string
+  'dct:license'?: DCATRightsStatement
   'dct:spatial'?: DCATSpatial
   'dct:temporal'?: DCATTemporal
   'dct:accrualPeriodicity'?: {
@@ -254,9 +262,10 @@ export interface DCATDataset {
     '@id': string
   }
   'dct:identifier'?: string[]
-  'dct:language'?: string[]
+  'dct:language'?: DCATLanguage[]
   'dct:conformsTo'?: string[]
-  'dct:rights'?: string
+  'oec:issuer'?: string
+  'dct:rights'?: DCATRightsStatement
   'dct:accessRights'?: string
   'dct:type'?: string
   'prov:qualifiedAttribution'?: DCATQualifiedAttribution[]
