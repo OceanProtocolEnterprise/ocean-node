@@ -208,12 +208,18 @@ export class DecryptDdoHandler extends CommandHandler {
         }
       }
     }
+    CORE_LOGGER.debug(
+      `[AA diagnostics] decrypt authentication ${JSON.stringify({ transactionId: task.transactionId, chainId, dataNftAddress: task.dataNftAddress, decrypterAddress: task.decrypterAddress, nonce: task.nonce, authentication: task.authorization ? 'token' : 'signature' })}`
+    )
     const isAuthRequestValid = await this.validateTokenOrSignature(
       task.authorization,
       task.decrypterAddress,
       task.nonce,
       task.signature,
       task.command
+    )
+    CORE_LOGGER.debug(
+      `[AA diagnostics] decrypt authentication result ${JSON.stringify({ transactionId: task.transactionId, chainId, decrypterAddress: task.decrypterAddress, status: isAuthRequestValid.status.httpStatus })}`
     )
     if (isAuthRequestValid.status.httpStatus !== 200) {
       return isAuthRequestValid
@@ -326,6 +332,9 @@ export class DecryptDdoHandler extends CommandHandler {
           if (!receipt || !receipt.logs.length) {
             throw new Error('receipt logs 0')
           }
+          CORE_LOGGER.debug(
+            `[AA diagnostics] decrypt receipt ${JSON.stringify({ transactionId, chainId, dataNftAddress, status: receipt.status, logs: receipt.logs.map((log, index) => ({ index, address: log.address, topic0: log.topics[0] })) })}`
+          )
           const eventData = findMetadataEventInLogs(receipt.logs, dataNftAddress)
           if (!eventData) {
             throw new Error(
@@ -335,7 +344,13 @@ export class DecryptDdoHandler extends CommandHandler {
           flags = parseInt(eventData.args[3], 16)
           encryptedDocument = ethers.getBytes(eventData.args[4])
           documentHash = eventData.args[5]
+          CORE_LOGGER.debug(
+            `[AA diagnostics] decrypt metadata selected ${JSON.stringify({ transactionId, chainId, dataNftAddress, eventName: eventData.name, createdBy: eventData.args[0], flags, documentHash, encryptedBytes: encryptedDocument.length })}`
+          )
         } catch (error) {
+          CORE_LOGGER.debug(
+            `[AA diagnostics] decrypt receipt failed ${JSON.stringify({ transactionId, chainId, dataNftAddress, errorName: error?.name, errorCode: error?.code })}`
+          )
           return {
             stream: null,
             status: {

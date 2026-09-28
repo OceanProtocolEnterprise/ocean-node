@@ -41,6 +41,13 @@ export class MetadataEventProcessor extends BaseEventProcessor {
     eventName: string
   ): Promise<any> {
     let did = 'did:op'
+    let stage = 'factory-and-event'
+    const diagnosticContext = {
+      chainId,
+      transactionId: event.transactionHash,
+      dataNftAddress: event.address,
+      eventName
+    }
     try {
       const { ddo: ddoDatabase, ddoState } = await this.getDatabase()
       const wasDeployedByUs = await wasNFTDeployedByOurFactory(
@@ -122,6 +129,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         return savedDDO
       }
 
+      stage = 'decrypt-ddo'
       const decryptDDO = await this.decryptDDO(
         decodedEventData.args[2],
         flag,
@@ -134,7 +142,11 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       )
       const isRemoteMetadata = isRemoteDDO(decryptDDO)
       const isEncryptedMetadata = (parseInt(flag) & 2) !== 0
+      stage = 'process-ddo'
       let ddo = await this.processDDO(decryptDDO)
+      INDEXER_LOGGER.debug(
+        `[AA diagnostics] decrypted DDO summary ${JSON.stringify({ ...diagnosticContext, version: ddo?.version, did: ddo?.id, isEncryptedMetadata, isRemoteMetadata })}`
+      )
       if (!isEncryptedMetadata && !this.checkDdoHash(ddo, metadataHash)) {
         return
       }
@@ -184,6 +196,7 @@ export class MetadataEventProcessor extends BaseEventProcessor {
               })
             : ddoInstance.getDDOData()
       }
+      stage = 'instantiate-ddo'
       const clonedDdo = structuredClone(ddo)
       const updatedDdo = deleteIndexedMetadataIfExists(clonedDdo)
       const ddoInstance = DDOManager.getDDOClass(updatedDdo)
@@ -357,13 +370,20 @@ export class MetadataEventProcessor extends BaseEventProcessor {
           return
         }
       }
+      stage = 'pricing'
       const from = decodedEventData.args[0].toString()
       let ddoUpdatedWithPricing
+      const validServiceDatatokens = this.isValidDtAddressFromServices(
+        ddoInstance.getDDOFields().services
+      )
+      INDEXER_LOGGER.debug(
+        `[AA diagnostics] pricing eligibility ${JSON.stringify({ ...diagnosticContext, did, validServiceDatatokens, datatokenAddresses: ddoInstance.getDDOFields().services.map((service) => service.datatokenAddress) })}`
+      )
 
       // we need to store the event data (either metadata created or update and is updatable)
       if (
         [EVENTS.METADATA_CREATED, EVENTS.METADATA_UPDATED].includes(eventName) &&
-        this.isValidDtAddressFromServices(ddoInstance.getDDOFields().services)
+        validServiceDatatokens
       ) {
         const ddoWithPricing = await getPricingStatsForDddo(ddoInstance, signer)
         const nft = await this.getNFTInfo(
@@ -429,6 +449,10 @@ export class MetadataEventProcessor extends BaseEventProcessor {
         }
         ddoUpdatedWithPricing = ddoWithPricing
       }
+      stage = 'purgatory'
+      INDEXER_LOGGER.debug(
+        `[AA diagnostics] before purgatory ${JSON.stringify({ ...diagnosticContext, did, hasDdoWithPricing: Boolean(ddoUpdatedWithPricing) })}`
+      )
       // always call, but only create instance once
       const purgatory = Purgatory.getInstance(this.getConfig())
       // if purgatory is disabled just return false
@@ -439,11 +463,29 @@ export class MetadataEventProcessor extends BaseEventProcessor {
       )
       if (updatedDDO.getAssetFields().indexedMetadata.purgatory.state === false) {
         // TODO: insert in a different collection for purgatory DDOs
+        stage = 'save-ddo'
         const saveDDO = await this.createOrUpdateDDO(ddoUpdatedWithPricing, eventName)
         INDEXER_LOGGER.logMessage(`saved DDO: ${JSON.stringify(saveDDO)}`)
         return saveDDO
       }
     } catch (error) {
+      // Keep stack frames, but omit the message which can contain RPC credentials/payloads.
+      INDEXER_LOGGER.debug(
+        `[AA diagnostics] metadata processing failed ${JSON.stringify({
+          ...diagnosticContext,
+          did,
+          stage,
+          errorName: error?.name,
+          errorCode: error?.code,
+          frames:
+            typeof error?.stack === 'string'
+              ? error.stack
+                  .split('\n')
+                  .filter((line: string) => line.trimStart().startsWith('at '))
+                  .slice(0, 8)
+              : []
+        })}`
+      )
       this.rethrowIfProviderError(error)
       const { ddoState } = await this.getDatabase()
       await ddoState.update(
