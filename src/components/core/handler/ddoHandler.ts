@@ -789,26 +789,37 @@ export class FindDdoHandler extends CommandHandler {
   ): DCATQualifiedAttribution[] {
     const attributions: DCATQualifiedAttribution[] = []
 
-    if (metadata.author && metadata.author.trim && metadata.author.trim() !== '') {
-      const authorName =
-        typeof metadata.author === 'string'
-          ? metadata.author
-          : metadata.author['foaf:name'] || ''
+    const authorValue = typeof metadata.author === 'string' ? metadata.author.trim() : ''
 
-      if (authorName) {
-        attributions.push({
-          '@type': 'prov:Attribution',
-          'prov:agent': {
-            '@type': 'foaf:Agent',
-            'foaf:name': authorName
-          },
-          'prov:hadRole': {
-            '@id': 'http://inspire.ec.europa.eu/role/author',
-            '@type': 'dct:AgentRole'
-          }
-        })
-      }
-    } else if (issuer) {
+    if (authorValue !== '') {
+      attributions.push({
+        '@type': 'prov:Attribution',
+        'prov:agent': {
+          '@type': 'foaf:Agent',
+          'foaf:name': authorValue
+        },
+        'prov:hadRole': {
+          '@id': 'http://inspire.ec.europa.eu/role/author',
+          '@type': 'dct:AgentRole'
+        }
+      })
+    } else if (
+      metadata.author &&
+      typeof metadata.author === 'object' &&
+      metadata.author['foaf:name']
+    ) {
+      attributions.push({
+        '@type': 'prov:Attribution',
+        'prov:agent': {
+          '@type': 'foaf:Agent',
+          'foaf:name': metadata.author['foaf:name']
+        },
+        'prov:hadRole': {
+          '@id': 'http://inspire.ec.europa.eu/role/author',
+          '@type': 'dct:AgentRole'
+        }
+      })
+    } else if (issuer && issuer.trim() !== '') {
       attributions.push({
         '@type': 'prov:Attribution',
         'prov:agent': {
@@ -820,7 +831,7 @@ export class FindDdoHandler extends CommandHandler {
           '@type': 'dct:AgentRole'
         }
       })
-    } else if (nftOwner) {
+    } else if (nftOwner && nftOwner.trim() !== '') {
       attributions.push({
         '@type': 'prov:Attribution',
         'prov:agent': {
@@ -834,7 +845,7 @@ export class FindDdoHandler extends CommandHandler {
       })
     }
 
-    if (metadata.publisher) {
+    if (metadata.publisher && metadata.publisher.trim() !== '') {
       attributions.push({
         '@type': 'prov:Attribution',
         'prov:agent': {
@@ -895,10 +906,10 @@ export class FindDdoHandler extends CommandHandler {
     const metadata = credentialSubject.metadata || {}
     const indexedMetadata = ddoCopy.indexedMetadata || {}
     const nft = indexedMetadata.nft || {}
-    const stats = indexedMetadata.stats || []
+    const stats = Array.isArray(indexedMetadata.stats) ? indexedMetadata.stats : []
     const purgatory = indexedMetadata.purgatory || { state: false }
     const event = indexedMetadata.event || {}
-    const issuer = ddoCopy.issuer || ''
+    const issuer = typeof ddoCopy.issuer === 'string' ? ddoCopy.issuer.trim() : ''
 
     const config = await getConfiguration()
     let baseUrl = ''
@@ -965,7 +976,7 @@ export class FindDdoHandler extends CommandHandler {
           '@value': tag
         }
       }))
-    } else if (credentialSubject.services) {
+    } else if (credentialSubject.services && Array.isArray(credentialSubject.services)) {
       const serviceTypes = credentialSubject.services
         .map((s: any) => s.type)
         .filter((t: string) => t)
@@ -975,27 +986,29 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
-    if (metadata.author && metadata.author.trim && metadata.author.trim() !== '') {
-      if (typeof metadata.author === 'string') {
-        dcat['dct:creator'] = {
-          '@type': 'foaf:Agent',
-          'foaf:name': metadata.author
-        }
-      } else if (typeof metadata.author === 'object') {
-        dcat['dct:creator'] = metadata.author as DCATAgent
+    if (
+      metadata.author &&
+      typeof metadata.author === 'string' &&
+      metadata.author.trim() !== ''
+    ) {
+      dcat['dct:creator'] = {
+        '@type': 'foaf:Agent',
+        'foaf:name': metadata.author.trim()
       }
+    } else if (metadata.author && typeof metadata.author === 'object') {
+      dcat['dct:creator'] = metadata.author as DCATAgent
     }
 
     if (
       metadata.providedBy &&
-      metadata.providedBy.trim &&
+      typeof metadata.providedBy === 'string' &&
       metadata.providedBy.trim() !== ''
     ) {
       dcat['dct:publisher'] = {
         '@type': 'foaf:Agent',
-        'foaf:name': metadata.providedBy
+        'foaf:name': metadata.providedBy.trim()
       }
-    } else if (issuer) {
+    } else if (issuer !== '') {
       dcat['dct:publisher'] = {
         '@type': 'foaf:Agent',
         'foaf:name': issuer
@@ -1009,19 +1022,23 @@ export class FindDdoHandler extends CommandHandler {
 
     if (
       metadata.copyrightHolder &&
-      metadata.copyrightHolder.trim &&
+      typeof metadata.copyrightHolder === 'string' &&
       metadata.copyrightHolder.trim() !== ''
     ) {
       dcat['dcat:contactPoint'] = {
         '@type': 'vcard:Kind',
-        'vcard:fn': metadata.copyrightHolder
+        'vcard:fn': metadata.copyrightHolder.trim()
       }
-    } else if (metadata.providedBy && metadata.providedBy.trim() !== '') {
+    } else if (
+      metadata.providedBy &&
+      typeof metadata.providedBy === 'string' &&
+      metadata.providedBy.trim() !== ''
+    ) {
       dcat['dcat:contactPoint'] = {
         '@type': 'vcard:Kind',
-        'vcard:fn': metadata.providedBy
+        'vcard:fn': metadata.providedBy.trim()
       }
-    } else if (issuer) {
+    } else if (issuer !== '') {
       dcat['dcat:contactPoint'] = {
         '@type': 'vcard:Kind',
         'vcard:fn': issuer
@@ -1061,6 +1078,7 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
+    // ---------- Spatial / GeoDCAT ----------
     if (metadata.additionalInformation?.['dct:spatial']) {
       dcat['dct:spatial'] = metadata.additionalInformation['dct:spatial']
 
@@ -1094,12 +1112,14 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
+    const conformsTo: string[] = ['http://www.w3.org/ns/dcat#']
     if (metadata.additionalInformation?.['dct:spatial']) {
-      dcat['dct:conformsTo'] = [
+      conformsTo.push(
         'http://inspire.ec.europa.eu/schemas/inspire_vs/1.0',
         'https://semiceu.github.io/GeoDCAT-AP/releases/3.0.0/'
-      ]
+      )
     }
+    dcat['dct:conformsTo'] = conformsTo
 
     if (baseUrl && assetDid) {
       dcat['dcat:landingPage'] = {
@@ -1172,7 +1192,7 @@ export class FindDdoHandler extends CommandHandler {
       dcat['dct:accessRights'] = metadata.accessRights
     } else {
       const allowList = credentialSubject.credentials?.allow || []
-      const hasRestrictions = allowList.length > 0
+      const hasRestrictions = Array.isArray(allowList) && allowList.length > 0
       dcat['dct:accessRights'] =
         'http://publications.europa.eu/resource/authority/access-right/' +
         (hasRestrictions ? 'RESTRICTED' : 'PUBLIC')
@@ -1213,7 +1233,7 @@ export class FindDdoHandler extends CommandHandler {
       'oec:state': purgatory.state
     }
 
-    if (issuer) {
+    if (issuer !== '') {
       dcat['oec:issuer'] = issuer
     }
 
@@ -1238,7 +1258,7 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     const csStats = credentialSubject.stats
-    if (csStats) {
+    if (csStats && typeof csStats === 'object') {
       dcat['oec:stats'] = {
         'oec:allocated': csStats.allocated || 0,
         'oec:orders': csStats.orders || 0
