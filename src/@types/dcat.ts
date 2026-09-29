@@ -178,6 +178,7 @@ export interface DCATAdditionalDdo {
 }
 
 export interface DCATService {
+  '@id'?: string
   '@type': 'dcat:DataService'
   'dct:title'?: string
   'dct:description'?: string
