@@ -182,3 +182,36 @@ aquariusRoutes.post(`${AQUARIUS_API_BASE_PATH}/assets/ddo/validate`, async (req,
     res.status(500).send('Internal Server Error')
   }
 })
+
+aquariusRoutes.get(
+  `${AQUARIUS_API_BASE_PATH}/assets/dcat/:did{/:force}`,
+  async (req, res) => {
+    try {
+      const { did, force } = req.params
+      if (!did || !/^did:ope?/.test(did)) {
+        res.status(400).send('Missing or invalid required parameter: "did"')
+        return
+      }
+
+      const forceFlag = force === 'true'
+      const findDdoHandler = new FindDdoHandler(req.oceanNode)
+      const ddo = await findDdoHandler.findAndFormatDdo(did, forceFlag)
+
+      if (ddo) {
+        const findDdoHandler = new FindDdoHandler(req.oceanNode)
+        const dcatDDO = await findDdoHandler.transformToDCAT(ddo)
+        HTTP_LOGGER.log(
+          LOG_LEVELS_STR.LEVEL_DEBUG,
+          `DCAT DDO: ${JSON.stringify(dcatDDO)}`
+        )
+        res.setHeader('Content-Type', 'application/ld+json')
+        res.json(dcatDDO)
+      } else {
+        res.status(404).send('DDO not found')
+      }
+    } catch (error) {
+      HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+      res.status(500).send('Internal Server Error')
+    }
+  }
+)
