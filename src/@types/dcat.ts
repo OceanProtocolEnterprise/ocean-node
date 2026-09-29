@@ -82,32 +82,49 @@ export interface DCATRightsStatement {
 
 export interface DCATLanguage {
   '@id': string
+  '@type': 'dct:LinguisticSystem'
 }
 
 export interface DCATMediaType {
   '@id': string
+  '@type': 'dct:MediaType'
+}
+
+export interface DCATResource {
+  '@id': string
+  '@type': 'rdfs:Resource'
+}
+
+export interface DCATChecksumAlgorithm {
+  '@id': string
+  '@type': 'spdx:ChecksumAlgorithm'
 }
 
 export interface DCATChecksum {
   '@type': 'spdx:Checksum'
-  'spdx:algorithm': { '@id': string }
+  'spdx:algorithm': DCATChecksumAlgorithm
   'spdx:checksumValue': {
     '@type': 'xsd:hexBinary'
     '@value': string
   }
 }
 
+export interface DCATDocument {
+  '@id': string
+  '@type': 'foaf:Document'
+}
+
 export interface DCATDistribution {
   '@type': 'dcat:Distribution'
-  'dcat:accessURL'?: { '@id': string }
-  'dcat:downloadURL'?: { '@id': string }
+  'dcat:accessURL'?: DCATResource
+  'dcat:downloadURL'?: DCATResource
   'dct:title'?: string
   'dct:description'?: string
   'dcat:mediaType'?: DCATMediaType
   'dcat:format'?: string
   'dcat:byteSize'?: number
   'dcat:checksum'?: DCATChecksum
-  'dcat:landingPage'?: Array<{ '@id': string }>
+  'dcat:landingPage'?: DCATDocument[]
   'oec:compute'?: DCATCompute
 }
 
@@ -178,12 +195,12 @@ export interface DCATAdditionalDdo {
 }
 
 export interface DCATService {
-  '@id'?: string
   '@type': 'dcat:DataService'
+  '@id'?: string
+  'dct:identifier'?: string
   'dct:title'?: string
   'dct:description'?: string
-  'dct:identifier'?: string
-  'dcat:endpointURL'?: { '@id': string }
+  'dcat:endpointURL'?: DCATResource
   'dcat:servesDataset'?: { '@id': string }
   'oec:serviceType'?: string
   'oec:datatokenAddress'?: string
@@ -240,10 +257,7 @@ export interface DCATDataset {
   }
   'dcat:spatialResolutionInMeters'?: number
   'dcat:temporalResolution'?: string
-  'dcat:landingPage'?: {
-    '@id': string
-    '@type': 'foaf:Document'
-  }
+  'dcat:landingPage'?: DCATDocument
   'dcat:contactPoint'?: DCATContactPoint
   'dct:creator'?: DCATAgent
   'dct:publisher'?: DCATAgent
@@ -267,7 +281,7 @@ export interface DCATDataset {
   'dct:conformsTo'?: string[]
   'oec:issuer'?: string
   'dct:rights'?: DCATRightsStatement
-  'dct:accessRights'?: string
+  'dct:accessRights'?: DCATRightsStatement
   'dct:type'?: string
   'prov:qualifiedAttribution'?: DCATQualifiedAttribution[]
   'oec:accessDetails'?: DCATAccessDetails
@@ -281,6 +295,6 @@ export interface DCATDataset {
   'oec:purgatory'?: {
     'oec:state': boolean
   }
-  'oec:services'?: DCATService[]
+  'oec:services'?: any[]
   'oec:stats'?: DCATStats
 }

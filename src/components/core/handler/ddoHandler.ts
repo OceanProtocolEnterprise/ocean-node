@@ -53,6 +53,7 @@ import {
   DCATDistribution,
   DCATQualifiedAttribution,
   DCATTemporal,
+  DCATDocument,
   DCATAgent,
   DCATService,
   DCATDatatoken,
@@ -1019,7 +1020,8 @@ export class FindDdoHandler extends CommandHandler {
 
       if (endpoint) {
         distribution['dcat:accessURL'] = {
-          '@id': endpoint
+          '@id': endpoint,
+          '@type': 'rdfs:Resource'
         }
       }
 
@@ -1037,13 +1039,15 @@ export class FindDdoHandler extends CommandHandler {
 
       if (service.type === 'access' && endpoint) {
         distribution['dcat:downloadURL'] = {
-          '@id': endpoint
+          '@id': endpoint,
+          '@type': 'rdfs:Resource'
         }
       }
 
       if (service.type === 'compute') {
         distribution['dcat:mediaType'] = {
-          '@id': 'https://www.iana.org/assignments/media-types/application/json'
+          '@id': 'https://www.iana.org/assignments/media-types/application/json',
+          '@type': 'dct:MediaType'
         }
         distribution['dcat:format'] = 'compute-service'
 
@@ -1074,7 +1078,8 @@ export class FindDdoHandler extends CommandHandler {
         }
       } else if (service.type === 'access') {
         distribution['dcat:mediaType'] = {
-          '@id': 'https://www.iana.org/assignments/media-types/application/octet-stream'
+          '@id': 'https://www.iana.org/assignments/media-types/application/octet-stream',
+          '@type': 'dct:MediaType'
         }
       }
 
@@ -1089,7 +1094,8 @@ export class FindDdoHandler extends CommandHandler {
           distribution['dcat:checksum'] = {
             '@type': 'spdx:Checksum',
             'spdx:algorithm': {
-              '@id': 'http://spdx.org/rdf/terms#checksumAlgorithm_sha256'
+              '@id': 'http://spdx.org/rdf/terms#checksumAlgorithm_sha256',
+              '@type': 'spdx:ChecksumAlgorithm'
             },
             'spdx:checksumValue': {
               '@type': 'xsd:hexBinary',
@@ -1100,10 +1106,11 @@ export class FindDdoHandler extends CommandHandler {
       }
 
       if (service.links && typeof service.links === 'object') {
-        const landingPages = Object.values(service.links)
+        const landingPages: DCATDocument[] = Object.values(service.links)
           .filter((value): value is string => typeof value === 'string')
           .map((url) => ({
-            '@id': url
+            '@id': url,
+            '@type': 'foaf:Document' as const
           }))
 
         if (landingPages.length > 0) {
@@ -1500,7 +1507,19 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
-    const conformsTo: string[] = ['http://www.w3.org/ns/dcat#']
+    // Only emit dct:conformsTo when there is an actual conformance target.
+    // The DCAT namespace itself (http://www.w3.org/ns/dcat#) is not a Standard,
+    // and GeoDCAT-AP SHACL rejects it. Conformance is only meaningful for geo
+    // assets (INSPIRE + GeoDCAT-AP) and for other explicitly declared standards
+    // via additionalInformation['dct:conformsTo'].
+    const conformsTo: string[] = []
+
+    if (Array.isArray(additionalInformation['dct:conformsTo'])) {
+      conformsTo.push(...additionalInformation['dct:conformsTo'])
+    } else if (typeof additionalInformation['dct:conformsTo'] === 'string') {
+      conformsTo.push(additionalInformation['dct:conformsTo'])
+    }
+
     if (additionalInformation['dct:spatial']) {
       conformsTo.push(
         'http://inspire.ec.europa.eu/schemas/inspire_vs/1.0',
@@ -1508,7 +1527,9 @@ export class FindDdoHandler extends CommandHandler {
       )
     }
 
-    dcat['dct:conformsTo'] = conformsTo
+    if (conformsTo.length > 0) {
+      dcat['dct:conformsTo'] = conformsTo
+    }
 
     if (baseUrl && assetDid) {
       dcat['dcat:landingPage'] = {
@@ -1565,12 +1586,14 @@ export class FindDdoHandler extends CommandHandler {
             typeof language === 'string' && language.trim() !== ''
         )
         .map((language: string) => ({
-          '@id': languageMap[language.toLowerCase()] || language
+          '@id': languageMap[language.toLowerCase()] || language,
+          '@type': 'dct:LinguisticSystem'
         }))
     } else {
       dcat['dct:language'] = [
         {
-          '@id': 'http://publications.europa.eu/resource/authority/language/ENG'
+          '@id': 'http://publications.europa.eu/resource/authority/language/ENG',
+          '@type': 'dct:LinguisticSystem'
         }
       ]
     }
@@ -1597,10 +1620,12 @@ export class FindDdoHandler extends CommandHandler {
       const allowList = credentialSubject.credentials?.allow || ddoCopy.credentials?.allow
 
       const hasRestrictions = Array.isArray(allowList) && allowList.length > 0
-      dcat['dct:accessRights'] =
-        `http://publications.europa.eu/resource/authority/access-right/${
+      dcat['dct:accessRights'] = {
+        '@id': `http://publications.europa.eu/resource/authority/access-right/${
           hasRestrictions ? 'RESTRICTED' : 'PUBLIC'
-        }`
+        }`,
+        '@type': 'dct:RightsStatement'
+      }
     }
 
     if (metadata.type) {
@@ -1783,7 +1808,8 @@ export class FindDdoHandler extends CommandHandler {
 
           if (typeof endpoint === 'string' && endpoint.trim() !== '') {
             formattedService['dcat:endpointURL'] = {
-              '@id': endpoint
+              '@id': endpoint,
+              '@type': 'rdfs:Resource'
             }
           }
         }
