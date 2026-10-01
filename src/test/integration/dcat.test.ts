@@ -1,5 +1,4 @@
 import { expect } from 'chai'
-import { JsonRpcProvider } from 'ethers'
 import { Database } from '../../components/database/index.js'
 import { getConfiguration } from '../../utils/index.js'
 import {
