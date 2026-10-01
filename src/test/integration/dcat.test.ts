@@ -27,7 +27,6 @@ import {
 describe('********** DCAT Integration Tests', () => {
   let config: OceanNodeConfig
   let database: Database
-  let provider: JsonRpcProvider
   let previousConfiguration: OverrideEnvConfig[]
   let oceanNode: OceanNode
   let handler: FindDdoHandler
