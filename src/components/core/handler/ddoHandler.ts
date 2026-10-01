@@ -1632,6 +1632,19 @@ export class FindDdoHandler extends CommandHandler {
       dcat['dct:type'] = metadata.type
     }
 
+    if (metadata.algorithm) {
+      dcat['oec:algorithm'] = {
+        'oec:language': metadata.algorithm.language,
+        'oec:version': metadata.algorithm.version,
+        'oec:container': {
+          'oec:entrypoint': metadata.algorithm.container.entrypoint,
+          'oec:image': metadata.algorithm.container.image,
+          'oec:tag': metadata.algorithm.container.tag,
+          'oec:checksum': metadata.algorithm.container.checksum
+        }
+      }
+    }
+
     if (issuer) {
       dcat['oec:issuer'] = issuer
     }

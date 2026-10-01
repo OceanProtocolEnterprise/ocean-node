@@ -10,7 +10,6 @@ import {
 } from '../../data/dcatFixtures.js'
 
 describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
-
   let handler: any
 
   before(() => {

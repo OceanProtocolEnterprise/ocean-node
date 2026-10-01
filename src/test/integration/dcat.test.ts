@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { JsonRpcProvider, Signer } from 'ethers'
+import { JsonRpcProvider } from 'ethers'
 import { Database } from '../../components/database/index.js'
 import { getConfiguration } from '../../utils/index.js'
 import {
@@ -16,7 +16,6 @@ import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { RPCS } from '../../@types/blockchain.js'
 import { OceanNode } from '../../OceanNode.js'
 import { FindDdoHandler } from '../../components/core/handler/ddoHandler.js'
-import { DCATDataset } from '../../@types/dcat.js'
 import {
   simpleDatasetDdo,
   computeDatasetDdo,
@@ -24,7 +23,6 @@ import {
   multiServiceDatasetDdo,
   geospatialDatasetDdo
 } from '../data/dcatFixtures.js'
-import sinon from 'sinon'
 
 describe('********** DCAT Integration Tests', () => {
   let config: OceanNodeConfig
@@ -62,7 +60,6 @@ describe('********** DCAT Integration Tests', () => {
       true
     )
 
-    provider = new JsonRpcProvider(mockSupportedNetworks['8996'].rpc)
     handler = new FindDdoHandler(oceanNode)
   })
 
@@ -150,7 +147,6 @@ describe('********** DCAT Integration Tests', () => {
   })
 
   describe('DCAT output conforms to expected SHACL-shape invariants', () => {
-
     it('every dcat:mediaType is typed dct:MediaType', async () => {
       for (const ddo of [simpleDatasetDdo, computeDatasetDdo, algorithmAssetDdo]) {
         const dcat = await handler.transformToDCAT(ddo)
