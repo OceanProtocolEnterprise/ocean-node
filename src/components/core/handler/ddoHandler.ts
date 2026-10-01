@@ -1553,8 +1553,7 @@ export class FindDdoHandler extends CommandHandler {
     const formattedServices = this.formatServicesForDCAT(services, assetDid)
 
     if (formattedServices.length > 0) {
-      dcat['dcat:service'] = formattedServices
-      dcat['oec:services'] = services
+      dcat['oec:services'] = formattedServices
     }
 
     const temporal = this.formatTemporalCoverage(metadata)
