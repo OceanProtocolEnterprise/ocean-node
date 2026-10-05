@@ -60,6 +60,7 @@ import {
   DCATAccessDetails,
   ChecksumAlgorithm
 } from '../../../@types/dcat.js'
+import { OE_VOCABULARY, OE_OBJECT_SHAPES } from '../../../@types/oecVocabulary.js'
 
 const MAX_NUM_PROVIDERS = 5
 // byte cap on one provider's getDDO response. A DDO is comfortably under a MiB in practice,
@@ -67,6 +68,40 @@ const MAX_NUM_PROVIDERS = 5
 // gigabyte. The shared reader's default is 64 MiB, which is a heap ceiling for any
 // accumulating read rather than a statement about this payload.
 const MAX_DDO_RESPONSE_BYTES = 4 * 1024 * 1024
+
+function oec(shortName: string): string {
+  return OE_VOCABULARY[shortName] ? `oec:${shortName}` : shortName
+}
+
+function serializeWithVocabulary(
+  raw: any,
+  shapeKeys: readonly string[]
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const key of shapeKeys) {
+    if (raw[key] !== undefined) {
+      out[oec(key)] = raw[key]
+    }
+  }
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.includes(':') && !key.startsWith('oec:')) {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+function normalizeCredentialKeys(raw: any): any {
+  if (!raw || typeof raw !== 'object') return raw
+  return {
+    ...raw,
+    matchDeny: raw.match_deny ?? raw.matchDeny,
+    requestCredentials: raw.request_credentials ?? raw.requestCredentials,
+    vcPolicies: raw.vc_policies ?? raw.vcPolicies,
+    vpPolicies: raw.vp_policies ?? raw.vpPolicies
+  }
+}
 
 /**
  * DDO ids that a recent FindDDO could not locate anywhere - not locally, and not at any
@@ -1693,63 +1728,64 @@ export class FindDdoHandler extends CommandHandler {
     const csStats = credentialSubject.stats || ddoCopy.stats
 
     if (csStats) {
-      dcat['oec:stats'] = {
+      const statsOut: Record<string, unknown> = {
         'oec:allocated': csStats.allocated ?? 0,
         'oec:orders': csStats.orders ?? 0
       }
       if (csStats.price) {
-        dcat['oec:stats']['oec:price'] = {
-          'oec:tokenAddress': csStats.price.tokenAddress,
-          'oec:tokenSymbol': csStats.price.tokenSymbol || 'EURC',
-          'oec:value': String(csStats.price.value)
-        }
+        statsOut['oec:price'] = serializeWithVocabulary(csStats.price, [
+          'tokenAddress',
+          'tokenSymbol',
+          'value'
+        ])
       }
+      dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     } else if (stats.length > 0) {
       const totalOrders = stats.reduce(
         (sum: number, stat: any) => sum + (stat.orders || 0),
         0
       )
-      dcat['oec:stats'] = {
+      const statsOut: Record<string, unknown> = {
         'oec:allocated': totalOrders,
         'oec:orders': totalOrders
       }
 
       const firstPrice = stats[0]?.prices?.[0]
       if (firstPrice) {
-        dcat['oec:stats']['oec:price'] = {
-          'oec:tokenAddress': firstPrice.token,
-          'oec:tokenSymbol': firstPrice.tokenSymbol || 'EURC',
-          'oec:value': firstPrice.price
-        }
+        statsOut['oec:price'] = serializeWithVocabulary(
+          {
+            tokenAddress: firstPrice.token,
+            tokenSymbol: firstPrice.tokenSymbol || 'EURC',
+            value: firstPrice.price
+          },
+          ['tokenAddress', 'tokenSymbol', 'value']
+        )
       }
+      dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     }
 
     if (Object.keys(nft).length > 0) {
-      dcat['oec:nft'] = {
-        'dct:title': nft.name,
-        'oec:address': nft.address,
-        'oec:owner': nft.owner,
-        'oec:state': nft.state,
-        'oec:symbol': nft.symbol,
-        'oec:tokenURI': nft.tokenURI
-      }
-
+      const nftOut: Record<string, unknown> = serializeWithVocabulary(nft, [
+        'name',
+        'symbol',
+        'address',
+        'owner',
+        'state',
+        'tokenURI'
+      ])
+      if (nft.name) nftOut['dct:title'] = nft.name
+      delete nftOut['oec:name']
       if (nft.created) {
-        dcat['oec:nft']['dct:issued'] = {
-          '@type': 'xsd:dateTime',
-          '@value': nft.created
-        }
+        nftOut['dct:issued'] = { '@type': 'xsd:dateTime', '@value': nft.created }
       }
+      dcat['oec:nft'] = nftOut as unknown as (typeof dcat)['oec:nft']
     }
 
     if (event.txid || event.tx) {
       dcat['oec:event'] = {
-        'oec:block': event.block,
-        'oec:contract': event.contract,
-        'oec:datetime': event.datetime,
-        'oec:from': event.from,
+        ...serializeWithVocabulary(event, ['block', 'contract', 'datetime', 'from']),
         'oec:tx': event.txid || event.tx
-      }
+      } as unknown as (typeof dcat)['oec:event']
     }
 
     const accessDetails = Array.isArray(ddoCopy.accessDetails)
@@ -1759,7 +1795,9 @@ export class FindDdoHandler extends CommandHandler {
         : []
 
     if (accessDetails.length > 0) {
-      dcat['oec:accessDetails'] = this.formatAccessDetails(accessDetails[0])
+      dcat['oec:accessDetails'] = this.formatAccessDetails(
+        accessDetails[0]
+      ) as unknown as (typeof dcat)['oec:accessDetails']
     }
 
     CORE_LOGGER.debug(`[DCAT] Transformed DCAT: ${JSON.stringify(dcat, null, 2)}`)
@@ -1854,21 +1892,21 @@ export class FindDdoHandler extends CommandHandler {
 
         if (service.compute !== undefined && service.compute !== null) {
           formattedService['oec:compute'] = {
-            'oec:allowNetworkAccess': service.compute.allowNetworkAccess ?? false,
-            'oec:allowRawAlgorithm': service.compute.allowRawAlgorithm ?? false,
+            ...serializeWithVocabulary(service.compute, [
+              'allowNetworkAccess',
+              'allowRawAlgorithm'
+            ]),
             ...(Array.isArray(service.compute.publisherTrustedAlgorithms)
               ? {
                   'oec:publisherTrustedAlgorithms':
-                    service.compute.publisherTrustedAlgorithms.map((algorithm: any) => ({
-                      'oec:did': algorithm.did,
-                      'oec:filesChecksum': algorithm.filesChecksum,
-                      'oec:containerSectionChecksum': algorithm.containerSectionChecksum,
-                      ...(algorithm.serviceId
-                        ? {
-                            'oec:serviceId': algorithm.serviceId
-                          }
-                        : {})
-                    }))
+                    service.compute.publisherTrustedAlgorithms.map((algorithm: any) =>
+                      serializeWithVocabulary(algorithm, [
+                        'did',
+                        'filesChecksum',
+                        'containerSectionChecksum',
+                        'serviceId'
+                      ])
+                    )
                 }
               : {}),
             ...(Array.isArray(service.compute.publisherTrustedAlgorithmPublishers)
@@ -1884,11 +1922,69 @@ export class FindDdoHandler extends CommandHandler {
           Array.isArray(service.consumerParameters) &&
           service.consumerParameters.length > 0
         ) {
-          formattedService['oec:consumerParameters'] = service.consumerParameters
+          formattedService['oec:consumerParameters'] = service.consumerParameters.map(
+            (p: any) => serializeWithVocabulary(p, OE_OBJECT_SHAPES.ConsumerParameter)
+          )
         }
 
         if (service.credentials !== undefined && service.credentials !== null) {
-          formattedService['oec:credentials'] = service.credentials
+          formattedService['oec:credentials'] = {
+            ...serializeWithVocabulary(normalizeCredentialKeys(service.credentials), [
+              'matchDeny'
+            ]),
+            ...(Array.isArray(service.credentials.allow)
+              ? {
+                  'oec:allow': service.credentials.allow.map((rule: any) => ({
+                    ...serializeWithVocabulary(normalizeCredentialKeys(rule), [
+                      'type',
+                      'requestCredentials',
+                      'vcPolicies',
+                      'vpPolicies'
+                    ]),
+                    ...(Array.isArray(rule.values)
+                      ? {
+                          'oec:values': rule.values.map((v: any) =>
+                            v && typeof v === 'object'
+                              ? serializeWithVocabulary(normalizeCredentialKeys(v), [
+                                  'address',
+                                  'requestCredentials',
+                                  'vcPolicies',
+                                  'vpPolicies'
+                                ])
+                              : { 'oec:value': v }
+                          )
+                        }
+                      : {})
+                  }))
+                }
+              : {}),
+            ...(Array.isArray(service.credentials.deny)
+              ? {
+                  'oec:deny': service.credentials.deny.map((rule: any) => ({
+                    ...serializeWithVocabulary(normalizeCredentialKeys(rule), [
+                      'type',
+                      'requestCredentials',
+                      'vcPolicies',
+                      'vpPolicies'
+                    ]),
+                    ...(Array.isArray(rule.values)
+                      ? {
+                          'oec:values': rule.values.map((v: any) =>
+                            v && typeof v === 'object'
+                              ? serializeWithVocabulary(normalizeCredentialKeys(v), [
+                                  'address',
+                                  'requestCredentials',
+                                  'vcPolicies',
+                                  'vpPolicies'
+                                ])
+                              : { 'oec:value': v }
+                          )
+                        }
+                      : {})
+                  }))
+                }
+              : {})
+          }
         }
 
         return formattedService
@@ -1900,13 +1996,9 @@ export class FindDdoHandler extends CommandHandler {
       return []
     }
 
-    return datatokens.map((token) => ({
-      address: token.address,
-      name: token.name,
-      symbol: token.symbol,
-      serviceId: token.serviceId,
-      decimals: token.decimals
-    }))
+    return datatokens.map((token) =>
+      serializeWithVocabulary(token, OE_OBJECT_SHAPES.Datatoken)
+    ) as unknown as DCATDatatoken[]
   }
 
   private formatAccessDetails(accessDetails: any): DCATAccessDetails {
@@ -1914,43 +2006,48 @@ export class FindDdoHandler extends CommandHandler {
       return undefined
     }
 
-    const formatted: DCATAccessDetails = {
-      '@type': accessDetails.type || 'oec:Fixed',
-      'oec:addressOrId': accessDetails.addressOrId,
-      'oec:isOwned': accessDetails.isOwned || false,
-      'oec:isPurchasable': accessDetails.isPurchasable || false,
-      'oec:price': accessDetails.price,
-      'oec:publisherMarketOrderFee': accessDetails.publisherMarketOrderFee || '0',
-      'oec:templateId': accessDetails.templateId
+    const formatted: Record<string, unknown> = {
+      '@type': accessDetails.type || 'oec:Fixed'
     }
 
-    if (accessDetails.validOrderTx) {
-      formatted['oec:validOrderTx'] = accessDetails.validOrderTx
-    }
-
-    if (accessDetails.paymentCollector) {
-      formatted['oec:paymentCollector'] = accessDetails.paymentCollector
+    for (const key of [
+      'addressOrId',
+      'isOwned',
+      'isPurchasable',
+      'price',
+      'publisherMarketOrderFee',
+      'templateId',
+      'validOrderTx',
+      'paymentCollector'
+    ]) {
+      if (accessDetails[key] !== undefined) {
+        formatted[`oec:${key}`] = accessDetails[key]
+      }
     }
 
     if (accessDetails.baseToken) {
       formatted['oec:baseToken'] = {
         'dct:title': accessDetails.baseToken.name,
-        'oec:address': accessDetails.baseToken.address,
-        'oec:decimals': accessDetails.baseToken.decimals,
-        'oec:symbol': accessDetails.baseToken.symbol
+        ...serializeWithVocabulary(accessDetails.baseToken, [
+          'address',
+          'decimals',
+          'symbol'
+        ])
       }
     }
 
     if (accessDetails.datatoken) {
       formatted['oec:datatoken'] = {
         'dct:title': accessDetails.datatoken.name,
-        'oec:address': accessDetails.datatoken.address,
-        'oec:symbol': accessDetails.datatoken.symbol,
-        'oec:decimals': accessDetails.datatoken.decimals
+        ...serializeWithVocabulary(accessDetails.datatoken, [
+          'address',
+          'symbol',
+          'decimals'
+        ])
       }
     }
 
-    return formatted
+    return formatted as unknown as DCATAccessDetails
   }
 }
 

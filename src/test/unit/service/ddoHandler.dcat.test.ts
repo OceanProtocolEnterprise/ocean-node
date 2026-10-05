@@ -207,12 +207,12 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
   describe('transformToDCAT - data services', () => {
     it('creates one dcat:DataService per service', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
-      expect(dcat['dcat:service']).to.have.lengthOf(1)
+      expect(dcat['oec:services']).to.have.lengthOf(1)
     })
 
     it('DataService has stable @id derived from service id', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
-      const svc = dcat['dcat:service'][0]
+      const svc = dcat['oec:services'][0]
       expect(svc['@id']).to.equal(
         'urn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
       )
@@ -223,7 +223,7 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
 
     it('DataService dcat:endpointURL is rdfs:Resource', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
-      const svc = dcat['dcat:service'][0]
+      const svc = dcat['oec:services'][0]
       expect(svc['dcat:endpointURL']).to.deep.equal({
         '@id': 'https://ocean-node.example.io',
         '@type': 'rdfs:Resource'
@@ -232,7 +232,7 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
 
     it('DataService dcat:servesDataset matches the Dataset @id', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
-      const svc = dcat['dcat:service'][0]
+      const svc = dcat['oec:services'][0]
       expect(svc['dcat:servesDataset']).to.deep.equal({
         '@id': dcat['@id']
       })
@@ -240,16 +240,68 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
 
     it('DataService preserves oec:credentials, oec:consumerParameters when present', async () => {
       const dcat = await handler.transformToDCAT(computeDatasetDdo)
-      const svc = dcat['dcat:service'][0]
+      const svc = dcat['oec:services'][0]
       expect(svc).to.have.property('oec:credentials')
       expect(svc).to.have.property('oec:consumerParameters')
     })
 
-    it('oec:services mirrors the raw service array', async () => {
+    it('oec:services contains the formatted DataService objects, not the raw DDO services', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
-      expect(dcat['oec:services']).to.deep.equal(
-        simpleDatasetDdo.credentialSubject.services
-      )
+      expect(dcat['oec:services']).to.have.lengthOf(1)
+      const svc = dcat['oec:services'][0]
+      expect(svc['@type']).to.equal('dcat:DataService')
+      expect(svc).to.have.property('dct:title', 'Access Service')
+      expect(svc).to.have.property('oec:serviceType', 'access')
+    })
+
+    it('formatDatatokensForDCAT emits oec-prefixed datatoken fields', async () => {
+      const dcat = await handler.transformToDCAT(simpleDatasetDdo)
+      expect(dcat['oec:datatokens'][0]).to.deep.equal({
+        'oec:address': '0x1111111111111111111111111111111111111111',
+        'oec:name': 'Access Token',
+        'oec:symbol': 'OEAT',
+        'oec:serviceId':
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      })
+    })
+
+    it('oec:services preserves consumerParameters with oec-prefixed fields', async () => {
+      const dcat = await handler.transformToDCAT(computeDatasetDdo)
+      const svc = dcat['oec:services'][0]
+      const param = svc['oec:consumerParameters'][0]
+      expect(param).to.have.property('oec:name', 'param1')
+      expect(param).to.have.property('oec:label', 'Param 1')
+      expect(param).to.have.property('oec:type', 'text')
+      expect(param).to.have.property('oec:required', false)
+    })
+
+    it('oec:services preserves credentials with oec-prefixed fields', async () => {
+      const dcat = await handler.transformToDCAT(computeDatasetDdo)
+      const svc = dcat['oec:services'][0]
+      expect(svc['oec:credentials']).to.have.property('oec:allow')
+      expect(svc['oec:credentials']).to.have.property('oec:matchDeny', 'any')
+    })
+
+    it('oec:credentials allow rule carries oec:requestCredentials with camelCase normalization', async () => {
+      const dcat = await handler.transformToDCAT(computeDatasetDdo)
+      const svc = dcat['oec:services'][0]
+      const firstRule = svc['oec:credentials']['oec:allow'][0]
+      expect(firstRule).to.have.property('oec:type', 'SSIpolicy')
+      expect(firstRule).to.have.property('oec:values')
+      expect(firstRule['oec:values']).to.be.an('array')
+      const firstValue = firstRule['oec:values'][0]
+      expect(firstValue).to.have.property('oec:requestCredentials')
+      expect(firstValue['oec:requestCredentials']).to.be.an('array')
+    })
+
+    it('oec:compute nested trusted algorithms are oec-prefixed', async () => {
+      const dcat = await handler.transformToDCAT(computeDatasetDdo)
+      const svc = dcat['oec:services'][0]
+      const algo = svc['oec:compute']['oec:publisherTrustedAlgorithms'][0]
+      expect(algo).to.have.property('oec:did', '*')
+      expect(algo).to.have.property('oec:filesChecksum', '*')
+      expect(algo).to.have.property('oec:containerSectionChecksum', '*')
+      expect(algo).to.have.property('oec:serviceId', '*')
     })
   })
 
@@ -382,7 +434,7 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
       ddo.credentialSubject.services = []
       const dcat = await handler.transformToDCAT(ddo)
       expect(dcat['dcat:distribution']).to.equal(undefined)
-      expect(dcat['dcat:service']).to.equal(undefined)
+      expect(dcat['oec:services']).to.equal(undefined)
     })
 
     it('handles DDO with no credentialSubject (flat shape)', async () => {

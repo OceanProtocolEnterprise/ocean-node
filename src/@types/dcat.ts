@@ -169,11 +169,11 @@ export interface DCATStats {
 }
 
 export interface DCATDatatoken {
-  address: string
-  name?: string
-  symbol?: string
-  serviceId?: string
-  decimals?: number
+  'oec:address'?: string
+  'oec:name'?: string
+  'oec:symbol'?: string
+  'oec:serviceId'?: string
+  'oec:decimals'?: number
 }
 
 export interface DCATAlgorithmContainer {
@@ -207,9 +207,9 @@ export interface DCATService {
   'oec:files'?: string
   'oec:timeout'?: number
   'oec:state'?: number
-  'oec:compute'?: DCATCompute
-  'oec:consumerParameters'?: any[]
-  'oec:credentials'?: any
+  'oec:compute'?: Record<string, unknown>
+  'oec:consumerParameters'?: Array<Record<string, unknown>>
+  'oec:credentials'?: Record<string, unknown>
 }
 
 export interface DCATAccessDetails {
