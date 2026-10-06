@@ -1733,11 +1733,10 @@ export class FindDdoHandler extends CommandHandler {
         'oec:orders': csStats.orders ?? 0
       }
       if (csStats.price) {
-        statsOut['oec:price'] = serializeWithVocabulary(csStats.price, [
-          'tokenAddress',
-          'tokenSymbol',
-          'value'
-        ])
+        statsOut['oec:price'] = {
+          ...serializeWithVocabulary(csStats.price, ['tokenAddress', 'tokenSymbol']),
+          'oec:value': String(csStats.price.value)
+        }
       }
       dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     } else if (stats.length > 0) {

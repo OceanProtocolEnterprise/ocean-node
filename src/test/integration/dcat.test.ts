@@ -82,9 +82,9 @@ describe('********** DCAT Integration Tests', () => {
       expect(dcat['dct:accessRights']).to.not.equal(undefined)
 
       expect(dcat['dcat:distribution']).to.be.an('array').with.lengthOf(1)
-      expect(dcat['dcat:service']).to.be.an('array').with.lengthOf(1)
+      expect(dcat['oec:services']).to.be.an('array').with.lengthOf(1)
 
-      const svc = dcat['dcat:service'][0]
+      const svc = dcat['oec:services'][0]
       expect(svc['dcat:servesDataset']['@id']).to.equal(dcat['@id'])
     })
 
@@ -98,7 +98,7 @@ describe('********** DCAT Integration Tests', () => {
       expect(dist['dcat:format']).to.equal('compute-service')
       expect(dist['oec:compute']).to.not.equal(undefined)
 
-      const svc = dcat['dcat:service'][0]
+      const svc = dcat['oec:services'][0]
       expect(svc['oec:serviceType']).to.equal('compute')
       expect(svc['oec:compute']).to.not.equal(undefined)
       expect(svc['oec:consumerParameters']).to.be.an('array')
@@ -119,13 +119,13 @@ describe('********** DCAT Integration Tests', () => {
 
       const dcat = await handler.transformToDCAT(multiServiceDatasetDdo)
       expect(dcat['dcat:distribution']).to.have.lengthOf(2)
-      expect(dcat['dcat:service']).to.have.lengthOf(2)
+      expect(dcat['oec:services']).to.have.lengthOf(2)
 
-      const types = dcat['dcat:service'].map((s: any) => s['oec:serviceType'])
+      const types = dcat['oec:services'].map((s: any) => s['oec:serviceType'])
       expect(types).to.include('access')
       expect(types).to.include('compute')
 
-      for (const svc of dcat['dcat:service']) {
+      for (const svc of dcat['oec:services']) {
         expect(svc['dcat:servesDataset']['@id']).to.equal(dcat['@id'])
       }
     })
@@ -167,7 +167,7 @@ describe('********** DCAT Integration Tests', () => {
             expect(dist['dcat:downloadURL']).to.have.property('@type', 'rdfs:Resource')
           }
         }
-        for (const svc of dcat['dcat:service'] || []) {
+        for (const svc of dcat['oec:services'] || []) {
           if (svc['dcat:endpointURL']) {
             expect(svc['dcat:endpointURL']).to.have.property('@type', 'rdfs:Resource')
           }
@@ -249,7 +249,7 @@ describe('********** DCAT Integration Tests', () => {
       expect(dcat1['@id']).to.equal(dcat2['@id'])
       expect(dcat1['dct:title']).to.equal(dcat2['dct:title'])
       expect(dcat1['dcat:distribution']).to.deep.equal(dcat2['dcat:distribution'])
-      expect(dcat1['dcat:service']).to.deep.equal(dcat2['dcat:service'])
+      expect(dcat1['oec:services']).to.deep.equal(dcat2['oec:services'])
     })
   })
 })
