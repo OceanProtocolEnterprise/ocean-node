@@ -26,7 +26,6 @@ export type OECTerm = {
   domain?: string
 }
 
-
 export const OE_VOCABULARY: Record<string, OECTerm> = {
   chainId: {
     name: 'chainId',
@@ -571,7 +570,6 @@ export function oecVocabularyToRdf(
   }
   return lines.join('\n')
 }
-
 
 export function oecVocabularyToContext(
   baseUri = 'https://oceanenterprise.io/vocab/'
