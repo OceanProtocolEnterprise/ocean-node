@@ -10,10 +10,12 @@ describe('********** OE Vocabulary Unit Tests', () => {
   describe('OE_VOCABULARY', () => {
     it('every term has name, label, and description', () => {
       for (const [key, term] of Object.entries(OE_VOCABULARY)) {
-        expect(term.name, `${key} missing name`).to.be.a('string').and.not.empty
-        expect(term.label, `${key} missing label`).to.be.a('string').and.not.empty
-        expect(term.description, `${key} missing description`).to.be.a('string').and.not
-          .empty
+        expect(term.name, `${key} missing name`).to.be.a('string')
+        expect(term.name, `${key} missing name`).to.not.equal('')
+        expect(term.label, `${key} missing label`).to.be.a('string')
+        expect(term.label, `${key} missing label`).to.not.equal('')
+        expect(term.description, `${key} missing description`).to.be.a('string')
+        expect(term.description, `${key} missing description`).to.not.equal('')
       }
     })
 
