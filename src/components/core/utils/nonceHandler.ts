@@ -47,7 +47,7 @@ export async function getNonceAsNumber(address: string): Promise<number> {
     .getHandlerForTask(command)
     .handle(command)
   if (nonceResponse.stream) {
-    return await Number(streamToString(nonceResponse.stream as Readable))
+    return Number(await streamToString(nonceResponse.stream as Readable))
   }
   return 0
 }
@@ -266,16 +266,23 @@ async function verifySignatureForConsumer(
     ['bytes'],
     [ethers.hexlify(ethers.toUtf8Bytes(message))]
   )
-  const messageHashBytes = ethers.toBeArray(consumerMessage)
+  const messageHashBytes = ethers.getBytes(consumerMessage)
+  const legacyMessageHashBytes = ethers.toBeArray(consumerMessage)
 
   // Try EOA signature validation
   try {
     const addressFromHashSignature = ethers.verifyMessage(consumerMessage, signature)
     const addressFromBytesSignature = ethers.verifyMessage(messageHashBytes, signature)
+    const addressFromLegacyBytesSignature = ethers.verifyMessage(
+      legacyMessageHashBytes,
+      signature
+    )
     if (
       ethers.getAddress(addressFromHashSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase() ||
       ethers.getAddress(addressFromBytesSignature)?.toLowerCase() ===
+        ethers.getAddress(consumer)?.toLowerCase() ||
+      ethers.getAddress(addressFromLegacyBytesSignature)?.toLowerCase() ===
         ethers.getAddress(consumer)?.toLowerCase()
     ) {
       return true
@@ -284,13 +291,15 @@ async function verifySignatureForConsumer(
     // Continue to smart account check
   }
 
-  // Try ERC-1271 (smart account) validation
-  try {
-    const targetChainId = chainId || Object.keys(config?.supportedNetworks || {})[0]
-    if (targetChainId && config?.supportedNetworks?.[targetChainId]) {
-      const provider = new ethers.JsonRpcProvider(
-        config.supportedNetworks[targetChainId].rpc
-      )
+  // An explicit chain restricts validation; otherwise try every configured network.
+  const targetChainIds = chainId
+    ? [chainId]
+    : Object.keys(config?.supportedNetworks || {})
+  for (const targetChainId of targetChainIds) {
+    const network = config?.supportedNetworks?.[targetChainId]
+    if (!network) continue
+    try {
+      const provider = new ethers.JsonRpcProvider(network.rpc)
 
       // Try custom hash format (for backward compatibility)
       if (await isERC1271Valid(consumer, consumerMessage, signature, provider)) {
@@ -302,9 +311,9 @@ async function verifySignatureForConsumer(
       if (await isERC1271Valid(consumer, eip191Hash, signature, provider)) {
         return true
       }
+    } catch (error) {
+      CORE_LOGGER.error(`ERC-1271 signature validation error: ${error?.message}`)
     }
-  } catch (error) {
-    CORE_LOGGER.error(`ERC-1271 signature validation error: ${error?.message}`)
   }
 
   return false
