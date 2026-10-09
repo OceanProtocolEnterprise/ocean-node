@@ -246,7 +246,7 @@ export interface DCATDataset {
   'dcat:theme'?: DCATThemeConcept[]
   'dcat:version'?: string
   'dcat:distribution'?: DCATDistribution[]
-//   'dcat:service'?: DCATService[]
+  //   'dcat:service'?: DCATService[]
   'dcat:bbox'?: {
     '@type': 'geo:wktLiteral'
     '@value': string
