@@ -68,6 +68,48 @@ const MAX_NUM_PROVIDERS = 5
 // gigabyte. The shared reader's default is 64 MiB, which is a heap ceiling for any
 // accumulating read rather than a statement about this payload.
 const MAX_DDO_RESPONSE_BYTES = 4 * 1024 * 1024
+const baseTokenSymbolCache = new Map<string, string>()
+const MAX_BASE_TOKEN_SYMBOL_CACHE = 10_000
+
+async function resolveBaseTokenSymbol(
+  oceanNode: OceanNode,
+  chainId: number,
+  tokenAddress: string
+): Promise<string> {
+  if (!tokenAddress) return ''
+  const key = `${chainId}:${tokenAddress.toLowerCase()}`
+  const cached = baseTokenSymbolCache.get(key)
+  if (cached !== undefined) return cached
+
+  let symbol = ''
+  try {
+    const blockchain = oceanNode.getBlockchain(chainId)
+    if (blockchain) {
+      const provider = await blockchain.getProvider()
+      const erc20 = new ethers.Contract(
+        tokenAddress,
+        ['function symbol() view returns (string)'],
+        provider
+      )
+      symbol = await erc20.symbol()
+    }
+  } catch (error) {
+    CORE_LOGGER.debug(
+      `DCAT: could not resolve base token symbol for ${tokenAddress} on chain ${chainId}: ${error.message}`
+    )
+    symbol = ''
+  }
+
+  if (
+    baseTokenSymbolCache.size >= MAX_BASE_TOKEN_SYMBOL_CACHE &&
+    !baseTokenSymbolCache.has(key)
+  ) {
+    const oldest = baseTokenSymbolCache.keys().next().value
+    if (oldest !== undefined) baseTokenSymbolCache.delete(oldest)
+  }
+  baseTokenSymbolCache.set(key, symbol)
+  return symbol
+}
 
 function oec(shortName: string): string {
   return OE_VOCABULARY[shortName] ? `oec:${shortName}` : shortName
@@ -1757,94 +1799,47 @@ export class FindDdoHandler extends CommandHandler {
       }
       dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     } else if (stats.length > 0) {
-      console.log('[DCAT DEBUG] accessDetails:', JSON.stringify(accessDetails, null, 2))
+      const node = this.getOceanNode()
 
-      const tokenSymbolByAddress = new Map<string, string>()
-
-      for (const ad of accessDetails) {
-        const addr = ad?.baseToken?.address
-        const sym = ad?.baseToken?.symbol
-
-        console.log('[DCAT DEBUG] Base token:', {
-          address: addr,
-          symbol: sym
-        })
-
-        if (typeof addr === 'string' && typeof sym === 'string' && sym !== '') {
-          tokenSymbolByAddress.set(addr.toLowerCase(), sym)
-        }
-      }
-
-      console.log(
-        '[DCAT DEBUG] Token symbol map:',
-        JSON.stringify(Array.from(tokenSymbolByAddress.entries()), null, 2)
-      )
-
-      dcat['oec:stats'] = stats.map((stat: any) => {
-        const entry: Record<string, unknown> = {
-          'oec:serviceId': stat.serviceId,
-          'oec:datatokenAddress': stat.datatokenAddress,
-          'oec:orders': stat.orders ?? 0
-        }
-
-        const price = stat.prices?.[0]
-
-        console.log('[DCAT DEBUG] Raw stat prices:', JSON.stringify(stat.prices, null, 2))
-
-        if (price) {
-          const tokenAddr = typeof price.token === 'string' ? price.token : ''
-          const normalizedAddress = tokenAddr.toLowerCase()
-          const baseToken = accessDetails.find((detail: any) => {
-            const address = detail?.baseToken?.address
-            return (
-              typeof address === 'string' && address.toLowerCase() === normalizedAddress
-            )
-          })?.baseToken
-
-          const mappedSymbol = tokenSymbolByAddress.get(normalizedAddress)
-          const symbol = price.tokenSymbol || baseToken?.symbol || mappedSymbol || ''
-
-          console.log('[DCAT DEBUG] Price symbol resolution:', {
-            priceToken: price.token,
-            normalizedAddress,
-            priceTokenSymbol: price.tokenSymbol,
-            matchedBaseToken: baseToken,
-            mappedSymbol,
-            resolvedSymbol: symbol
-          })
-
-          const priceEntry: Record<string, unknown> = {
-            tokenAddress: price.token,
-            tokenSymbol: symbol,
-            value: price.price
+      const resolvedStats = await Promise.all(
+        stats.map(async (stat: any) => {
+          const entry: Record<string, unknown> = {
+            'oec:serviceId': stat.serviceId,
+            'oec:datatokenAddress': stat.datatokenAddress,
+            'oec:orders': stat.orders ?? 0
           }
 
-          console.log(
-            '[DCAT DEBUG] Price before serialization:',
-            JSON.stringify(priceEntry, null, 2)
-          )
+          const price = stat.prices?.[0]
+          if (price) {
+            const tokenAddr = typeof price.token === 'string' ? price.token : ''
+            const normalizedAddress = tokenAddr.toLowerCase()
 
-          const serializedPrice = serializeWithVocabulary(priceEntry, [
-            'tokenAddress',
-            'tokenSymbol',
-            'value'
-          ])
+            const baseToken = accessDetails.find(
+              (detail: any) =>
+                typeof detail?.baseToken?.address === 'string' &&
+                detail.baseToken.address.toLowerCase() === normalizedAddress
+            )?.baseToken
 
-          console.log(
-            '[DCAT DEBUG] Price after serialization:',
-            JSON.stringify(serializedPrice, null, 2)
-          )
+            let symbol =
+              baseToken?.symbol ||
+              price.tokenSymbol ||
+              tokenSymbolByAddress.get(normalizedAddress) ||
+              ''
 
-          entry['oec:price'] = serializedPrice
-        }
+            if (!symbol && tokenAddr) {
+              symbol = await resolveBaseTokenSymbol(node, Number(chainId), tokenAddr)
+            }
 
-        return entry
-      }) as unknown as (typeof dcat)['oec:stats']
-
-      console.log(
-        '[DCAT DEBUG] Final DCAT stats:',
-        JSON.stringify(dcat['oec:stats'], null, 2)
+            entry['oec:price'] = serializeWithVocabulary(
+              { tokenAddress: price.token, tokenSymbol: symbol, value: price.price },
+              ['tokenAddress', 'tokenSymbol', 'value']
+            )
+          }
+          return entry
+        })
       )
+
+      dcat['oec:stats'] = resolvedStats as unknown as (typeof dcat)['oec:stats']
     }
 
     if (Object.keys(nft).length > 0) {
