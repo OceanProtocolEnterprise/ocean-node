@@ -2178,12 +2178,15 @@ export function validateDdoSignedByPublisher(
 }
 
 export function validateDDOIdentifier(identifier: string): ValidateParams {
-  const valid = identifier && identifier.length > 0 && identifier.startsWith('did:op')
+  const valid =
+    !!identifier &&
+    identifier.length > 0 &&
+    (identifier.startsWith('did:op:') || identifier.startsWith('did:ope:'))
   if (!valid) {
     return {
       valid: false,
       status: 400,
-      reason: ' Missing or invalid required parameter "id'
+      reason: 'Missing or invalid required parameter "id"'
     }
   }
   return {

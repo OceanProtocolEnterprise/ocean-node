@@ -246,7 +246,7 @@ export interface DCATDataset {
   'dcat:theme'?: DCATThemeConcept[]
   'dcat:version'?: string
   'dcat:distribution'?: DCATDistribution[]
-  'dcat:service'?: DCATService[]
+//   'dcat:service'?: DCATService[]
   'dcat:bbox'?: {
     '@type': 'geo:wktLiteral'
     '@value': string
@@ -295,6 +295,6 @@ export interface DCATDataset {
   'oec:purgatory'?: {
     'oec:state': boolean
   }
-  'oec:services'?: any[]
+  'oec:services'?: DCATService[]
   'oec:stats'?: DCATStats
 }
