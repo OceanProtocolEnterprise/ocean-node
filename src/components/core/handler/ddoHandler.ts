@@ -1758,7 +1758,12 @@ export class FindDdoHandler extends CommandHandler {
       dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     } else if (stats.length > 0) {
       const tokenSymbolByAddress = new Map<string, string>()
-      for (const ad of accessDetails) {
+      const rawAccessDetails = Array.isArray(ddoCopy.accessDetails)
+        ? ddoCopy.accessDetails
+        : Array.isArray(credentialSubject.accessDetails)
+          ? credentialSubject.accessDetails
+          : []
+      for (const ad of rawAccessDetails) {
         const addr = ad?.baseToken?.address
         const sym = ad?.baseToken?.symbol
         if (typeof addr === 'string' && typeof sym === 'string' && sym !== '') {
