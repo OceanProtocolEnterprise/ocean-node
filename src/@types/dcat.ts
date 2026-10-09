@@ -190,8 +190,10 @@ export interface DCATAlgorithm {
 }
 
 export interface DCATAdditionalDdo {
-  data: string
-  type: string
+  'oec:data'?: string
+  'oec:type'?: string
+  data?: string
+  type?: string
 }
 
 export interface DCATService {

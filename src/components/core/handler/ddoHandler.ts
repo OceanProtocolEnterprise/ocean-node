@@ -1319,6 +1319,21 @@ export class FindDdoHandler extends CommandHandler {
         ? credentialSubject.additionalDdos
         : []
 
+    const accessDetails = Array.isArray(ddoCopy.accessDetails)
+      ? ddoCopy.accessDetails
+      : Array.isArray(credentialSubject.accessDetails)
+        ? credentialSubject.accessDetails
+        : []
+
+    const tokenSymbolByAddress = new Map<string, string>()
+    for (const ad of accessDetails) {
+      const addr = ad?.baseToken?.address
+      const sym = ad?.baseToken?.symbol
+      if (typeof addr === 'string' && typeof sym === 'string' && sym !== '') {
+        tokenSymbolByAddress.set(addr.toLowerCase(), sym)
+      }
+    }
+
     const config = await getConfiguration()
     let baseUrl = ''
     const firstService = services[0]
@@ -1700,7 +1715,9 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     if (additionalDdos.length > 0) {
-      dcat['oec:additionalDdos'] = additionalDdos
+      dcat['oec:additionalDdos'] = additionalDdos.map((entry: any) =>
+        serializeWithVocabulary(entry, OE_OBJECT_SHAPES.AdditionalDdo)
+      ) as unknown as (typeof dcat)['oec:additionalDdos']
     }
 
     if (
@@ -1748,14 +1765,25 @@ export class FindDdoHandler extends CommandHandler {
         }
         const price = stat.prices?.[0]
         if (price) {
-          entry['oec:price'] = serializeWithVocabulary(
-            {
-              tokenAddress: price.token,
-              tokenSymbol: price.tokenSymbol || 'EURC',
-              value: price.price
-            },
-            ['tokenAddress', 'tokenSymbol', 'value']
-          )
+          const tokenAddr = typeof price.token === 'string' ? price.token : undefined
+          const symbol =
+            price.tokenSymbol ||
+            (tokenAddr ? tokenSymbolByAddress.get(tokenAddr.toLowerCase()) : undefined) ||
+            undefined
+
+          const priceEntry: Record<string, unknown> = {
+            tokenAddress: price.token
+          }
+          if (symbol) {
+            priceEntry.tokenSymbol = symbol
+          }
+          priceEntry.value = price.price
+
+          entry['oec:price'] = serializeWithVocabulary(priceEntry, [
+            'tokenAddress',
+            'tokenSymbol',
+            'value'
+          ])
         }
         return entry
       }) as unknown as (typeof dcat)['oec:stats']
@@ -1784,12 +1812,6 @@ export class FindDdoHandler extends CommandHandler {
         'oec:tx': event.txid || event.tx
       } as unknown as (typeof dcat)['oec:event']
     }
-
-    const accessDetails = Array.isArray(ddoCopy.accessDetails)
-      ? ddoCopy.accessDetails
-      : Array.isArray(credentialSubject.accessDetails)
-        ? credentialSubject.accessDetails
-        : []
 
     if (accessDetails.length > 0) {
       dcat['oec:accessDetails'] = this.formatAccessDetails(

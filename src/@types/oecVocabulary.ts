@@ -101,6 +101,12 @@ export const OE_VOCABULARY: Record<string, OECTerm> = {
     description: 'Additional DDO entries attached to the asset (extensions).',
     range: 'oec:AdditionalDdo'
   },
+  data: {
+    name: 'data',
+    label: 'Data',
+    description: 'Free-form data attached to an additional DDO entry.',
+    range: 'xsd:string'
+  },
 
   // ── Service-level OE metadata ────────────────────────────────────────
   serviceType: {
@@ -547,7 +553,8 @@ export const OE_OBJECT_SHAPES = {
   ],
   Token: ['name', 'address', 'symbol', 'decimals'],
   Algorithm: ['language', 'version', 'container'],
-  AlgorithmContainer: ['entrypoint', 'image', 'tag', 'checksum']
+  AlgorithmContainer: ['entrypoint', 'image', 'tag', 'checksum'],
+  AdditionalDdo: ['data', 'type']
 } as const
 
 export function oecVocabularyToRdf(
