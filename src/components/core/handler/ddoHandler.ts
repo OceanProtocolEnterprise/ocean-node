@@ -1757,19 +1757,28 @@ export class FindDdoHandler extends CommandHandler {
       }
       dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     } else if (stats.length > 0) {
+      console.log('[DCAT DEBUG] accessDetails:', JSON.stringify(accessDetails, null, 2))
+
       const tokenSymbolByAddress = new Map<string, string>()
-      const rawAccessDetails = Array.isArray(ddoCopy.accessDetails)
-        ? ddoCopy.accessDetails
-        : Array.isArray(credentialSubject.accessDetails)
-          ? credentialSubject.accessDetails
-          : []
-      for (const ad of rawAccessDetails) {
+
+      for (const ad of accessDetails) {
         const addr = ad?.baseToken?.address
         const sym = ad?.baseToken?.symbol
+
+        console.log('[DCAT DEBUG] Base token:', {
+          address: addr,
+          symbol: sym
+        })
+
         if (typeof addr === 'string' && typeof sym === 'string' && sym !== '') {
           tokenSymbolByAddress.set(addr.toLowerCase(), sym)
         }
       }
+
+      console.log(
+        '[DCAT DEBUG] Token symbol map:',
+        JSON.stringify(Array.from(tokenSymbolByAddress.entries()), null, 2)
+      )
 
       dcat['oec:stats'] = stats.map((stat: any) => {
         const entry: Record<string, unknown> = {
@@ -1777,35 +1786,65 @@ export class FindDdoHandler extends CommandHandler {
           'oec:datatokenAddress': stat.datatokenAddress,
           'oec:orders': stat.orders ?? 0
         }
+
         const price = stat.prices?.[0]
+
+        console.log('[DCAT DEBUG] Raw stat prices:', JSON.stringify(stat.prices, null, 2))
+
         if (price) {
           const tokenAddr = typeof price.token === 'string' ? price.token : ''
+          const normalizedAddress = tokenAddr.toLowerCase()
+          const baseToken = accessDetails.find((detail: any) => {
+            const address = detail?.baseToken?.address
+            return (
+              typeof address === 'string' && address.toLowerCase() === normalizedAddress
+            )
+          })?.baseToken
 
-          const baseToken = accessDetails.find(
-            (detail: any) =>
-              typeof detail?.baseToken?.address === 'string' &&
-              detail.baseToken.address.toLowerCase() === tokenAddr.toLowerCase()
-          )?.baseToken
+          const mappedSymbol = tokenSymbolByAddress.get(normalizedAddress)
+          const symbol = price.tokenSymbol || baseToken?.symbol || mappedSymbol || ''
 
-          const symbol =
-            price.tokenSymbol ||
-            baseToken?.symbol ||
-            (tokenAddr ? tokenSymbolByAddress.get(tokenAddr.toLowerCase()) : undefined) ||
-            ''
+          console.log('[DCAT DEBUG] Price symbol resolution:', {
+            priceToken: price.token,
+            normalizedAddress,
+            priceTokenSymbol: price.tokenSymbol,
+            matchedBaseToken: baseToken,
+            mappedSymbol,
+            resolvedSymbol: symbol
+          })
 
           const priceEntry: Record<string, unknown> = {
             tokenAddress: price.token,
             tokenSymbol: symbol,
             value: price.price
           }
-          entry['oec:price'] = serializeWithVocabulary(priceEntry, [
+
+          console.log(
+            '[DCAT DEBUG] Price before serialization:',
+            JSON.stringify(priceEntry, null, 2)
+          )
+
+          const serializedPrice = serializeWithVocabulary(priceEntry, [
             'tokenAddress',
             'tokenSymbol',
             'value'
           ])
+
+          console.log(
+            '[DCAT DEBUG] Price after serialization:',
+            JSON.stringify(serializedPrice, null, 2)
+          )
+
+          entry['oec:price'] = serializedPrice
         }
+
         return entry
       }) as unknown as (typeof dcat)['oec:stats']
+
+      console.log(
+        '[DCAT DEBUG] Final DCAT stats:',
+        JSON.stringify(dcat['oec:stats'], null, 2)
+      )
     }
 
     if (Object.keys(nft).length > 0) {
