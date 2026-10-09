@@ -1757,6 +1757,15 @@ export class FindDdoHandler extends CommandHandler {
       }
       dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     } else if (stats.length > 0) {
+      const tokenSymbolByAddress = new Map<string, string>()
+      for (const ad of accessDetails) {
+        const addr = ad?.baseToken?.address
+        const sym = ad?.baseToken?.symbol
+        if (typeof addr === 'string' && typeof sym === 'string' && sym !== '') {
+          tokenSymbolByAddress.set(addr.toLowerCase(), sym)
+        }
+      }
+
       dcat['oec:stats'] = stats.map((stat: any) => {
         const entry: Record<string, unknown> = {
           'oec:serviceId': stat.serviceId,
@@ -1765,20 +1774,17 @@ export class FindDdoHandler extends CommandHandler {
         }
         const price = stat.prices?.[0]
         if (price) {
-          const tokenAddr = typeof price.token === 'string' ? price.token : undefined
+          const tokenAddr = typeof price.token === 'string' ? price.token : ''
           const symbol =
             price.tokenSymbol ||
             (tokenAddr ? tokenSymbolByAddress.get(tokenAddr.toLowerCase()) : undefined) ||
-            undefined
+            ''
 
           const priceEntry: Record<string, unknown> = {
-            tokenAddress: price.token
+            tokenAddress: price.token,
+            tokenSymbol: symbol,
+            value: price.price
           }
-          if (symbol) {
-            priceEntry.tokenSymbol = symbol
-          }
-          priceEntry.value = price.price
-
           entry['oec:price'] = serializeWithVocabulary(priceEntry, [
             'tokenAddress',
             'tokenSymbol',
