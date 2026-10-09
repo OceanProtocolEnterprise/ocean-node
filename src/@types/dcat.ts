@@ -64,6 +64,7 @@ export interface DCATCompute {
 }
 
 export interface DCATAgent {
+  '@id'?: string
   '@type': 'foaf:Agent'
   'foaf:name': string
   'foaf:mbox'?: string
@@ -76,8 +77,14 @@ export interface DCATContactPoint {
 }
 
 export interface DCATRightsStatement {
-  '@id': string
+  '@id'?: string
   '@type': 'dct:RightsStatement'
+  'dct:title'?: string
+}
+
+export interface DCATStandard {
+  '@id': string
+  '@type': 'dct:Standard'
 }
 
 export interface DCATLanguage {
@@ -117,14 +124,15 @@ export interface DCATDocument {
 export interface DCATDistribution {
   '@type': 'dcat:Distribution'
   'dcat:accessURL'?: DCATResource
+  'dcat:accessService'?: { '@id': string }
   'dcat:downloadURL'?: DCATResource
   'dct:title'?: string
   'dct:description'?: string
   'dcat:mediaType'?: DCATMediaType
-  'dcat:format'?: string
+  'oec:distributionFormat'?: string
   'dcat:byteSize'?: number
   'dcat:checksum'?: DCATChecksum
-  'dcat:landingPage'?: DCATDocument[]
+  'rdfs:seeAlso'?: DCATDocument[]
   'oec:compute'?: DCATCompute
 }
 
@@ -158,14 +166,17 @@ export interface DCATNFT {
   'oec:tokenURI'?: string
 }
 
+export interface DCATPrice {
+  'oec:tokenAddress'?: string
+  'oec:tokenSymbol'?: string
+  'oec:value'?: string
+  'oec:serviceId'?: string
+}
+
 export interface DCATStats {
   'oec:allocated'?: number
   'oec:orders'?: number
-  'oec:price'?: {
-    'oec:tokenAddress': string
-    'oec:tokenSymbol': string
-    'oec:value': string
-  }
+  'oec:price'?: DCATPrice | DCATPrice[]
 }
 
 export interface DCATDatatoken {
@@ -214,6 +225,7 @@ export interface DCATService {
 
 export interface DCATAccessDetails {
   '@type': string
+  'oec:serviceId'?: string
   'oec:addressOrId'?: string
   'oec:baseToken'?: {
     'dct:title'?: string
@@ -278,16 +290,17 @@ export interface DCATDataset {
   }
   'dct:identifier'?: string[]
   'dct:language'?: DCATLanguage[]
-  'dct:conformsTo'?: string[]
+  'dct:conformsTo'?: DCATStandard[]
   'oec:issuer'?: string
   'dct:rights'?: DCATRightsStatement
   'dct:accessRights'?: DCATRightsStatement
   'dct:type'?: string
   'prov:qualifiedAttribution'?: DCATQualifiedAttribution[]
-  'oec:accessDetails'?: DCATAccessDetails
+  'oec:accessDetails'?: DCATAccessDetails[]
   'oec:algorithm'?: DCATAlgorithm
   'oec:additionalDdos'?: DCATAdditionalDdo[]
   'oec:chainId'?: number
+  'oec:credentials'?: Record<string, unknown>
   'oec:datatokens'?: DCATDatatoken[]
   'oec:event'?: DCATEvent
   'oec:nft'?: DCATNFT

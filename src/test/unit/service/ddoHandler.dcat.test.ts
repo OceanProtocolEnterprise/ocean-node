@@ -9,6 +9,10 @@ import {
   geospatialDatasetDdo
 } from '../../data/dcatFixtures.js'
 
+// The asset DID is read from credentialSubject.id first, then the root id
+const expectedDid = (ddo: any): string => ddo?.credentialSubject?.id || ddo.id
+const clone = (ddo: any): any => JSON.parse(JSON.stringify(ddo))
+
 describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
   let handler: any
 
@@ -27,13 +31,14 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
       expect(dcat['@type']).to.equal('dcat:Dataset')
     })
 
-    it('uses the asset DID as @id (no /VC/ suffix)', () => {
-      expect(dcat['@id']).to.equal(`urn:${simpleDatasetDdo.id}`)
+    it('uses the asset DID directly as @id (no urn: prefix, no /VC/ suffix)', () => {
+      expect(dcat['@id']).to.equal(expectedDid(simpleDatasetDdo))
+      expect(dcat['@id']).to.not.match(/^urn:/)
       expect(dcat['@id']).to.not.contain('/VC/')
     })
 
     it('uses the asset DID as dct:identifier', () => {
-      expect(dcat['dct:identifier']).to.deep.equal([simpleDatasetDdo.id])
+      expect(dcat['dct:identifier']).to.deep.equal([expectedDid(simpleDatasetDdo)])
     })
 
     it('sets dct:title from metadata.name', () => {
@@ -83,6 +88,32 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
         '@value': '2026-01-01T10:00:00Z'
       })
     })
+
+    it('does NOT derive dct:temporal from created/updated', () => {
+      expect(dcat['dct:temporal']).to.equal(undefined)
+    })
+  })
+
+  describe('transformToDCAT - asset DID resolution', () => {
+    it('prefers credentialSubject.id over the root (VC) id', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      const assetDid = 'did:ope:assetdid1234'
+      ddo.id = `${assetDid}/VC/2026-02-18T23:26:19.800+01:00`
+      ddo.credentialSubject.id = assetDid
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['@id']).to.equal(assetDid)
+      expect(dcat['dct:identifier']).to.deep.equal([assetDid])
+      expect(dcat['dcat:landingPage']['@id']).to.contain(assetDid)
+      expect(dcat['dcat:landingPage']['@id']).to.not.contain('/VC/')
+      expect(dcat['oec:services'][0]['dcat:servesDataset']['@id']).to.equal(assetDid)
+    })
+
+    it('falls back to the root id when credentialSubject.id is absent', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      delete ddo.credentialSubject.id
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['@id']).to.equal(ddo.id)
+    })
   })
 
   describe('transformToDCAT - SHACL-compliant shapes', () => {
@@ -123,11 +154,118 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
     it('dcat:landingPage is a foaf:Document', () => {
       expect(dcat['dcat:landingPage']).to.have.property('@type', 'foaf:Document')
       expect(dcat['dcat:landingPage']).to.have.property('@id')
-      expect(dcat['dcat:landingPage']['@id']).to.contain(simpleDatasetDdo.id)
+      expect(dcat['dcat:landingPage']['@id']).to.contain(expectedDid(simpleDatasetDdo))
     })
 
     it('does NOT emit dct:conformsTo when there is no geo metadata', () => {
       expect(dcat['dct:conformsTo']).to.equal(undefined)
+    })
+  })
+
+  describe('transformToDCAT - license handling', () => {
+    it('uses a non-URL license name as dct:title instead of a relative @id', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      ddo.credentialSubject.metadata.license = { name: 'CC BY 4.0' }
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['dct:license']).to.deep.equal({
+        '@type': 'dct:RightsStatement',
+        'dct:title': 'CC BY 4.0'
+      })
+      expect(dcat['dct:rights']).to.deep.equal({
+        '@type': 'dct:RightsStatement',
+        'dct:title': 'CC BY 4.0'
+      })
+    })
+
+    it('takes the @id from the first licenseDocuments mirror when the name is not a URL', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      ddo.credentialSubject.metadata.license = {
+        name: 'My License',
+        licenseDocuments: [
+          { mirrors: [{ type: 'url', method: 'get', url: 'https://example.com/my.pdf' }] }
+        ]
+      }
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['dct:license']).to.deep.equal({
+        '@id': 'https://example.com/my.pdf',
+        '@type': 'dct:RightsStatement',
+        'dct:title': 'My License'
+      })
+    })
+  })
+
+  describe('transformToDCAT - mandatory / fallback fields', () => {
+    it('falls back to the title when there is no description', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      delete ddo.credentialSubject.metadata.description
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['dct:description']).to.equal(dcat['dct:title'])
+    })
+
+    it('derives dct:language from description @language when metadata.language is absent', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      delete ddo.credentialSubject.metadata.language
+      ddo.credentialSubject.metadata.description = {
+        '@value': 'Beschreibung',
+        '@language': 'de'
+      }
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['dct:language']).to.deep.equal([
+        {
+          '@id': 'http://publications.europa.eu/resource/authority/language/DEU',
+          '@type': 'dct:LinguisticSystem'
+        }
+      ])
+    })
+
+    it('only emits dct:temporal when provided in additionalInformation', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      const temporal = {
+        '@type': 'dct:PeriodOfTime',
+        'dcat:startDate': { '@type': 'xsd:dateTime', '@value': '2020-01-01T00:00:00Z' },
+        'dcat:endDate': { '@type': 'xsd:dateTime', '@value': '2020-12-31T23:59:59Z' }
+      }
+      ddo.credentialSubject.metadata.additionalInformation = {
+        ...(ddo.credentialSubject.metadata.additionalInformation || {}),
+        'dct:temporal': temporal
+      }
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['dct:temporal']).to.deep.equal(temporal)
+    })
+  })
+
+  describe('transformToDCAT - agents', () => {
+    it('uses the issuer DID as @id of the publisher when providedBy is absent', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      delete ddo.credentialSubject.metadata.providedBy
+      ddo.issuer = 'did:jwk:issuerkey'
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['dct:publisher']).to.deep.equal({
+        '@id': 'did:jwk:issuerkey',
+        '@type': 'foaf:Agent',
+        'foaf:name': 'did:jwk:issuerkey'
+      })
+      expect(dcat['oec:issuer']).to.equal('did:jwk:issuerkey')
+    })
+
+    it('uses a did:pkh identifier for the NFT owner when there is no issuer or providedBy', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      delete ddo.credentialSubject.metadata.providedBy
+      delete ddo.issuer
+      ddo.credentialSubject.chainId = 11155111
+      ddo.indexedMetadata = {
+        nft: { owner: '0xabc0000000000000000000000000000000000001' }
+      }
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['dct:publisher']['@id']).to.equal(
+        'did:pkh:eip155:11155111:0xabc0000000000000000000000000000000000001'
+      )
+      const ownerAttribution = dcat['prov:qualifiedAttribution'].find((a: any) =>
+        a['prov:hadRole']['@id'].includes('owner')
+      )
+      expect(ownerAttribution['prov:agent']['@id']).to.equal(
+        'did:pkh:eip155:11155111:0xabc0000000000000000000000000000000000001'
+      )
     })
   })
 
@@ -139,36 +277,41 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
       expect(dist['@type']).to.equal('dcat:Distribution')
     })
 
-    it('access service gets dcat:accessURL and dcat:downloadURL as rdfs:Resource', async () => {
+    it('access service gets dcat:accessURL as rdfs:Resource and no downloadURL', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
       const dist = dcat['dcat:distribution'][0]
       expect(dist['dcat:accessURL']).to.deep.equal({
         '@id': 'https://ocean-node.example.io',
         '@type': 'rdfs:Resource'
       })
-      expect(dist['dcat:downloadURL']).to.deep.equal({
-        '@id': 'https://ocean-node.example.io',
-        '@type': 'rdfs:Resource'
-      })
+      expect(dist['dcat:downloadURL']).to.equal(undefined)
     })
 
-    it('access service uses application/octet-stream media type', async () => {
+    it('does not emit a guessed dcat:mediaType', async () => {
+      const access = await handler.transformToDCAT(simpleDatasetDdo)
+      expect(access['dcat:distribution'][0]['dcat:mediaType']).to.equal(undefined)
+      const compute = await handler.transformToDCAT(computeDatasetDdo)
+      expect(compute['dcat:distribution'][0]['dcat:mediaType']).to.equal(undefined)
+    })
+
+    it('links the distribution to its DataService via dcat:accessService', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
       const dist = dcat['dcat:distribution'][0]
-      expect(dist['dcat:mediaType']).to.deep.equal({
-        '@id': 'https://www.iana.org/assignments/media-types/application/octet-stream',
-        '@type': 'dct:MediaType'
-      })
+      const svc = dcat['oec:services'][0]
+      expect(dist['dcat:accessService']).to.deep.equal({ '@id': svc['@id'] })
     })
 
-    it('compute service uses application/json media type and compute-service format', async () => {
+    it('compute service exposes oec:distributionFormat compute-service', async () => {
       const dcat = await handler.transformToDCAT(computeDatasetDdo)
       const dist = dcat['dcat:distribution'][0]
-      expect(dist['dcat:mediaType']).to.deep.equal({
-        '@id': 'https://www.iana.org/assignments/media-types/application/json',
-        '@type': 'dct:MediaType'
-      })
-      expect(dist['dcat:format']).to.equal('compute-service')
+      expect(dist['oec:distributionFormat']).to.equal('compute-service')
+      expect(dist['dcat:format']).to.equal(undefined)
+    })
+
+    it('access service with files exposes oec:distributionFormat encrypted', async () => {
+      const dcat = await handler.transformToDCAT(simpleDatasetDdo)
+      const dist = dcat['dcat:distribution'][0]
+      expect(dist['oec:distributionFormat']).to.equal('encrypted')
     })
 
     it('compute service exposes oec:compute with trusted algorithms', async () => {
@@ -182,20 +325,21 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
       ).to.deep.equal(['*'])
     })
 
-    it('dcat:checksum uses SPDX URI + xsd:hexBinary value', async () => {
+    it('does NOT fabricate a dcat:checksum from the encrypted files blob', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
       const dist = dcat['dcat:distribution'][0]
-      expect(dist['dcat:checksum']).to.deep.equal({
-        '@type': 'spdx:Checksum',
-        'spdx:algorithm': {
-          '@id': 'http://spdx.org/rdf/terms#checksumAlgorithm_sha256',
-          '@type': 'spdx:ChecksumAlgorithm'
-        },
-        'spdx:checksumValue': {
-          '@type': 'xsd:hexBinary',
-          '@value': '04' + 'a'.repeat(62)
-        }
-      })
+      expect(dist['dcat:checksum']).to.equal(undefined)
+    })
+
+    it('moves service.links to rdfs:seeAlso and never to dcat:landingPage', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      ddo.credentialSubject.services[0].links = { link_1: 'https://example.com/ref' }
+      const dcat = await handler.transformToDCAT(ddo)
+      const dist = dcat['dcat:distribution'][0]
+      expect(dist['rdfs:seeAlso']).to.deep.equal([
+        { '@id': 'https://example.com/ref', '@type': 'foaf:Document' }
+      ])
+      expect(dist['dcat:landingPage']).to.equal(undefined)
     })
 
     it('multi-service asset yields one Distribution per service', async () => {
@@ -210,15 +354,12 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
       expect(dcat['oec:services']).to.have.lengthOf(1)
     })
 
-    it('DataService has stable @id derived from service id', async () => {
+    it('DataService has a stable @id of the form <did>#service-<id>', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
       const svc = dcat['oec:services'][0]
-      expect(svc['@id']).to.equal(
-        'urn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-      )
-      expect(svc['dct:identifier']).to.equal(
-        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-      )
+      const serviceId = 'a'.repeat(64)
+      expect(svc['@id']).to.equal(`${expectedDid(simpleDatasetDdo)}#service-${serviceId}`)
+      expect(svc['dct:identifier']).to.equal(serviceId)
     })
 
     it('DataService dcat:endpointURL is rdfs:Resource', async () => {
@@ -305,6 +446,35 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
     })
   })
 
+  describe('transformToDCAT - dataset-level credentials', () => {
+    it('emits oec:credentials including vc/vp policies from the root credentials', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      ddo.credentialSubject.credentials = {
+        allow: [
+          {
+            type: 'SSIpolicy',
+            values: [
+              {
+                request_credentials: [{ format: 'jwt_vc_json', type: 'gx:LegalPerson' }],
+                vc_policies: ['not-before', 'signature'],
+                vp_policies: [{ policy: 'holder-binding' }]
+              }
+            ]
+          }
+        ],
+        deny: [],
+        match_deny: 'any'
+      }
+      const dcat = await handler.transformToDCAT(ddo)
+      const creds = dcat['oec:credentials']
+      expect(creds).to.have.property('oec:matchDeny', 'any')
+      const value = creds['oec:allow'][0]['oec:values'][0]
+      expect(value['oec:vcPolicies']).to.deep.equal(['not-before', 'signature'])
+      expect(value['oec:vpPolicies']).to.deep.equal([{ policy: 'holder-binding' }])
+      expect(value['oec:requestCredentials']).to.be.an('array')
+    })
+  })
+
   describe('transformToDCAT - algorithm asset', () => {
     it('sets dct:type to algorithm', async () => {
       const dcat = await handler.transformToDCAT(algorithmAssetDdo)
@@ -357,14 +527,22 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
       )
     })
 
-    it('emits dct:conformsTo with INSPIRE + GeoDCAT-AP when geo metadata present', async () => {
+    it('emits dct:conformsTo as dct:Standard nodes with INSPIRE + GeoDCAT-AP when geo metadata present', async () => {
       const dcat = await handler.transformToDCAT(geospatialDatasetDdo)
-      expect(dcat['dct:conformsTo']).to.include(
-        'http://inspire.ec.europa.eu/schemas/inspire_vs/1.0'
-      )
-      expect(dcat['dct:conformsTo']).to.include(
-        'https://semiceu.github.io/GeoDCAT-AP/releases/3.0.0/'
-      )
+      expect(dcat['dct:conformsTo']).to.deep.include({
+        '@id': 'http://inspire.ec.europa.eu/schemas/inspire_vs/1.0',
+        '@type': 'dct:Standard'
+      })
+      expect(dcat['dct:conformsTo']).to.deep.include({
+        '@id': 'https://semiceu.github.io/GeoDCAT-AP/releases/3.0.0/',
+        '@type': 'dct:Standard'
+      })
+    })
+
+    it('does not emit duplicate dct:conformsTo entries', async () => {
+      const dcat = await handler.transformToDCAT(geospatialDatasetDdo)
+      const ids = dcat['dct:conformsTo'].map((s: any) => s['@id'])
+      expect(new Set(ids).size).to.equal(ids.length)
     })
   })
 
@@ -385,44 +563,176 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
   })
 
   describe('transformToDCAT - stats source preference', () => {
-    it('uses credentialSubject.stats when present', async () => {
+    it('uses credentialSubject.stats when present, without inventing values', async () => {
       const dcat = await handler.transformToDCAT(computeDatasetDdo)
-      expect(dcat['oec:stats']).to.deep.equal({
-        'oec:allocated': 0,
-        'oec:orders': 0,
-        'oec:price': {
-          'oec:tokenAddress': '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4',
-          'oec:tokenSymbol': 'EURC',
-          'oec:value': '2'
-        }
+      const source: any = (computeDatasetDdo as any).credentialSubject.stats
+      const stats: any = dcat['oec:stats']
+      expect(stats['oec:price']).to.deep.equal({
+        'oec:tokenAddress': '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4',
+        'oec:tokenSymbol': 'EURC',
+        'oec:value': '2'
       })
+      if (source.orders !== undefined) {
+        expect(stats['oec:orders']).to.equal(source.orders)
+      } else {
+        expect(stats['oec:orders']).to.equal(undefined)
+      }
+      if (source.allocated !== undefined) {
+        expect(stats['oec:allocated']).to.equal(source.allocated)
+      } else {
+        expect(stats['oec:allocated']).to.equal(undefined)
+      }
     })
 
-    it('falls back to indexedMetadata.stats when credentialSubject.stats missing', async () => {
+    it('falls back to indexedMetadata.stats and never emits an invented oec:allocated', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
-      expect(dcat['oec:stats']).to.have.property('oec:allocated', 0)
       expect(dcat['oec:stats']).to.have.property('oec:orders', 0)
+      expect(dcat['oec:stats']).to.not.have.property('oec:allocated')
+    })
+
+    it('emits one oec:price per service price, resolving the symbol from accessDetails', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      delete ddo.credentialSubject.stats
+      const svc = ddo.credentialSubject.services[0]
+      ddo.indexedMetadata = {
+        ...(ddo.indexedMetadata || {}),
+        stats: [
+          {
+            datatokenAddress: svc.datatokenAddress,
+            serviceId: svc.id,
+            orders: 3,
+            prices: [
+              {
+                type: 'fixedrate',
+                price: '1.0',
+                token: '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4'
+              }
+            ]
+          },
+          {
+            datatokenAddress: '0x2222222222222222222222222222222222222222',
+            serviceId: 'other-service',
+            orders: 1,
+            prices: [
+              {
+                type: 'fixedrate',
+                price: '2.0',
+                token: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'
+              }
+            ]
+          }
+        ]
+      }
+      ddo.accessDetails = [
+        {
+          type: 'fixed',
+          price: '1.0',
+          baseToken: {
+            address: '0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4',
+            name: 'EURC',
+            symbol: 'EURC',
+            decimals: 6
+          },
+          datatoken: {
+            address: svc.datatokenAddress,
+            name: 'Access Token',
+            symbol: 'OEAT'
+          }
+        },
+        {
+          type: 'fixed',
+          price: '2.0',
+          baseToken: {
+            address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+            name: 'USDC',
+            symbol: 'USDC',
+            decimals: 6
+          },
+          datatoken: {
+            address: '0x2222222222222222222222222222222222222222',
+            name: 'Access Token',
+            symbol: 'OEAT'
+          }
+        }
+      ]
+      const dcat = await handler.transformToDCAT(ddo)
+      const stats: any = dcat['oec:stats']
+      expect(stats['oec:orders']).to.equal(4)
+      expect(stats['oec:price']).to.be.an('array').with.lengthOf(2)
+      expect(stats['oec:price'][0]).to.include({
+        'oec:tokenSymbol': 'EURC',
+        'oec:value': '1.0',
+        'oec:serviceId': svc.id
+      })
+      expect(stats['oec:price'][1]).to.include({
+        'oec:tokenSymbol': 'USDC',
+        'oec:value': '2.0'
+      })
+    })
+  })
+
+  describe('transformToDCAT - access details', () => {
+    it('emits one oec:accessDetails entry per access detail, linked to its service', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      const svc = ddo.credentialSubject.services[0]
+      ddo.accessDetails = [
+        {
+          type: 'fixed',
+          price: '1.0',
+          addressOrId: '0xabc',
+          isPurchasable: true,
+          baseToken: { address: '0x01', name: 'EURC', symbol: 'EURC', decimals: 6 },
+          datatoken: {
+            address: svc.datatokenAddress,
+            name: 'Access Token',
+            symbol: 'OEAT'
+          }
+        },
+        {
+          type: 'fixed',
+          price: '2.0',
+          addressOrId: '0xdef',
+          isPurchasable: true,
+          baseToken: { address: '0x02', name: 'USDC', symbol: 'USDC', decimals: 6 },
+          datatoken: { address: '0xdeadbeef', name: 'Access Token', symbol: 'OEAT' }
+        }
+      ]
+      const dcat = await handler.transformToDCAT(ddo)
+      const details: any[] = dcat['oec:accessDetails']
+      expect(details).to.be.an('array').with.lengthOf(2)
+      expect(details[0]).to.have.property('oec:serviceId', svc.id)
+      expect(details[0]).to.have.property('oec:price', '1.0')
+      expect(details[1]).to.not.have.property('oec:serviceId')
+      expect(details[1]['oec:baseToken']).to.have.property('oec:symbol', 'USDC')
+    })
+
+    it('omits oec:accessDetails when the DDO has none', async () => {
+      const ddo = clone(simpleDatasetDdo)
+      delete ddo.accessDetails
+      delete ddo.credentialSubject.accessDetails
+      const dcat = await handler.transformToDCAT(ddo)
+      expect(dcat['oec:accessDetails']).to.equal(undefined)
     })
   })
 
   describe('transformToDCAT - edge cases', () => {
     it('handles missing metadata.additionalInformation', async () => {
-      const ddo = JSON.parse(JSON.stringify(simpleDatasetDdo))
+      const ddo = clone(simpleDatasetDdo)
       delete ddo.credentialSubject.metadata.additionalInformation
       const dcat = await handler.transformToDCAT(ddo)
-      expect(dcat['@id']).to.equal(`urn:${simpleDatasetDdo.id}`)
+      expect(dcat['@id']).to.equal(expectedDid(simpleDatasetDdo))
       expect(dcat['dct:conformsTo']).to.equal(undefined)
     })
 
     it('handles empty tags array', async () => {
-      const ddo = JSON.parse(JSON.stringify(simpleDatasetDdo))
+      const ddo = clone(simpleDatasetDdo)
       ddo.credentialSubject.metadata.tags = []
       const dcat = await handler.transformToDCAT(ddo)
       expect(dcat['dcat:keyword']).to.deep.equal(['access'])
     })
 
     it('handles missing metadata.license', async () => {
-      const ddo = JSON.parse(JSON.stringify(simpleDatasetDdo))
+      const ddo = clone(simpleDatasetDdo)
       delete ddo.credentialSubject.metadata.license
       const dcat = await handler.transformToDCAT(ddo)
       expect(dcat['dct:license']).to.equal(undefined)
@@ -430,7 +740,7 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
     })
 
     it('handles empty services array', async () => {
-      const ddo = JSON.parse(JSON.stringify(simpleDatasetDdo))
+      const ddo = clone(simpleDatasetDdo)
       ddo.credentialSubject.services = []
       const dcat = await handler.transformToDCAT(ddo)
       expect(dcat['dcat:distribution']).to.equal(undefined)
@@ -451,7 +761,7 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
         nftAddress: '0xflat'
       }
       const dcat = await handler.transformToDCAT(flatDdo)
-      expect(dcat['@id']).to.equal('urn:did:ope:flat')
+      expect(dcat['@id']).to.equal('did:ope:flat')
       expect(dcat['dct:title']).to.equal('Flat')
     })
   })
@@ -459,6 +769,7 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
   describe('transformToDCAT - required SHACL fields always present', () => {
     const requiredFields = [
       'dct:title',
+      'dct:description',
       'dct:publisher',
       'dcat:contactPoint',
       'dct:language',

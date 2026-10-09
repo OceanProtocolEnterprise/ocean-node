@@ -109,6 +109,13 @@ export const OE_VOCABULARY: Record<string, OECTerm> = {
     description: 'Type of the service: "access" or "compute".',
     range: 'xsd:string'
   },
+  distributionFormat: {
+    name: 'distributionFormat',
+    label: 'Distribution Format',
+    description:
+      'OE-specific kind of a distribution, e.g. "compute-service" or "encrypted".',
+    range: 'xsd:string'
+  },
   datatokenAddress: {
     name: 'datatokenAddress',
     label: 'Datatoken Address',
@@ -550,6 +557,10 @@ export const OE_OBJECT_SHAPES = {
   AlgorithmContainer: ['entrypoint', 'image', 'tag', 'checksum']
 } as const
 
+function escapeTurtleString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
+}
+
 export function oecVocabularyToRdf(
   baseUri = 'https://oceanenterprise.io/vocab/'
 ): string {
@@ -559,10 +570,25 @@ export function oecVocabularyToRdf(
   lines.push('@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .')
   lines.push('@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .')
   lines.push('')
+
+  // Declare every oec: class used as a range
+  const classes = new Set<string>()
+  for (const term of Object.values(OE_VOCABULARY)) {
+    if (term.range && term.range.startsWith('oec:')) {
+      classes.add(term.range.substring('oec:'.length))
+    }
+  }
+  for (const cls of classes) {
+    lines.push(`oec:${cls} a rdfs:Class .`)
+  }
+  lines.push('')
+
   for (const term of Object.values(OE_VOCABULARY)) {
     lines.push(`oec:${term.name} a rdf:Property ;`)
-    lines.push(`  rdfs:label "${term.label}" ;`)
-    lines.push(`  rdfs:comment "${term.description}"${term.range ? ' ;' : ' .'}`)
+    lines.push(`  rdfs:label "${escapeTurtleString(term.label)}" ;`)
+    lines.push(
+      `  rdfs:comment "${escapeTurtleString(term.description)}"${term.range ? ' ;' : ' .'}`
+    )
     if (term.range) {
       lines.push(`  rdfs:range ${term.range} .`)
     }

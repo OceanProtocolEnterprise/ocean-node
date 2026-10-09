@@ -43,6 +43,7 @@ describe('********** OE Vocabulary Unit Tests', () => {
         'services',
         'additionalDdos',
         'serviceType',
+        'distributionFormat',
         'datatokenAddress',
         'files',
         'timeout',
@@ -108,6 +109,10 @@ describe('********** OE Vocabulary Unit Tests', () => {
       for (const term of required) {
         expect(OE_VOCABULARY[term], `missing OE term: ${term}`).to.not.equal(undefined)
       }
+    })
+
+    it('distributionFormat is a string-ranged term', () => {
+      expect(OE_VOCABULARY.distributionFormat.range).to.equal('xsd:string')
     })
   })
 
@@ -194,6 +199,40 @@ describe('********** OE Vocabulary Unit Tests', () => {
     it('accepts a custom base URI', () => {
       const rdf = oecVocabularyToRdf('https://example.com/vocab/')
       expect(rdf).to.include('@prefix oec: <https://example.com/vocab/>')
+    })
+
+    it('escapes double quotes inside labels and comments', () => {
+      const rdf = oecVocabularyToRdf()
+      // serviceType description contains "access" or "compute"
+      expect(rdf).to.include('Type of the service: \\"access\\" or \\"compute\\".')
+      // every label/comment literal must contain only escaped quotes
+      const literal = /^ {2}rdfs:(label|comment) "((?:[^"\\]|\\.)*)"( ;| \.)$/
+      for (const line of rdf.split('\n')) {
+        if (/^ {2}rdfs:(label|comment) /.test(line)) {
+          expect(line, `unparseable Turtle literal: ${line}`).to.match(literal)
+        }
+      }
+    })
+
+    it('declares every oec: class used as a range', () => {
+      const rdf = oecVocabularyToRdf()
+      const classes = new Set<string>()
+      for (const term of Object.values(OE_VOCABULARY)) {
+        if (term.range?.startsWith('oec:')) {
+          classes.add(term.range.substring('oec:'.length))
+        }
+      }
+      expect(classes.size).to.be.greaterThan(0)
+      for (const cls of classes) {
+        expect(rdf, `class oec:${cls} not declared`).to.include(
+          `oec:${cls} a rdfs:Class .`
+        )
+      }
+    })
+
+    it('emits the distributionFormat term', () => {
+      const rdf = oecVocabularyToRdf()
+      expect(rdf).to.include('oec:distributionFormat a rdf:Property')
     })
   })
 

@@ -58,6 +58,7 @@ import {
   DCATService,
   DCATDatatoken,
   DCATAccessDetails,
+  DCATRightsStatement,
   ChecksumAlgorithm
 } from '../../../@types/dcat.js'
 import { OE_VOCABULARY, OE_OBJECT_SHAPES } from '../../../@types/oecVocabulary.js'
@@ -1032,7 +1033,76 @@ export class FindDdoHandler extends CommandHandler {
     }
   }
 
-  private formatDistributions(ddo: any): DCATDistribution[] {
+  private serviceIri(assetDid: string, serviceId: string): string {
+    return assetDid ? `${assetDid}#service-${serviceId}` : `#service-${serviceId}`
+  }
+
+  private toAbsoluteUrl(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined
+    const trimmed = value.trim()
+    if (trimmed === '') return undefined
+    try {
+      const parsed = new URL(trimmed)
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+        ? trimmed
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private toRightsStatement(license: any): DCATRightsStatement | undefined {
+    if (!license) return undefined
+    const name =
+      typeof license === 'string'
+        ? license
+        : typeof license.name === 'string'
+          ? license.name
+          : ''
+    const trimmed = name.trim()
+    const nameUrl = this.toAbsoluteUrl(trimmed)
+    const url =
+      nameUrl ??
+      (typeof license === 'object'
+        ? this.toAbsoluteUrl(license?.licenseDocuments?.[0]?.mirrors?.[0]?.url)
+        : undefined)
+
+    if (url) {
+      const statement: DCATRightsStatement = {
+        '@id': url,
+        '@type': 'dct:RightsStatement'
+      }
+      if (trimmed !== '' && !nameUrl) {
+        statement['dct:title'] = trimmed
+      }
+      return statement
+    }
+    if (trimmed !== '') {
+      return { '@type': 'dct:RightsStatement', 'dct:title': trimmed }
+    }
+    return undefined
+  }
+
+  private issuerAgent(issuer: string): DCATAgent {
+    return {
+      '@id': issuer,
+      '@type': 'foaf:Agent',
+      'foaf:name': issuer
+    }
+  }
+
+  private ownerAgent(owner: string, chainId?: unknown): DCATAgent {
+    const agent: DCATAgent = {
+      '@type': 'foaf:Agent',
+      'foaf:name': `NFT Owner: ${owner}`
+    }
+    if (chainId !== undefined && chainId !== null && String(chainId) !== '') {
+      agent['@id'] = `did:pkh:eip155:${chainId}:${owner}`
+    }
+    return agent
+  }
+
+  private formatDistributions(ddo: any, assetDid: string = ''): DCATDistribution[] {
     const distributions: DCATDistribution[] = []
     const credentialSubject = ddo?.credentialSubject || ddo || {}
     const services = Array.isArray(credentialSubject.services)
@@ -1060,6 +1130,17 @@ export class FindDdoHandler extends CommandHandler {
         }
       }
 
+      const serviceId =
+        typeof service.id === 'string' && service.id.trim() !== ''
+          ? service.id.trim()
+          : undefined
+
+      if (serviceId) {
+        distribution['dcat:accessService'] = {
+          '@id': this.serviceIri(assetDid, serviceId)
+        }
+      }
+
       if (service.name) {
         distribution['dct:title'] = service.name
       }
@@ -1072,19 +1153,8 @@ export class FindDdoHandler extends CommandHandler {
         }
       }
 
-      if (service.type === 'access' && endpoint) {
-        distribution['dcat:downloadURL'] = {
-          '@id': endpoint,
-          '@type': 'rdfs:Resource'
-        }
-      }
-
       if (service.type === 'compute') {
-        distribution['dcat:mediaType'] = {
-          '@id': 'https://www.iana.org/assignments/media-types/application/json',
-          '@type': 'dct:MediaType'
-        }
-        distribution['dcat:format'] = 'compute-service'
+        distribution['oec:distributionFormat'] = 'compute-service'
 
         if (service.compute) {
           distribution['oec:compute'] = {
@@ -1111,45 +1181,23 @@ export class FindDdoHandler extends CommandHandler {
               : undefined
           }
         }
-      } else if (service.type === 'access') {
-        distribution['dcat:mediaType'] = {
-          '@id': 'https://www.iana.org/assignments/media-types/application/octet-stream',
-          '@type': 'dct:MediaType'
-        }
       }
 
       if (service.files) {
-        distribution['dcat:format'] = distribution['dcat:format'] || 'encrypted'
-
-        const filesStr = service.files.startsWith('0x')
-          ? service.files.substring(2)
-          : service.files
-
-        if (filesStr.length >= 64) {
-          distribution['dcat:checksum'] = {
-            '@type': 'spdx:Checksum',
-            'spdx:algorithm': {
-              '@id': 'http://spdx.org/rdf/terms#checksumAlgorithm_sha256',
-              '@type': 'spdx:ChecksumAlgorithm'
-            },
-            'spdx:checksumValue': {
-              '@type': 'xsd:hexBinary',
-              '@value': filesStr.substring(0, 64)
-            }
-          }
-        }
+        distribution['oec:distributionFormat'] =
+          distribution['oec:distributionFormat'] || 'encrypted'
       }
 
       if (service.links && typeof service.links === 'object') {
-        const landingPages: DCATDocument[] = Object.values(service.links)
+        const links: DCATDocument[] = Object.values(service.links)
           .filter((value): value is string => typeof value === 'string')
           .map((url) => ({
             '@id': url,
             '@type': 'foaf:Document' as const
           }))
 
-        if (landingPages.length > 0) {
-          distribution['dcat:landingPage'] = landingPages
+        if (links.length > 0) {
+          distribution['rdfs:seeAlso'] = links
         }
       }
 
@@ -1162,7 +1210,8 @@ export class FindDdoHandler extends CommandHandler {
   private formatQualifiedAttribution(
     metadata: any,
     nftOwner?: string,
-    issuer?: string
+    issuer?: string,
+    chainId?: unknown
   ): DCATQualifiedAttribution[] {
     const attributions: DCATQualifiedAttribution[] = []
 
@@ -1199,10 +1248,7 @@ export class FindDdoHandler extends CommandHandler {
     } else if (issuer && issuer.trim() !== '') {
       attributions.push({
         '@type': 'prov:Attribution',
-        'prov:agent': {
-          '@type': 'foaf:Agent',
-          'foaf:name': issuer
-        },
+        'prov:agent': this.issuerAgent(issuer),
         'prov:hadRole': {
           '@id': 'http://inspire.ec.europa.eu/role/author',
           '@type': 'dct:AgentRole'
@@ -1211,10 +1257,7 @@ export class FindDdoHandler extends CommandHandler {
     } else if (nftOwner && nftOwner.trim() !== '') {
       attributions.push({
         '@type': 'prov:Attribution',
-        'prov:agent': {
-          '@type': 'foaf:Agent',
-          'foaf:name': `NFT Owner: ${nftOwner}`
-        },
+        'prov:agent': this.ownerAgent(nftOwner, chainId),
         'prov:hadRole': {
           '@id': 'http://inspire.ec.europa.eu/role/owner',
           '@type': 'dct:AgentRole'
@@ -1237,28 +1280,6 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     return attributions
-  }
-
-  private formatTemporalCoverage(metadata: any): DCATTemporal | undefined {
-    if (!metadata.created && !metadata.updated) {
-      return undefined
-    }
-
-    return {
-      '@type': 'dct:PeriodOfTime',
-      'dcat:startDate': metadata.created
-        ? {
-            '@type': 'xsd:dateTime',
-            '@value': metadata.created
-          }
-        : undefined,
-      'dcat:endDate': metadata.updated
-        ? {
-            '@type': 'xsd:dateTime',
-            '@value': metadata.updated
-          }
-        : undefined
-    }
   }
 
   private getChecksumAlgorithm(algorithm?: string): ChecksumAlgorithm {
@@ -1297,14 +1318,16 @@ export class FindDdoHandler extends CommandHandler {
     const event = indexedMetadata.event || credentialSubject.event || ddoCopy.event || {}
     const issuer = typeof ddoCopy.issuer === 'string' ? ddoCopy.issuer.trim() : ''
 
+    // The asset DID lives in credentialSubject.id; the root id may become the VC id
     const assetDid =
-      typeof ddoCopy.id === 'string' && ddoCopy.id.trim() !== ''
-        ? ddoCopy.id.trim()
-        : typeof credentialSubject.id === 'string' && credentialSubject.id.trim() !== ''
-          ? credentialSubject.id.trim()
+      typeof credentialSubject.id === 'string' && credentialSubject.id.trim() !== ''
+        ? credentialSubject.id.trim()
+        : typeof ddoCopy.id === 'string' && ddoCopy.id.trim() !== ''
+          ? ddoCopy.id.trim()
           : ''
 
-    const datasetId = assetDid ? `urn:${assetDid}` : ''
+    // A DID is already a valid IRI, so it is used directly (no "urn:" prefix)
+    const datasetId = assetDid
     const chainId = credentialSubject.chainId ?? ddoCopy.chainId
     const nftAddress = credentialSubject.nftAddress ?? ddoCopy.nftAddress
     const datatokens = Array.isArray(credentialSubject.datatokens)
@@ -1317,6 +1340,12 @@ export class FindDdoHandler extends CommandHandler {
       ? ddoCopy.additionalDdos
       : Array.isArray(credentialSubject.additionalDdos)
         ? credentialSubject.additionalDdos
+        : []
+
+    const accessDetails = Array.isArray(ddoCopy.accessDetails)
+      ? ddoCopy.accessDetails
+      : Array.isArray(credentialSubject.accessDetails)
+        ? credentialSubject.accessDetails
         : []
 
     const config = await getConfiguration()
@@ -1362,6 +1391,11 @@ export class FindDdoHandler extends CommandHandler {
       } else if (typeof metadata.description === 'string') {
         dcat['dct:description'] = metadata.description
       }
+    }
+
+    // dct:description is mandatory in DCAT-AP: fall back to the title
+    if (!dcat['dct:description'] && dcat['dct:title']) {
+      dcat['dct:description'] = dcat['dct:title']
     }
 
     if (Array.isArray(metadata.tags) && metadata.tags.length > 0) {
@@ -1412,15 +1446,9 @@ export class FindDdoHandler extends CommandHandler {
         'foaf:name': metadata.providedBy.trim()
       }
     } else if (issuer !== '') {
-      dcat['dct:publisher'] = {
-        '@type': 'foaf:Agent',
-        'foaf:name': issuer
-      }
+      dcat['dct:publisher'] = this.issuerAgent(issuer)
     } else if (typeof nft.owner === 'string' && nft.owner.trim() !== '') {
-      dcat['dct:publisher'] = {
-        '@type': 'foaf:Agent',
-        'foaf:name': `NFT Owner: ${nft.owner}`
-      }
+      dcat['dct:publisher'] = this.ownerAgent(nft.owner, chainId)
     }
 
     if (
@@ -1452,16 +1480,9 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     if (metadata.license) {
-      const licenseValue =
-        typeof metadata.license === 'object'
-          ? metadata.license.name || metadata.license
-          : metadata.license
-
-      if (typeof licenseValue === 'string' && licenseValue.trim() !== '') {
-        dcat['dct:license'] = {
-          '@id': licenseValue.trim(),
-          '@type': 'dct:RightsStatement'
-        }
+      const licenseStatement = this.toRightsStatement(metadata.license)
+      if (licenseStatement) {
+        dcat['dct:license'] = licenseStatement
       }
     }
 
@@ -1498,6 +1519,12 @@ export class FindDdoHandler extends CommandHandler {
           dcat['dcat:centroid'] = spatial['dcat:centroid']
         }
       }
+    }
+
+    // dct:temporal is the period the DATA covers, so it is only taken from
+    // additionalInformation (never derived from created/updated)
+    if (additionalInformation['dct:temporal']) {
+      dcat['dct:temporal'] = additionalInformation['dct:temporal'] as DCATTemporal
     }
 
     if (additionalInformation['dcat:theme']) {
@@ -1563,7 +1590,13 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     if (conformsTo.length > 0) {
-      dcat['dct:conformsTo'] = conformsTo
+      // DCAT-AP expects dct:conformsTo values to be dct:Standard nodes, not plain strings
+      dcat['dct:conformsTo'] = Array.from(
+        new Set(conformsTo.filter((uri) => typeof uri === 'string' && uri.trim() !== ''))
+      ).map((uri) => ({
+        '@id': uri,
+        '@type': 'dct:Standard' as const
+      }))
     }
 
     if (baseUrl && assetDid) {
@@ -1573,13 +1606,16 @@ export class FindDdoHandler extends CommandHandler {
       }
     }
 
-    const distributions = this.formatDistributions({
-      ...ddoCopy,
-      credentialSubject: {
-        ...credentialSubject,
-        services
-      }
-    })
+    const distributions = this.formatDistributions(
+      {
+        ...ddoCopy,
+        credentialSubject: {
+          ...credentialSubject,
+          services
+        }
+      },
+      assetDid
+    )
 
     if (distributions.length > 0) {
       dcat['dcat:distribution'] = distributions
@@ -1591,20 +1627,28 @@ export class FindDdoHandler extends CommandHandler {
       dcat['oec:services'] = formattedServices
     }
 
-    const temporal = this.formatTemporalCoverage(metadata)
-    if (temporal) {
-      dcat['dct:temporal'] = temporal
-    }
-
-    const attributions = this.formatQualifiedAttribution(metadata, nft.owner, issuer)
+    const attributions = this.formatQualifiedAttribution(
+      metadata,
+      nft.owner,
+      issuer,
+      chainId
+    )
     if (attributions.length > 0) {
       dcat['prov:qualifiedAttribution'] = attributions
     }
 
-    if (metadata.language) {
-      const languages = Array.isArray(metadata.language)
-        ? metadata.language
-        : [metadata.language]
+    const descriptionLanguage =
+      metadata.description &&
+      typeof metadata.description === 'object' &&
+      typeof metadata.description['@language'] === 'string'
+        ? metadata.description['@language']
+        : undefined
+    const metadataLanguage = metadata.language || descriptionLanguage
+
+    if (metadataLanguage) {
+      const languages = Array.isArray(metadataLanguage)
+        ? metadataLanguage
+        : [metadataLanguage]
 
       const languageMap: Record<string, string> = {
         en: 'http://publications.europa.eu/resource/authority/language/ENG',
@@ -1637,14 +1681,9 @@ export class FindDdoHandler extends CommandHandler {
     }
 
     if (metadata.license) {
-      const rightsValue =
-        typeof metadata.license === 'string' ? metadata.license : metadata.license?.name
-
-      if (typeof rightsValue === 'string' && rightsValue.trim() !== '') {
-        dcat['dct:rights'] = {
-          '@id': rightsValue.trim(),
-          '@type': 'dct:RightsStatement'
-        }
+      const rightsStatement = this.toRightsStatement(metadata.license)
+      if (rightsStatement) {
+        dcat['dct:rights'] = rightsStatement
       }
     }
 
@@ -1699,6 +1738,12 @@ export class FindDdoHandler extends CommandHandler {
       'oec:state': Boolean(purgatory.state)
     }
 
+    // Dataset-level credentials (including vc_policies / vp_policies)
+    const datasetCredentials = credentialSubject.credentials || ddoCopy.credentials
+    if (datasetCredentials && typeof datasetCredentials === 'object') {
+      dcat['oec:credentials'] = this.formatCredentialsForDCAT(datasetCredentials)
+    }
+
     if (additionalDdos.length > 0) {
       dcat['oec:additionalDdos'] = additionalDdos
     }
@@ -1714,10 +1759,7 @@ export class FindDdoHandler extends CommandHandler {
       }
       dcat['prov:qualifiedAttribution'].push({
         '@type': 'prov:Attribution',
-        'prov:agent': {
-          '@type': 'foaf:Agent',
-          'foaf:name': `NFT Owner: ${nft.owner}`
-        },
+        'prov:agent': this.ownerAgent(nft.owner, chainId),
         'prov:hadRole': {
           '@id': 'http://inspire.ec.europa.eu/role/owner',
           '@type': 'dct:AgentRole'
@@ -1728,9 +1770,12 @@ export class FindDdoHandler extends CommandHandler {
     const csStats = credentialSubject.stats || ddoCopy.stats
 
     if (csStats) {
-      const statsOut: Record<string, unknown> = {
-        'oec:allocated': csStats.allocated ?? 0,
-        'oec:orders': csStats.orders ?? 0
+      const statsOut: Record<string, unknown> = {}
+      if (csStats.allocated !== undefined && csStats.allocated !== null) {
+        statsOut['oec:allocated'] = csStats.allocated
+      }
+      if (csStats.orders !== undefined && csStats.orders !== null) {
+        statsOut['oec:orders'] = csStats.orders
       }
       if (csStats.price) {
         statsOut['oec:price'] = {
@@ -1744,21 +1789,43 @@ export class FindDdoHandler extends CommandHandler {
         (sum: number, stat: any) => sum + (stat.orders || 0),
         0
       )
+      // No invented values: only the real order total is emitted (no "allocated")
       const statsOut: Record<string, unknown> = {
-        'oec:allocated': totalOrders,
         'oec:orders': totalOrders
       }
 
-      const firstPrice = stats[0]?.prices?.[0]
-      if (firstPrice) {
-        statsOut['oec:price'] = serializeWithVocabulary(
-          {
-            tokenAddress: firstPrice.token,
-            tokenSymbol: firstPrice.tokenSymbol || 'EURC',
-            value: firstPrice.price
-          },
-          ['tokenAddress', 'tokenSymbol', 'value']
-        )
+      // One price entry per service price, with the symbol resolved from accessDetails
+      const priceEntries: Array<Record<string, unknown>> = []
+      for (const stat of stats) {
+        const statPrices = Array.isArray(stat?.prices) ? stat.prices : []
+        for (const price of statPrices) {
+          const tokenAddress = typeof price?.token === 'string' ? price.token : undefined
+          const baseToken = tokenAddress
+            ? accessDetails.find(
+                (detail: any) =>
+                  typeof detail?.baseToken?.address === 'string' &&
+                  detail.baseToken.address.toLowerCase() === tokenAddress.toLowerCase()
+              )?.baseToken
+            : undefined
+          priceEntries.push(
+            serializeWithVocabulary(
+              {
+                tokenAddress,
+                tokenSymbol: price.tokenSymbol || baseToken?.symbol,
+                value:
+                  price.price !== undefined && price.price !== null
+                    ? String(price.price)
+                    : undefined,
+                serviceId: stat.serviceId
+              },
+              ['tokenAddress', 'tokenSymbol', 'value', 'serviceId']
+            )
+          )
+        }
+      }
+
+      if (priceEntries.length > 0) {
+        statsOut['oec:price'] = priceEntries
       }
       dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     }
@@ -1787,20 +1854,72 @@ export class FindDdoHandler extends CommandHandler {
       } as unknown as (typeof dcat)['oec:event']
     }
 
-    const accessDetails = Array.isArray(ddoCopy.accessDetails)
-      ? ddoCopy.accessDetails
-      : Array.isArray(credentialSubject.accessDetails)
-        ? credentialSubject.accessDetails
-        : []
-
     if (accessDetails.length > 0) {
-      dcat['oec:accessDetails'] = this.formatAccessDetails(
-        accessDetails[0]
-      ) as unknown as (typeof dcat)['oec:accessDetails']
+      dcat['oec:accessDetails'] = accessDetails
+        .map((detail: any) => this.formatAccessDetails(detail, services))
+        .filter(Boolean)
     }
 
     CORE_LOGGER.debug(`[DCAT] Transformed DCAT: ${JSON.stringify(dcat, null, 2)}`)
     return dcat
+  }
+
+  private formatCredentialsForDCAT(credentials: any): Record<string, unknown> {
+    return {
+      ...serializeWithVocabulary(normalizeCredentialKeys(credentials), ['matchDeny']),
+      ...(Array.isArray(credentials.allow)
+        ? {
+            'oec:allow': credentials.allow.map((rule: any) => ({
+              ...serializeWithVocabulary(normalizeCredentialKeys(rule), [
+                'type',
+                'requestCredentials',
+                'vcPolicies',
+                'vpPolicies'
+              ]),
+              ...(Array.isArray(rule.values)
+                ? {
+                    'oec:values': rule.values.map((v: any) =>
+                      v && typeof v === 'object'
+                        ? serializeWithVocabulary(normalizeCredentialKeys(v), [
+                            'address',
+                            'requestCredentials',
+                            'vcPolicies',
+                            'vpPolicies'
+                          ])
+                        : { 'oec:value': v }
+                    )
+                  }
+                : {})
+            }))
+          }
+        : {}),
+      ...(Array.isArray(credentials.deny)
+        ? {
+            'oec:deny': credentials.deny.map((rule: any) => ({
+              ...serializeWithVocabulary(normalizeCredentialKeys(rule), [
+                'type',
+                'requestCredentials',
+                'vcPolicies',
+                'vpPolicies'
+              ]),
+              ...(Array.isArray(rule.values)
+                ? {
+                    'oec:values': rule.values.map((v: any) =>
+                      v && typeof v === 'object'
+                        ? serializeWithVocabulary(normalizeCredentialKeys(v), [
+                            'address',
+                            'requestCredentials',
+                            'vcPolicies',
+                            'vpPolicies'
+                          ])
+                        : { 'oec:value': v }
+                    )
+                  }
+                : {})
+            }))
+          }
+        : {})
+    }
   }
 
   private formatServicesForDCAT(services: any[], datasetId?: string): DCATService[] {
@@ -1808,11 +1927,8 @@ export class FindDdoHandler extends CommandHandler {
       return []
     }
 
-    const normalizedDatasetId = datasetId
-      ? datasetId.startsWith('urn:')
-        ? datasetId
-        : `urn:${datasetId}`
-      : undefined
+    // The dataset id is a DID (valid IRI), used as-is
+    const normalizedDatasetId = datasetId || undefined
 
     return services
       .filter((service) => service && typeof service === 'object')
@@ -1827,7 +1943,7 @@ export class FindDdoHandler extends CommandHandler {
         }
 
         if (serviceId) {
-          formattedService['@id'] = `urn:${serviceId}`
+          formattedService['@id'] = this.serviceIri(datasetId || '', serviceId)
           formattedService['dct:identifier'] = serviceId
         }
 
@@ -1927,63 +2043,9 @@ export class FindDdoHandler extends CommandHandler {
         }
 
         if (service.credentials !== undefined && service.credentials !== null) {
-          formattedService['oec:credentials'] = {
-            ...serializeWithVocabulary(normalizeCredentialKeys(service.credentials), [
-              'matchDeny'
-            ]),
-            ...(Array.isArray(service.credentials.allow)
-              ? {
-                  'oec:allow': service.credentials.allow.map((rule: any) => ({
-                    ...serializeWithVocabulary(normalizeCredentialKeys(rule), [
-                      'type',
-                      'requestCredentials',
-                      'vcPolicies',
-                      'vpPolicies'
-                    ]),
-                    ...(Array.isArray(rule.values)
-                      ? {
-                          'oec:values': rule.values.map((v: any) =>
-                            v && typeof v === 'object'
-                              ? serializeWithVocabulary(normalizeCredentialKeys(v), [
-                                  'address',
-                                  'requestCredentials',
-                                  'vcPolicies',
-                                  'vpPolicies'
-                                ])
-                              : { 'oec:value': v }
-                          )
-                        }
-                      : {})
-                  }))
-                }
-              : {}),
-            ...(Array.isArray(service.credentials.deny)
-              ? {
-                  'oec:deny': service.credentials.deny.map((rule: any) => ({
-                    ...serializeWithVocabulary(normalizeCredentialKeys(rule), [
-                      'type',
-                      'requestCredentials',
-                      'vcPolicies',
-                      'vpPolicies'
-                    ]),
-                    ...(Array.isArray(rule.values)
-                      ? {
-                          'oec:values': rule.values.map((v: any) =>
-                            v && typeof v === 'object'
-                              ? serializeWithVocabulary(normalizeCredentialKeys(v), [
-                                  'address',
-                                  'requestCredentials',
-                                  'vcPolicies',
-                                  'vpPolicies'
-                                ])
-                              : { 'oec:value': v }
-                          )
-                        }
-                      : {})
-                  }))
-                }
-              : {})
-          }
+          formattedService['oec:credentials'] = this.formatCredentialsForDCAT(
+            service.credentials
+          )
         }
 
         return formattedService
@@ -2000,13 +2062,29 @@ export class FindDdoHandler extends CommandHandler {
     ) as unknown as DCATDatatoken[]
   }
 
-  private formatAccessDetails(accessDetails: any): DCATAccessDetails {
+  private formatAccessDetails(
+    accessDetails: any,
+    services: any[] = []
+  ): DCATAccessDetails {
     if (!accessDetails) {
       return undefined
     }
 
     const formatted: Record<string, unknown> = {
       '@type': accessDetails.type || 'oec:Fixed'
+    }
+
+    // Link this price entry to its service through the datatoken address
+    const datatokenAddress = accessDetails.datatoken?.address
+    if (typeof datatokenAddress === 'string' && Array.isArray(services)) {
+      const matchingService = services.find(
+        (service: any) =>
+          typeof service?.datatokenAddress === 'string' &&
+          service.datatokenAddress.toLowerCase() === datatokenAddress.toLowerCase()
+      )
+      if (matchingService?.id) {
+        formatted['oec:serviceId'] = matchingService.id
+      }
     }
 
     for (const key of [
