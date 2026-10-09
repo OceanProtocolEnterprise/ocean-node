@@ -1780,8 +1780,16 @@ export class FindDdoHandler extends CommandHandler {
         const price = stat.prices?.[0]
         if (price) {
           const tokenAddr = typeof price.token === 'string' ? price.token : ''
+
+          const baseToken = accessDetails.find(
+            (detail: any) =>
+              typeof detail?.baseToken?.address === 'string' &&
+              detail.baseToken.address.toLowerCase() === tokenAddr.toLowerCase()
+          )?.baseToken
+
           const symbol =
             price.tokenSymbol ||
+            baseToken?.symbol ||
             (tokenAddr ? tokenSymbolByAddress.get(tokenAddr.toLowerCase()) : undefined) ||
             ''
 
