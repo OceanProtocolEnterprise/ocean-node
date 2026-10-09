@@ -400,8 +400,12 @@ describe('********** FindDdoHandler DCAT transformation Unit Tests', () => {
 
     it('falls back to indexedMetadata.stats when credentialSubject.stats missing', async () => {
       const dcat = await handler.transformToDCAT(simpleDatasetDdo)
-      expect(dcat['oec:stats']).to.have.property('oec:allocated', 0)
-      expect(dcat['oec:stats']).to.have.property('oec:orders', 0)
+      expect(dcat['oec:stats']).to.be.an('array').with.lengthOf(1)
+      const stat = (dcat['oec:stats'] as any[])[0]
+      expect(stat).to.have.property('oec:orders', 0)
+      expect(stat).to.have.property('oec:serviceId')
+      expect(stat).to.have.property('oec:datatokenAddress')
+      expect(stat).to.have.property('oec:price')
     })
   })
 

@@ -296,5 +296,5 @@ export interface DCATDataset {
     'oec:state': boolean
   }
   'oec:services'?: DCATService[]
-  'oec:stats'?: DCATStats
+  'oec:stats'?: DCATStats | Array<Record<string, unknown>>
 }

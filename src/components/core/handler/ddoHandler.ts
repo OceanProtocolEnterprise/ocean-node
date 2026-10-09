@@ -1740,27 +1740,25 @@ export class FindDdoHandler extends CommandHandler {
       }
       dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
     } else if (stats.length > 0) {
-      const totalOrders = stats.reduce(
-        (sum: number, stat: any) => sum + (stat.orders || 0),
-        0
-      )
-      const statsOut: Record<string, unknown> = {
-        'oec:allocated': totalOrders,
-        'oec:orders': totalOrders
-      }
-
-      const firstPrice = stats[0]?.prices?.[0]
-      if (firstPrice) {
-        statsOut['oec:price'] = serializeWithVocabulary(
-          {
-            tokenAddress: firstPrice.token,
-            tokenSymbol: firstPrice.tokenSymbol || 'EURC',
-            value: firstPrice.price
-          },
-          ['tokenAddress', 'tokenSymbol', 'value']
-        )
-      }
-      dcat['oec:stats'] = statsOut as unknown as (typeof dcat)['oec:stats']
+      dcat['oec:stats'] = stats.map((stat: any) => {
+        const entry: Record<string, unknown> = {
+          'oec:serviceId': stat.serviceId,
+          'oec:datatokenAddress': stat.datatokenAddress,
+          'oec:orders': stat.orders ?? 0
+        }
+        const price = stat.prices?.[0]
+        if (price) {
+          entry['oec:price'] = serializeWithVocabulary(
+            {
+              tokenAddress: price.token,
+              tokenSymbol: price.tokenSymbol || 'EURC',
+              value: price.price
+            },
+            ['tokenAddress', 'tokenSymbol', 'value']
+          )
+        }
+        return entry
+      }) as unknown as (typeof dcat)['oec:stats']
     }
 
     if (Object.keys(nft).length > 0) {
