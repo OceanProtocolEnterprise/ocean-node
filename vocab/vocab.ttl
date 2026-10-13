@@ -1,0 +1,568 @@
+@prefix oec: <https://oceanenterprise.io/vocab/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+
+<https://oceanenterprise.io/vocab/> a owl:Ontology ;
+  dct:title "Ocean Enterprise Vocabulary"@en ;
+  dct:description "Terms used in the DCAT representation of Ocean Enterprise assets that are not covered by DCAT-AP or GeoDCAT-AP: blockchain, datatoken, compute-to-data, access-policy and pricing metadata."@en ;
+  owl:versionInfo "1.0.0" ;
+  dct:issued "2026-10-13"^^xsd:date ;
+  dct:modified "2026-10-13"^^xsd:date ;
+  dct:publisher <https://oceanenterprise.io> ;
+  dct:license <https://creativecommons.org/licenses/by/4.0/> ;
+  vann:preferredNamespacePrefix "oec" ;
+  vann:preferredNamespaceUri "https://oceanenterprise.io/vocab/" .
+
+# ── Classes ──
+
+oec:Datatoken a rdfs:Class, owl:Class ;
+  rdfs:label "Datatoken"@en ;
+  rdfs:comment "ERC-20 access token granting access to one service of an asset."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Token a rdfs:Class, owl:Class ;
+  rdfs:label "Token"@en ;
+  rdfs:comment "ERC-20 token (base token or datatoken) used in pricing."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Algorithm a rdfs:Class, owl:Class ;
+  rdfs:label "Algorithm"@en ;
+  rdfs:comment "Language, version and container metadata of an algorithm asset."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:AlgorithmContainer a rdfs:Class, owl:Class ;
+  rdfs:label "Algorithm Container"@en ;
+  rdfs:comment "Docker container (image, tag, entrypoint, checksum) that runs an algorithm."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Compute a rdfs:Class, owl:Class ;
+  rdfs:label "Compute Configuration"@en ;
+  rdfs:comment "Compute-to-Data policy of a compute service: trusted algorithms and network access."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:TrustedAlgorithm a rdfs:Class, owl:Class ;
+  rdfs:label "Trusted Algorithm"@en ;
+  rdfs:comment "Algorithm the publisher has approved to run on a compute service."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:ConsumerParameter a rdfs:Class, owl:Class ;
+  rdfs:label "Consumer Parameter"@en ;
+  rdfs:comment "Input the consumer supplies when ordering a service."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Credentials a rdfs:Class, owl:Class ;
+  rdfs:label "Credentials"@en ;
+  rdfs:comment "Allow and deny lists that control who may access an asset or service."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:CredentialRule a rdfs:Class, owl:Class ;
+  rdfs:label "Credential Rule"@en ;
+  rdfs:comment "One allow or deny entry: an address list or an SSI policy."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:RequestCredential a rdfs:Class, owl:Class ;
+  rdfs:label "Request Credential"@en ;
+  rdfs:comment "Verifiable Credential (type, format, policies) the consumer must present."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:NFT a rdfs:Class, owl:Class ;
+  rdfs:label "Data NFT"@en ;
+  rdfs:comment "ERC-721 data NFT that represents ownership of the asset on-chain."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Event a rdfs:Class, owl:Class ;
+  rdfs:label "Blockchain Event"@en ;
+  rdfs:comment "On-chain event that created or last updated the asset metadata."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Stats a rdfs:Class, owl:Class ;
+  rdfs:label "Stats"@en ;
+  rdfs:comment "Order and price statistics for one service of the asset."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Price a rdfs:Class, owl:Class ;
+  rdfs:label "Price"@en ;
+  rdfs:comment "Price of a service: payment token and amount."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:Purgatory a rdfs:Class, owl:Class ;
+  rdfs:label "Purgatory"@en ;
+  rdfs:comment "Whether the asset has been flagged and placed in purgatory."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:AccessDetails a rdfs:Class, owl:Class ;
+  rdfs:label "Access Details"@en ;
+  rdfs:comment "Pricing and access configuration derived from the DDO."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:AdditionalDdo a rdfs:Class, owl:Class ;
+  rdfs:label "Additional DDO"@en ;
+  rdfs:comment "Extension entry attached to the DDO outside the credential subject."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+# ── Properties ──
+
+oec:chainId a rdf:Property ;
+  rdfs:label "Chain ID"@en ;
+  rdfs:comment "Blockchain chain ID where the asset NFT is registered."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:nftAddress a rdf:Property ;
+  rdfs:label "NFT Address"@en ;
+  rdfs:comment "Contract address of the data NFT representing the asset."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:issuer a rdf:Property ;
+  rdfs:label "Issuer"@en ;
+  rdfs:comment "DID of the entity that issued the Verifiable Credential."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:datatokens a rdf:Property ;
+  rdfs:label "Datatokens"@en ;
+  rdfs:comment "Array of access tokens (datatokens) attached to the asset, one per service."@en ;
+  rdfs:range oec:Datatoken ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:algorithm a rdf:Property ;
+  rdfs:label "Algorithm"@en ;
+  rdfs:comment "Container and language metadata for algorithm assets."@en ;
+  rdfs:range oec:Algorithm ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:event a rdf:Property ;
+  rdfs:label "Blockchain Event"@en ;
+  rdfs:comment "On-chain event that created or updated the asset metadata."@en ;
+  rdfs:range oec:Event ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:nft a rdf:Property ;
+  rdfs:label "NFT Metadata"@en ;
+  rdfs:comment "Metadata of the data NFT (name, symbol, owner, state)."@en ;
+  rdfs:range oec:NFT ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:stats a rdf:Property ;
+  rdfs:label "Stats"@en ;
+  rdfs:comment "Aggregated order/price statistics for the asset."@en ;
+  rdfs:range oec:Stats ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:purgatory a rdf:Property ;
+  rdfs:label "Purgatory"@en ;
+  rdfs:comment "Purgatory state of the asset."@en ;
+  rdfs:range oec:Purgatory ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:accessDetails a rdf:Property ;
+  rdfs:label "Access Details"@en ;
+  rdfs:comment "Pricing and access configuration derived from the DDO."@en ;
+  rdfs:range oec:AccessDetails ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:services a rdf:Property ;
+  rdfs:label "Services"@en ;
+  rdfs:comment "Array of data services exposed by the asset, each typed as dcat:DataService."@en ;
+  rdfs:range dcat:DataService ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:additionalDdos a rdf:Property ;
+  rdfs:label "Additional DDOs"@en ;
+  rdfs:comment "Additional DDO entries attached to the asset (extensions)."@en ;
+  rdfs:range oec:AdditionalDdo ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:data a rdf:Property ;
+  rdfs:label "Data"@en ;
+  rdfs:comment "Free-form data attached to an additional DDO entry."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:serviceType a rdf:Property ;
+  rdfs:label "Service Type"@en ;
+  rdfs:comment "Type of the service: \"access\" or \"compute\"."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:datatokenAddress a rdf:Property ;
+  rdfs:label "Datatoken Address"@en ;
+  rdfs:comment "Contract address of the datatoken for this service."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:files a rdf:Property ;
+  rdfs:label "Files"@en ;
+  rdfs:comment "Encrypted file descriptor (0x-prefixed hex)."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:timeout a rdf:Property ;
+  rdfs:label "Timeout"@en ;
+  rdfs:comment "Service timeout in seconds."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:state a rdf:Property ;
+  rdfs:label "State"@en ;
+  rdfs:comment "Service state code (0 = active)."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:compute a rdf:Property ;
+  rdfs:label "Compute Configuration"@en ;
+  rdfs:comment "Trusted algorithm and network policies for compute services."@en ;
+  rdfs:range oec:Compute ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:consumerParameters a rdf:Property ;
+  rdfs:label "Consumer Parameters"@en ;
+  rdfs:comment "Parameters the consumer supplies when ordering the service."@en ;
+  rdfs:range oec:ConsumerParameter ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:credentials a rdf:Property ;
+  rdfs:label "Credentials"@en ;
+  rdfs:comment "SSI credential and address allow/deny lists required to access the service."@en ;
+  rdfs:range oec:Credentials ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:address a rdf:Property ;
+  rdfs:label "Address"@en ;
+  rdfs:comment "Blockchain address."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:name a rdf:Property ;
+  rdfs:label "Name"@en ;
+  rdfs:comment "Human-readable name."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:symbol a rdf:Property ;
+  rdfs:label "Symbol"@en ;
+  rdfs:comment "Token symbol."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:serviceId a rdf:Property ;
+  rdfs:label "Service ID"@en ;
+  rdfs:comment "Identifier of the service this datatoken grants access to."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:decimals a rdf:Property ;
+  rdfs:label "Decimals"@en ;
+  rdfs:comment "Number of decimals for a token amount."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:allowNetworkAccess a rdf:Property ;
+  rdfs:label "Allow Network Access"@en ;
+  rdfs:comment "Whether compute jobs on this service can access the network."@en ;
+  rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:allowRawAlgorithm a rdf:Property ;
+  rdfs:label "Allow Raw Algorithm"@en ;
+  rdfs:comment "Whether raw (unpublished) algorithms may be run."@en ;
+  rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:publisherTrustedAlgorithms a rdf:Property ;
+  rdfs:label "Publisher Trusted Algorithms"@en ;
+  rdfs:comment "List of algorithm DIDs the publisher has pre-approved for this compute service."@en ;
+  rdfs:range oec:TrustedAlgorithm ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:publisherTrustedAlgorithmPublishers a rdf:Property ;
+  rdfs:label "Publisher Trusted Algorithm Publishers"@en ;
+  rdfs:comment "List of publisher addresses whose algorithms are trusted."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:did a rdf:Property ;
+  rdfs:label "DID"@en ;
+  rdfs:comment "Decentralized identifier."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:filesChecksum a rdf:Property ;
+  rdfs:label "Files Checksum"@en ;
+  rdfs:comment "SHA-256 checksum of the algorithm files."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:containerSectionChecksum a rdf:Property ;
+  rdfs:label "Container Section Checksum"@en ;
+  rdfs:comment "SHA-256 checksum of the algorithm container section."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:allow a rdf:Property ;
+  rdfs:label "Allow"@en ;
+  rdfs:comment "Allow list of credential/address policies."@en ;
+  rdfs:range oec:CredentialRule ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:deny a rdf:Property ;
+  rdfs:label "Deny"@en ;
+  rdfs:comment "Deny list of credential/address policies."@en ;
+  rdfs:range oec:CredentialRule ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:matchDeny a rdf:Property ;
+  rdfs:label "Match Deny"@en ;
+  rdfs:comment "How allow/deny matches are combined (\"any\" | \"all\")."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:type a rdf:Property ;
+  rdfs:label "Type"@en ;
+  rdfs:comment "Type discriminator for a policy or parameter entry."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:values a rdf:Property ;
+  rdfs:label "Values"@en ;
+  rdfs:comment "Values carried by this policy entry."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:requestCredentials a rdf:Property ;
+  rdfs:label "Request Credentials"@en ;
+  rdfs:comment "Credentials the consumer must present."@en ;
+  rdfs:range oec:RequestCredential ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:format a rdf:Property ;
+  rdfs:label "Format"@en ;
+  rdfs:comment "Credential format (e.g. jwt_vc_json)."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:policies a rdf:Property ;
+  rdfs:label "Policies"@en ;
+  rdfs:comment "Credential policies (arrays or JSON-encoded strings)."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:vcPolicies a rdf:Property ;
+  rdfs:label "VC Policies"@en ;
+  rdfs:comment "Policies applied to the Verifiable Credential."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:vpPolicies a rdf:Property ;
+  rdfs:label "VP Policies"@en ;
+  rdfs:comment "Policies applied to the Verifiable Presentation."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:label a rdf:Property ;
+  rdfs:label "Label"@en ;
+  rdfs:comment "Human-readable label for the parameter."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:description a rdf:Property ;
+  rdfs:label "Description"@en ;
+  rdfs:comment "Human-readable description."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:default a rdf:Property ;
+  rdfs:label "Default"@en ;
+  rdfs:comment "Default value for the parameter."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:required a rdf:Property ;
+  rdfs:label "Required"@en ;
+  rdfs:comment "Whether the consumer must supply the parameter."@en ;
+  rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:options a rdf:Property ;
+  rdfs:label "Options"@en ;
+  rdfs:comment "Selectable options for a `select`-type parameter."@en ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:owner a rdf:Property ;
+  rdfs:label "Owner"@en ;
+  rdfs:comment "Blockchain address of the current owner."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:tokenURI a rdf:Property ;
+  rdfs:label "Token URI"@en ;
+  rdfs:comment "URI of the token metadata (image, description)."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:block a rdf:Property ;
+  rdfs:label "Block"@en ;
+  rdfs:comment "Block number of the event."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:contract a rdf:Property ;
+  rdfs:label "Contract"@en ;
+  rdfs:comment "Contract address that emitted the event."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:datetime a rdf:Property ;
+  rdfs:label "Datetime"@en ;
+  rdfs:comment "Timestamp of the event."@en ;
+  rdfs:range xsd:dateTime ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:from a rdf:Property ;
+  rdfs:label "From"@en ;
+  rdfs:comment "Address that initiated the event."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:tx a rdf:Property ;
+  rdfs:label "Transaction"@en ;
+  rdfs:comment "Transaction hash of the event."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:allocated a rdf:Property ;
+  rdfs:label "Allocated"@en ;
+  rdfs:comment "Total number of allocated orders."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:orders a rdf:Property ;
+  rdfs:label "Orders"@en ;
+  rdfs:comment "Total number of orders."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:price a rdf:Property ;
+  rdfs:label "Price"@en ;
+  rdfs:comment "Price information for the asset."@en ;
+  rdfs:range oec:Price ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:tokenAddress a rdf:Property ;
+  rdfs:label "Token Address"@en ;
+  rdfs:comment "Address of the payment token."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:tokenSymbol a rdf:Property ;
+  rdfs:label "Token Symbol"@en ;
+  rdfs:comment "Symbol of the payment token (e.g. EURC)."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:value a rdf:Property ;
+  rdfs:label "Value"@en ;
+  rdfs:comment "Numeric or string value."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:addressOrId a rdf:Property ;
+  rdfs:label "Address or ID"@en ;
+  rdfs:comment "Address or identifier used to look up the price."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:isOwned a rdf:Property ;
+  rdfs:label "Is Owned"@en ;
+  rdfs:comment "Whether the caller already owns the asset."@en ;
+  rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:isPurchasable a rdf:Property ;
+  rdfs:label "Is Purchasable"@en ;
+  rdfs:comment "Whether the asset is currently purchasable."@en ;
+  rdfs:range xsd:boolean ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:publisherMarketOrderFee a rdf:Property ;
+  rdfs:label "Publisher Market Order Fee"@en ;
+  rdfs:comment "Fee charged by the publisher per order."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:templateId a rdf:Property ;
+  rdfs:label "Template ID"@en ;
+  rdfs:comment "ID of the datatoken template used."@en ;
+  rdfs:range xsd:integer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:validOrderTx a rdf:Property ;
+  rdfs:label "Valid Order Transaction"@en ;
+  rdfs:comment "Transaction hash of a valid order, if any."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:paymentCollector a rdf:Property ;
+  rdfs:label "Payment Collector"@en ;
+  rdfs:comment "Address that collects payments for this asset."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:baseToken a rdf:Property ;
+  rdfs:label "Base Token"@en ;
+  rdfs:comment "Base token used to price the asset."@en ;
+  rdfs:range oec:Token ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:datatoken a rdf:Property ;
+  rdfs:label "Datatoken"@en ;
+  rdfs:comment "Datatoken granting access to the asset."@en ;
+  rdfs:range oec:Token ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:language a rdf:Property ;
+  rdfs:label "Language"@en ;
+  rdfs:comment "Programming language of the algorithm (e.g. py, js)."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:version a rdf:Property ;
+  rdfs:label "Version"@en ;
+  rdfs:comment "Version of the algorithm or container."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:container a rdf:Property ;
+  rdfs:label "Container"@en ;
+  rdfs:comment "Container information for the algorithm."@en ;
+  rdfs:range oec:AlgorithmContainer ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:entrypoint a rdf:Property ;
+  rdfs:label "Entrypoint"@en ;
+  rdfs:comment "Container entrypoint command."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:image a rdf:Property ;
+  rdfs:label "Image"@en ;
+  rdfs:comment "Container image name."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:tag a rdf:Property ;
+  rdfs:label "Tag"@en ;
+  rdfs:comment "Container image tag."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
+
+oec:checksum a rdf:Property ;
+  rdfs:label "Checksum"@en ;
+  rdfs:comment "Container checksum."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://oceanenterprise.io/vocab/> .
