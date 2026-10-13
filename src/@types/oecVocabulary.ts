@@ -11,11 +11,14 @@
  *   1. Add an entry to OE_VOCABULARY with the term name as the key.
  *   2. Use the term in transformToDCAT via the `oec()` helper.
  *   3. If the term belongs to an existing nested object, add it to the
- *      appropriate `properties` list in OE_OBJECT_SHAPES.
+ *      appropriate list in OE_OBJECT_SHAPES.
+ *   4. If its range is a new `oec:<Class>`, declare that class in OE_CLASSES.
+ *   5. Bump OE_VOCABULARY_INFO.version / modified and regenerate the published
+ *      files with `npm run vocab:build`.
  *
- * The vocabulary URI is expected to be published at
- * https://oceanenterprise.io/vocab/ once the OE infrastructure serves it.
- * Until then, the URI is used as a namespace placeholder for the JSON-LD context.
+ * The vocabulary is published at https://oceanenterprise.io/vocab/ as
+ * index.html (docs), vocab.ttl (Turtle), vocab.jsonld (JSON-LD) and
+ * context.jsonld (JSON-LD context), all generated from this file.
  */
 
 export type OECTerm = {
@@ -266,8 +269,7 @@ export const OE_VOCABULARY: Record<string, OECTerm> = {
   values: {
     name: 'values',
     label: 'Values',
-    description: 'Values carried by this policy entry.',
-    range: 'xsd:string'
+    description: 'Values carried by this policy entry.'
   },
   requestCredentials: {
     name: 'requestCredentials',
@@ -328,8 +330,7 @@ export const OE_VOCABULARY: Record<string, OECTerm> = {
   options: {
     name: 'options',
     label: 'Options',
-    description: 'Selectable options for a `select`-type parameter.',
-    range: 'xsd:string'
+    description: 'Selectable options for a `select`-type parameter.'
   },
 
   // ── NFT object fields ────────────────────────────────────────────────
@@ -557,33 +558,420 @@ export const OE_OBJECT_SHAPES = {
   AdditionalDdo: ['data', 'type']
 } as const
 
-export function oecVocabularyToRdf(
-  baseUri = 'https://oceanenterprise.io/vocab/'
-): string {
+export type OECClass = {
+  name: string
+  label: string
+  description: string
+}
+
+export const OE_CLASSES: Record<string, OECClass> = {
+  Datatoken: {
+    name: 'Datatoken',
+    label: 'Datatoken',
+    description: 'ERC-20 access token granting access to one service of an asset.'
+  },
+  Token: {
+    name: 'Token',
+    label: 'Token',
+    description: 'ERC-20 token (base token or datatoken) used in pricing.'
+  },
+  Algorithm: {
+    name: 'Algorithm',
+    label: 'Algorithm',
+    description: 'Language, version and container metadata of an algorithm asset.'
+  },
+  AlgorithmContainer: {
+    name: 'AlgorithmContainer',
+    label: 'Algorithm Container',
+    description:
+      'Docker container (image, tag, entrypoint, checksum) that runs an algorithm.'
+  },
+  Compute: {
+    name: 'Compute',
+    label: 'Compute Configuration',
+    description:
+      'Compute-to-Data policy of a compute service: trusted algorithms and network access.'
+  },
+  TrustedAlgorithm: {
+    name: 'TrustedAlgorithm',
+    label: 'Trusted Algorithm',
+    description: 'Algorithm the publisher has approved to run on a compute service.'
+  },
+  ConsumerParameter: {
+    name: 'ConsumerParameter',
+    label: 'Consumer Parameter',
+    description: 'Input the consumer supplies when ordering a service.'
+  },
+  Credentials: {
+    name: 'Credentials',
+    label: 'Credentials',
+    description: 'Allow and deny lists that control who may access an asset or service.'
+  },
+  CredentialRule: {
+    name: 'CredentialRule',
+    label: 'Credential Rule',
+    description: 'One allow or deny entry: an address list or an SSI policy.'
+  },
+  RequestCredential: {
+    name: 'RequestCredential',
+    label: 'Request Credential',
+    description:
+      'Verifiable Credential (type, format, policies) the consumer must present.'
+  },
+  NFT: {
+    name: 'NFT',
+    label: 'Data NFT',
+    description: 'ERC-721 data NFT that represents ownership of the asset on-chain.'
+  },
+  Event: {
+    name: 'Event',
+    label: 'Blockchain Event',
+    description: 'On-chain event that created or last updated the asset metadata.'
+  },
+  Stats: {
+    name: 'Stats',
+    label: 'Stats',
+    description: 'Order and price statistics for one service of the asset.'
+  },
+  Price: {
+    name: 'Price',
+    label: 'Price',
+    description: 'Price of a service: payment token and amount.'
+  },
+  Purgatory: {
+    name: 'Purgatory',
+    label: 'Purgatory',
+    description: 'Whether the asset has been flagged and placed in purgatory.'
+  },
+  AccessDetails: {
+    name: 'AccessDetails',
+    label: 'Access Details',
+    description: 'Pricing and access configuration derived from the DDO.'
+  },
+  AdditionalDdo: {
+    name: 'AdditionalDdo',
+    label: 'Additional DDO',
+    description: 'Extension entry attached to the DDO outside the credential subject.'
+  }
+}
+
+// ── Publication metadata ─────────────────────────────────────────────────
+
+export const OE_VOCABULARY_BASE_URI = 'https://oceanenterprise.io/vocab/'
+
+export const OE_VOCABULARY_INFO = {
+  title: 'Ocean Enterprise Vocabulary',
+  description:
+    'Terms used in the DCAT representation of Ocean Enterprise assets that are not covered by DCAT-AP or GeoDCAT-AP: blockchain, datatoken, compute-to-data, access-policy and pricing metadata.',
+  version: '1.0.0',
+  issued: '2026-10-13',
+  modified: '2026-10-13',
+  publisher: 'Ocean Enterprise',
+  publisherUrl: 'https://oceanenterprise.io',
+  license: 'https://creativecommons.org/licenses/by/4.0/',
+  preferredPrefix: 'oec'
+}
+
+const STANDARD_PREFIXES: Record<string, string> = {
+  rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+  rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
+  owl: 'http://www.w3.org/2002/07/owl#',
+  xsd: 'http://www.w3.org/2001/XMLSchema#',
+  dct: 'http://purl.org/dc/terms/',
+  dcat: 'http://www.w3.org/ns/dcat#',
+  vann: 'http://purl.org/vocab/vann/'
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+function turtleString(value: string): string {
+  return (
+    '"' +
+    value
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r') +
+    '"'
+  )
+}
+
+function expandCurie(curie: string, baseUri: string): string {
+  const index = curie.indexOf(':')
+  if (index === -1) return curie
+  const prefix = curie.substring(0, index)
+  const local = curie.substring(index + 1)
+  if (prefix === 'oec') return baseUri + local
+  const namespace = STANDARD_PREFIXES[prefix]
+  return namespace ? namespace + local : curie
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+// ── Turtle (vocab.ttl) ───────────────────────────────────────────────────
+
+export function oecVocabularyToRdf(baseUri = OE_VOCABULARY_BASE_URI): string {
+  const info = OE_VOCABULARY_INFO
   const lines: string[] = []
+
   lines.push('@prefix oec: <' + baseUri + '> .')
-  lines.push('@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .')
-  lines.push('@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .')
-  lines.push('@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .')
+  for (const [prefix, namespace] of Object.entries(STANDARD_PREFIXES)) {
+    lines.push(`@prefix ${prefix}: <${namespace}> .`)
+  }
+  lines.push('')
+
+  lines.push(`<${baseUri}> a owl:Ontology ;`)
+  lines.push(`  dct:title ${turtleString(info.title)}@en ;`)
+  lines.push(`  dct:description ${turtleString(info.description)}@en ;`)
+  lines.push(`  owl:versionInfo ${turtleString(info.version)} ;`)
+  lines.push(`  dct:issued ${turtleString(info.issued)}^^xsd:date ;`)
+  lines.push(`  dct:modified ${turtleString(info.modified)}^^xsd:date ;`)
+  lines.push(`  dct:publisher <${info.publisherUrl}> ;`)
+  lines.push(`  dct:license <${info.license}> ;`)
+  lines.push(`  vann:preferredNamespacePrefix ${turtleString(info.preferredPrefix)} ;`)
+  lines.push(`  vann:preferredNamespaceUri ${turtleString(baseUri)} .`)
+  lines.push('')
+
+  lines.push('# ── Classes ──')
+  lines.push('')
+  for (const cls of Object.values(OE_CLASSES)) {
+    lines.push(`oec:${cls.name} a rdfs:Class, owl:Class ;`)
+    lines.push(`  rdfs:label ${turtleString(cls.label)}@en ;`)
+    lines.push(`  rdfs:comment ${turtleString(cls.description)}@en ;`)
+    lines.push(`  rdfs:isDefinedBy <${baseUri}> .`)
+    lines.push('')
+  }
+
+  lines.push('# ── Properties ──')
   lines.push('')
   for (const term of Object.values(OE_VOCABULARY)) {
     lines.push(`oec:${term.name} a rdf:Property ;`)
-    lines.push(`  rdfs:label "${term.label}" ;`)
-    lines.push(`  rdfs:comment "${term.description}"${term.range ? ' ;' : ' .'}`)
-    if (term.range) {
-      lines.push(`  rdfs:range ${term.range} .`)
+    lines.push(`  rdfs:label ${turtleString(term.label)}@en ;`)
+    lines.push(`  rdfs:comment ${turtleString(term.description)}@en ;`)
+    if (term.domain) {
+      lines.push(`  rdfs:domain ${term.domain} ;`)
     }
+    if (term.range) {
+      lines.push(`  rdfs:range ${term.range} ;`)
+    }
+    lines.push(`  rdfs:isDefinedBy <${baseUri}> .`)
     lines.push('')
   }
+
   return lines.join('\n')
 }
 
+// ── JSON-LD context (context.jsonld) ─────────────────────────────────────
+
 export function oecVocabularyToContext(
-  baseUri = 'https://oceanenterprise.io/vocab/'
+  baseUri = OE_VOCABULARY_BASE_URI
 ): Record<string, unknown> {
   const context: Record<string, unknown> = { oec: baseUri }
   for (const term of Object.values(OE_VOCABULARY)) {
     context[term.name] = `oec:${term.name}`
   }
   return context
+}
+
+// ── JSON-LD vocabulary (vocab.jsonld) ────────────────────────────────────
+
+export function oecVocabularyToJsonLd(
+  baseUri = OE_VOCABULARY_BASE_URI
+): Record<string, unknown> {
+  const info = OE_VOCABULARY_INFO
+  const en = (value: string) => ({ '@value': value, '@language': 'en' })
+
+  const graph: Record<string, unknown>[] = [
+    {
+      '@id': baseUri,
+      '@type': 'owl:Ontology',
+      'dct:title': en(info.title),
+      'dct:description': en(info.description),
+      'owl:versionInfo': info.version,
+      'dct:issued': { '@value': info.issued, '@type': 'xsd:date' },
+      'dct:modified': { '@value': info.modified, '@type': 'xsd:date' },
+      'dct:publisher': { '@id': info.publisherUrl },
+      'dct:license': { '@id': info.license },
+      'vann:preferredNamespacePrefix': info.preferredPrefix,
+      'vann:preferredNamespaceUri': baseUri
+    }
+  ]
+
+  for (const cls of Object.values(OE_CLASSES)) {
+    graph.push({
+      '@id': `oec:${cls.name}`,
+      '@type': ['rdfs:Class', 'owl:Class'],
+      'rdfs:label': en(cls.label),
+      'rdfs:comment': en(cls.description),
+      'rdfs:isDefinedBy': { '@id': baseUri }
+    })
+  }
+
+  for (const term of Object.values(OE_VOCABULARY)) {
+    const node: Record<string, unknown> = {
+      '@id': `oec:${term.name}`,
+      '@type': 'rdf:Property',
+      'rdfs:label': en(term.label),
+      'rdfs:comment': en(term.description),
+      'rdfs:isDefinedBy': { '@id': baseUri }
+    }
+    if (term.domain) node['rdfs:domain'] = { '@id': term.domain }
+    if (term.range) node['rdfs:range'] = { '@id': term.range }
+    graph.push(node)
+  }
+
+  return {
+    '@context': { oec: baseUri, ...STANDARD_PREFIXES },
+    '@graph': graph
+  }
+}
+
+// ── HTML documentation (index.html) ──────────────────────────────────────
+
+export function oecVocabularyToHtml(baseUri = OE_VOCABULARY_BASE_URI): string {
+  const info = OE_VOCABULARY_INFO
+
+  const usedIn = new Map<string, string[]>()
+  for (const [className, properties] of Object.entries(OE_OBJECT_SHAPES)) {
+    for (const property of properties) {
+      const list = usedIn.get(property) || []
+      list.push(className)
+      usedIn.set(property, list)
+    }
+  }
+
+  const rangeHtml = (range?: string): string => {
+    if (!range) return '<span class="muted">any</span>'
+    if (range.startsWith('oec:')) {
+      const local = range.substring(4)
+      return `<a href="#${local}"><code>${escapeHtml(range)}</code></a>`
+    }
+    return `<a href="${escapeHtml(expandCurie(range, baseUri))}"><code>${escapeHtml(range)}</code></a>`
+  }
+
+  const classRows = Object.values(OE_CLASSES)
+    .map((cls) => {
+      const shape = (OE_OBJECT_SHAPES as Record<string, readonly string[]>)[cls.name]
+      const props = shape
+        ? shape.map((p) => `<a href="#${p}"><code>oec:${p}</code></a>`).join(', ')
+        : '<span class="muted">—</span>'
+      return `      <section class="term" id="${cls.name}">
+        <h3><a href="#${cls.name}">oec:${cls.name}</a> <span class="kind">Class</span></h3>
+        <p class="label">${escapeHtml(cls.label)}</p>
+        <p>${escapeHtml(cls.description)}</p>
+        <dl>
+          <dt>IRI</dt><dd><code>${escapeHtml(baseUri + cls.name)}</code></dd>
+          <dt>Properties</dt><dd>${props}</dd>
+        </dl>
+      </section>`
+    })
+    .join('\n')
+
+  const propertyRows = Object.values(OE_VOCABULARY)
+    .map((term) => {
+      const classes = usedIn.get(term.name)
+      const usedInHtml = classes
+        ? classes.map((c) => `<a href="#${c}"><code>oec:${c}</code></a>`).join(', ')
+        : '<code>dcat:Dataset</code> / <code>dcat:DataService</code>'
+      return `      <section class="term" id="${term.name}">
+        <h3><a href="#${term.name}">oec:${term.name}</a> <span class="kind">Property</span></h3>
+        <p class="label">${escapeHtml(term.label)}</p>
+        <p>${escapeHtml(term.description)}</p>
+        <dl>
+          <dt>IRI</dt><dd><code>${escapeHtml(baseUri + term.name)}</code></dd>
+          <dt>Range</dt><dd>${rangeHtml(term.range)}</dd>
+          <dt>Used in</dt><dd>${usedInHtml}</dd>
+        </dl>
+      </section>`
+    })
+    .join('\n')
+
+  const classIndex = Object.values(OE_CLASSES)
+    .map((cls) => `<a href="#${cls.name}">${cls.name}</a>`)
+    .join(' · ')
+  const propertyIndex = Object.values(OE_VOCABULARY)
+    .map((term) => `<a href="#${term.name}">${term.name}</a>`)
+    .join(' · ')
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(info.title)}</title>
+  <link rel="alternate" type="text/turtle" href="vocab.ttl">
+  <link rel="alternate" type="application/ld+json" href="vocab.jsonld">
+  <style>
+    :root { --bg: #ffffff; --fg: #1a1f2b; --muted: #5b6475; --line: #e3e7ee; --accent: #0b5cad; --code: #f3f5f9; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f131a; --fg: #e6e9ef; --muted: #9aa3b2; --line: #263040; --accent: #6fb1ff; --code: #1a212c; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 2rem; margin: 0 0 8px; }
+    h2 { margin-top: 48px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+    h3 { margin: 0 0 4px; font-size: 1.1rem; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { background: var(--code); border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+    code { padding: 1px 5px; overflow-wrap: anywhere; }
+    pre { padding: 12px 14px; overflow-x: auto; }
+    .muted, .label { color: var(--muted); }
+    .label { margin: 0 0 6px; }
+    .kind { font-size: 0.75rem; font-weight: 500; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
+    .meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 20px 0; }
+    .meta dt { color: var(--muted); }
+    .meta dd { margin: 0; }
+    .index { line-height: 1.9; }
+    .term { padding: 18px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 16px; }
+    .term:target { background: var(--code); margin: 0 -12px; padding: 18px 12px; border-radius: 6px; }
+    .term dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0 0; font-size: 0.92rem; }
+    .term dt { color: var(--muted); }
+    .term dd { margin: 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(info.title)}</h1>
+    <p>${escapeHtml(info.description)}</p>
+    <dl class="meta">
+      <dt>Namespace</dt><dd><code>${escapeHtml(baseUri)}</code></dd>
+      <dt>Preferred prefix</dt><dd><code>${info.preferredPrefix}</code></dd>
+      <dt>Version</dt><dd>${escapeHtml(info.version)}</dd>
+      <dt>Issued</dt><dd>${escapeHtml(info.issued)}</dd>
+      <dt>Last modified</dt><dd>${escapeHtml(info.modified)}</dd>
+      <dt>Publisher</dt><dd><a href="${escapeHtml(info.publisherUrl)}">${escapeHtml(info.publisher)}</a></dd>
+      <dt>License</dt><dd><a href="${escapeHtml(info.license)}">CC BY 4.0</a></dd>
+      <dt>Downloads</dt><dd><a href="vocab.ttl">Turtle</a> · <a href="vocab.jsonld">JSON-LD</a> · <a href="context.jsonld">JSON-LD context</a></dd>
+    </dl>
+
+    <h2>Usage</h2>
+    <p>Ocean Enterprise nodes publish asset metadata as DCAT-AP / GeoDCAT-AP JSON-LD at
+      <code>/api/aquarius/assets/dcat/&lt;did&gt;</code>. Standard DCAT terms are used wherever they exist;
+      this vocabulary covers the remaining Ocean Enterprise specific fields. Declare the prefix in your
+      JSON-LD context:</p>
+<pre>{
+  "@context": {
+    "oec": "${escapeHtml(baseUri)}"
+  }
+}</pre>
+
+    <h2>Classes</h2>
+    <p class="index">${classIndex}</p>
+${classRows}
+
+    <h2>Properties</h2>
+    <p class="index">${propertyIndex}</p>
+${propertyRows}
+  </main>
+</body>
+</html>
+`
 }

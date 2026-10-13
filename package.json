@@ -48,7 +48,8 @@
     "test:stress": "npm run test:k6-common k6 run -e TEST_TYPE=stress \"./dist/test/performance/perf_test.js\"",
     "test:request:rate": "npm run test:k6-common && k6 run -e RATE=true \"./dist/test/performance/perf_test.js\"",
     "release": "release-it",
-    "changelog": "auto-changelog -p"
+    "changelog": "auto-changelog -p",
+    "vocab:build": "npm run build && node dist/helpers/scripts/buildVocab.js vocab"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1115.0",
