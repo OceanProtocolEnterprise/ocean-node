@@ -48,10 +48,11 @@
     "test:stress": "npm run test:k6-common k6 run -e TEST_TYPE=stress \"./dist/test/performance/perf_test.js\"",
     "test:request:rate": "npm run test:k6-common && k6 run -e RATE=true \"./dist/test/performance/perf_test.js\"",
     "release": "release-it",
-    "changelog": "auto-changelog -p"
+    "changelog": "auto-changelog -p",
+    "vocab:build": "npm run build && node dist/helpers/scripts/buildVocab.js vocab"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1115.0",
+    "@aws-sdk/client-s3": "^3.1146.0",
     "@aws-sdk/lib-storage": "^3.1115.0",
     "@chainsafe/libp2p-noise": "^17.0.0",
     "@chainsafe/libp2p-yamux": "^8.0.1",
@@ -89,7 +90,7 @@
     "@opentelemetry/sdk-node": "^0.221.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "base58-js": "^3.0.3",
-    "basic-ftp": "^6.2.0",
+    "basic-ftp": "^6.2.2",
     "cors": "^2.8.6",
     "datastore-level": "^13.0.1",
     "dockerode": "^5.0.1",
@@ -105,7 +106,7 @@
     "lzma-purejs-requirejs": "^1.0.0",
     "multiformats": "^14.0.5",
     "node-cron": "^4.6.0",
-    "p-limit": "^7.3.1",
+    "p-limit": "^7.3.3",
     "tar": "^7.5.22",
     "tar-stream": "^3.2.0",
     "uint8arrays": "^6.1.1",
@@ -114,7 +115,7 @@
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
     "winston-transport": "^4.6.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "optionalDependencies": {
     "koffi": "^3.1.6"
@@ -137,15 +138,15 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
     "eslint-plugin-promise": "^7.3.0",
-    "eslint-plugin-security": "^4.0.1",
-    "globals": "^17.11.0",
-    "mocha": "^11.8.0",
+    "eslint-plugin-security": "^4.2.0",
+    "globals": "^17.13.0",
+    "mocha": "^12.0.3",
     "nyc": "^18.0.0",
     "prettier": "^3.9.6",
     "release-it": "^21.0.2",
     "sinon": "^22.1.0",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.67.0"
+    "typescript-eslint": "^8.71.0"
   },
   "overrides": {
     "serialize-javascript": "^7.1.0",

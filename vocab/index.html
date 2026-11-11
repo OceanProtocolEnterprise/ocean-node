@@ -1,0 +1,995 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ocean Enterprise Vocabulary</title>
+  <link rel="alternate" type="text/turtle" href="vocab.ttl">
+  <link rel="alternate" type="application/ld+json" href="vocab.jsonld">
+  <style>
+    :root { --bg: #ffffff; --fg: #1a1f2b; --muted: #5b6475; --line: #e3e7ee; --accent: #0b5cad; --code: #f3f5f9; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f131a; --fg: #e6e9ef; --muted: #9aa3b2; --line: #263040; --accent: #6fb1ff; --code: #1a212c; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 2rem; margin: 0 0 8px; }
+    h2 { margin-top: 48px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+    h3 { margin: 0 0 4px; font-size: 1.1rem; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { background: var(--code); border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+    code { padding: 1px 5px; overflow-wrap: anywhere; }
+    pre { padding: 12px 14px; overflow-x: auto; }
+    .muted, .label { color: var(--muted); }
+    .label { margin: 0 0 6px; }
+    .kind { font-size: 0.75rem; font-weight: 500; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
+    .meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 20px 0; }
+    .meta dt { color: var(--muted); }
+    .meta dd { margin: 0; }
+    .index { line-height: 1.9; }
+    .term { padding: 18px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 16px; }
+    .term:target { background: var(--code); margin: 0 -12px; padding: 18px 12px; border-radius: 6px; }
+    .term dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0 0; font-size: 0.92rem; }
+    .term dt { color: var(--muted); }
+    .term dd { margin: 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ocean Enterprise Vocabulary</h1>
+    <p>Terms used in the DCAT representation of Ocean Enterprise assets that are not covered by DCAT-AP or GeoDCAT-AP: blockchain, datatoken, compute-to-data, access-policy and pricing metadata.</p>
+    <dl class="meta">
+      <dt>Namespace</dt><dd><code>https://oceanenterprise.io/vocab/</code></dd>
+      <dt>Preferred prefix</dt><dd><code>oec</code></dd>
+      <dt>Version</dt><dd>1.0.0</dd>
+      <dt>Issued</dt><dd>2026-10-13</dd>
+      <dt>Last modified</dt><dd>2026-10-13</dd>
+      <dt>Publisher</dt><dd><a href="https://oceanenterprise.io">Ocean Enterprise</a></dd>
+      <dt>License</dt><dd><a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a></dd>
+      <dt>Downloads</dt><dd><a href="vocab.ttl">Turtle</a> · <a href="vocab.jsonld">JSON-LD</a> · <a href="context.jsonld">JSON-LD context</a></dd>
+    </dl>
+
+    <h2>Usage</h2>
+    <p>Ocean Enterprise nodes publish asset metadata as DCAT-AP / GeoDCAT-AP JSON-LD at
+      <code>/api/aquarius/assets/dcat/&lt;did&gt;</code>. Standard DCAT terms are used wherever they exist;
+      this vocabulary covers the remaining Ocean Enterprise specific fields. Declare the prefix in your
+      JSON-LD context:</p>
+<pre>{
+  "@context": {
+    "oec": "https://oceanenterprise.io/vocab/"
+  }
+}</pre>
+
+    <h2>Classes</h2>
+    <p class="index"><a href="#Datatoken">Datatoken</a> · <a href="#Token">Token</a> · <a href="#Algorithm">Algorithm</a> · <a href="#AlgorithmContainer">AlgorithmContainer</a> · <a href="#Compute">Compute</a> · <a href="#TrustedAlgorithm">TrustedAlgorithm</a> · <a href="#ConsumerParameter">ConsumerParameter</a> · <a href="#Credentials">Credentials</a> · <a href="#CredentialRule">CredentialRule</a> · <a href="#RequestCredential">RequestCredential</a> · <a href="#NFT">NFT</a> · <a href="#Event">Event</a> · <a href="#Stats">Stats</a> · <a href="#Price">Price</a> · <a href="#Purgatory">Purgatory</a> · <a href="#AccessDetails">AccessDetails</a> · <a href="#AdditionalDdo">AdditionalDdo</a></p>
+      <section class="term" id="Datatoken">
+        <h3><a href="#Datatoken">oec:Datatoken</a> <span class="kind">Class</span></h3>
+        <p class="label">Datatoken</p>
+        <p>ERC-20 access token granting access to one service of an asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Datatoken</code></dd>
+          <dt>Properties</dt><dd><a href="#address"><code>oec:address</code></a>, <a href="#name"><code>oec:name</code></a>, <a href="#symbol"><code>oec:symbol</code></a>, <a href="#serviceId"><code>oec:serviceId</code></a>, <a href="#decimals"><code>oec:decimals</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="Token">
+        <h3><a href="#Token">oec:Token</a> <span class="kind">Class</span></h3>
+        <p class="label">Token</p>
+        <p>ERC-20 token (base token or datatoken) used in pricing.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Token</code></dd>
+          <dt>Properties</dt><dd><a href="#name"><code>oec:name</code></a>, <a href="#address"><code>oec:address</code></a>, <a href="#symbol"><code>oec:symbol</code></a>, <a href="#decimals"><code>oec:decimals</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="Algorithm">
+        <h3><a href="#Algorithm">oec:Algorithm</a> <span class="kind">Class</span></h3>
+        <p class="label">Algorithm</p>
+        <p>Language, version and container metadata of an algorithm asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Algorithm</code></dd>
+          <dt>Properties</dt><dd><a href="#language"><code>oec:language</code></a>, <a href="#version"><code>oec:version</code></a>, <a href="#container"><code>oec:container</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="AlgorithmContainer">
+        <h3><a href="#AlgorithmContainer">oec:AlgorithmContainer</a> <span class="kind">Class</span></h3>
+        <p class="label">Algorithm Container</p>
+        <p>Docker container (image, tag, entrypoint, checksum) that runs an algorithm.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/AlgorithmContainer</code></dd>
+          <dt>Properties</dt><dd><a href="#entrypoint"><code>oec:entrypoint</code></a>, <a href="#image"><code>oec:image</code></a>, <a href="#tag"><code>oec:tag</code></a>, <a href="#checksum"><code>oec:checksum</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="Compute">
+        <h3><a href="#Compute">oec:Compute</a> <span class="kind">Class</span></h3>
+        <p class="label">Compute Configuration</p>
+        <p>Compute-to-Data policy of a compute service: trusted algorithms and network access.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Compute</code></dd>
+          <dt>Properties</dt><dd><a href="#allowNetworkAccess"><code>oec:allowNetworkAccess</code></a>, <a href="#allowRawAlgorithm"><code>oec:allowRawAlgorithm</code></a>, <a href="#publisherTrustedAlgorithms"><code>oec:publisherTrustedAlgorithms</code></a>, <a href="#publisherTrustedAlgorithmPublishers"><code>oec:publisherTrustedAlgorithmPublishers</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="TrustedAlgorithm">
+        <h3><a href="#TrustedAlgorithm">oec:TrustedAlgorithm</a> <span class="kind">Class</span></h3>
+        <p class="label">Trusted Algorithm</p>
+        <p>Algorithm the publisher has approved to run on a compute service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/TrustedAlgorithm</code></dd>
+          <dt>Properties</dt><dd><a href="#did"><code>oec:did</code></a>, <a href="#filesChecksum"><code>oec:filesChecksum</code></a>, <a href="#containerSectionChecksum"><code>oec:containerSectionChecksum</code></a>, <a href="#serviceId"><code>oec:serviceId</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="ConsumerParameter">
+        <h3><a href="#ConsumerParameter">oec:ConsumerParameter</a> <span class="kind">Class</span></h3>
+        <p class="label">Consumer Parameter</p>
+        <p>Input the consumer supplies when ordering a service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/ConsumerParameter</code></dd>
+          <dt>Properties</dt><dd><a href="#name"><code>oec:name</code></a>, <a href="#label"><code>oec:label</code></a>, <a href="#description"><code>oec:description</code></a>, <a href="#type"><code>oec:type</code></a>, <a href="#default"><code>oec:default</code></a>, <a href="#required"><code>oec:required</code></a>, <a href="#options"><code>oec:options</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="Credentials">
+        <h3><a href="#Credentials">oec:Credentials</a> <span class="kind">Class</span></h3>
+        <p class="label">Credentials</p>
+        <p>Allow and deny lists that control who may access an asset or service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Credentials</code></dd>
+          <dt>Properties</dt><dd><span class="muted">—</span></dd>
+        </dl>
+      </section>
+      <section class="term" id="CredentialRule">
+        <h3><a href="#CredentialRule">oec:CredentialRule</a> <span class="kind">Class</span></h3>
+        <p class="label">Credential Rule</p>
+        <p>One allow or deny entry: an address list or an SSI policy.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/CredentialRule</code></dd>
+          <dt>Properties</dt><dd><a href="#type"><code>oec:type</code></a>, <a href="#values"><code>oec:values</code></a>, <a href="#requestCredentials"><code>oec:requestCredentials</code></a>, <a href="#vcPolicies"><code>oec:vcPolicies</code></a>, <a href="#vpPolicies"><code>oec:vpPolicies</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="RequestCredential">
+        <h3><a href="#RequestCredential">oec:RequestCredential</a> <span class="kind">Class</span></h3>
+        <p class="label">Request Credential</p>
+        <p>Verifiable Credential (type, format, policies) the consumer must present.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/RequestCredential</code></dd>
+          <dt>Properties</dt><dd><a href="#format"><code>oec:format</code></a>, <a href="#policies"><code>oec:policies</code></a>, <a href="#type"><code>oec:type</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="NFT">
+        <h3><a href="#NFT">oec:NFT</a> <span class="kind">Class</span></h3>
+        <p class="label">Data NFT</p>
+        <p>ERC-721 data NFT that represents ownership of the asset on-chain.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/NFT</code></dd>
+          <dt>Properties</dt><dd><a href="#name"><code>oec:name</code></a>, <a href="#symbol"><code>oec:symbol</code></a>, <a href="#address"><code>oec:address</code></a>, <a href="#owner"><code>oec:owner</code></a>, <a href="#state"><code>oec:state</code></a>, <a href="#tokenURI"><code>oec:tokenURI</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="Event">
+        <h3><a href="#Event">oec:Event</a> <span class="kind">Class</span></h3>
+        <p class="label">Blockchain Event</p>
+        <p>On-chain event that created or last updated the asset metadata.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Event</code></dd>
+          <dt>Properties</dt><dd><a href="#block"><code>oec:block</code></a>, <a href="#contract"><code>oec:contract</code></a>, <a href="#datetime"><code>oec:datetime</code></a>, <a href="#from"><code>oec:from</code></a>, <a href="#tx"><code>oec:tx</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="Stats">
+        <h3><a href="#Stats">oec:Stats</a> <span class="kind">Class</span></h3>
+        <p class="label">Stats</p>
+        <p>Order and price statistics for one service of the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Stats</code></dd>
+          <dt>Properties</dt><dd><span class="muted">—</span></dd>
+        </dl>
+      </section>
+      <section class="term" id="Price">
+        <h3><a href="#Price">oec:Price</a> <span class="kind">Class</span></h3>
+        <p class="label">Price</p>
+        <p>Price of a service: payment token and amount.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Price</code></dd>
+          <dt>Properties</dt><dd><a href="#tokenAddress"><code>oec:tokenAddress</code></a>, <a href="#tokenSymbol"><code>oec:tokenSymbol</code></a>, <a href="#value"><code>oec:value</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="Purgatory">
+        <h3><a href="#Purgatory">oec:Purgatory</a> <span class="kind">Class</span></h3>
+        <p class="label">Purgatory</p>
+        <p>Whether the asset has been flagged and placed in purgatory.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/Purgatory</code></dd>
+          <dt>Properties</dt><dd><span class="muted">—</span></dd>
+        </dl>
+      </section>
+      <section class="term" id="AccessDetails">
+        <h3><a href="#AccessDetails">oec:AccessDetails</a> <span class="kind">Class</span></h3>
+        <p class="label">Access Details</p>
+        <p>Pricing and access configuration derived from the DDO.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/AccessDetails</code></dd>
+          <dt>Properties</dt><dd><a href="#type"><code>oec:type</code></a>, <a href="#addressOrId"><code>oec:addressOrId</code></a>, <a href="#isOwned"><code>oec:isOwned</code></a>, <a href="#isPurchasable"><code>oec:isPurchasable</code></a>, <a href="#price"><code>oec:price</code></a>, <a href="#publisherMarketOrderFee"><code>oec:publisherMarketOrderFee</code></a>, <a href="#templateId"><code>oec:templateId</code></a>, <a href="#validOrderTx"><code>oec:validOrderTx</code></a>, <a href="#paymentCollector"><code>oec:paymentCollector</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="AdditionalDdo">
+        <h3><a href="#AdditionalDdo">oec:AdditionalDdo</a> <span class="kind">Class</span></h3>
+        <p class="label">Additional DDO</p>
+        <p>Extension entry attached to the DDO outside the credential subject.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/AdditionalDdo</code></dd>
+          <dt>Properties</dt><dd><a href="#data"><code>oec:data</code></a>, <a href="#type"><code>oec:type</code></a></dd>
+        </dl>
+      </section>
+
+    <h2>Properties</h2>
+    <p class="index"><a href="#chainId">chainId</a> · <a href="#nftAddress">nftAddress</a> · <a href="#issuer">issuer</a> · <a href="#datatokens">datatokens</a> · <a href="#algorithm">algorithm</a> · <a href="#event">event</a> · <a href="#nft">nft</a> · <a href="#stats">stats</a> · <a href="#purgatory">purgatory</a> · <a href="#accessDetails">accessDetails</a> · <a href="#services">services</a> · <a href="#additionalDdos">additionalDdos</a> · <a href="#data">data</a> · <a href="#serviceType">serviceType</a> · <a href="#datatokenAddress">datatokenAddress</a> · <a href="#files">files</a> · <a href="#timeout">timeout</a> · <a href="#state">state</a> · <a href="#compute">compute</a> · <a href="#consumerParameters">consumerParameters</a> · <a href="#credentials">credentials</a> · <a href="#address">address</a> · <a href="#name">name</a> · <a href="#symbol">symbol</a> · <a href="#serviceId">serviceId</a> · <a href="#decimals">decimals</a> · <a href="#allowNetworkAccess">allowNetworkAccess</a> · <a href="#allowRawAlgorithm">allowRawAlgorithm</a> · <a href="#publisherTrustedAlgorithms">publisherTrustedAlgorithms</a> · <a href="#publisherTrustedAlgorithmPublishers">publisherTrustedAlgorithmPublishers</a> · <a href="#did">did</a> · <a href="#filesChecksum">filesChecksum</a> · <a href="#containerSectionChecksum">containerSectionChecksum</a> · <a href="#allow">allow</a> · <a href="#deny">deny</a> · <a href="#matchDeny">matchDeny</a> · <a href="#type">type</a> · <a href="#values">values</a> · <a href="#requestCredentials">requestCredentials</a> · <a href="#format">format</a> · <a href="#policies">policies</a> · <a href="#vcPolicies">vcPolicies</a> · <a href="#vpPolicies">vpPolicies</a> · <a href="#label">label</a> · <a href="#description">description</a> · <a href="#default">default</a> · <a href="#required">required</a> · <a href="#options">options</a> · <a href="#owner">owner</a> · <a href="#tokenURI">tokenURI</a> · <a href="#block">block</a> · <a href="#contract">contract</a> · <a href="#datetime">datetime</a> · <a href="#from">from</a> · <a href="#tx">tx</a> · <a href="#allocated">allocated</a> · <a href="#orders">orders</a> · <a href="#price">price</a> · <a href="#tokenAddress">tokenAddress</a> · <a href="#tokenSymbol">tokenSymbol</a> · <a href="#value">value</a> · <a href="#addressOrId">addressOrId</a> · <a href="#isOwned">isOwned</a> · <a href="#isPurchasable">isPurchasable</a> · <a href="#publisherMarketOrderFee">publisherMarketOrderFee</a> · <a href="#templateId">templateId</a> · <a href="#validOrderTx">validOrderTx</a> · <a href="#paymentCollector">paymentCollector</a> · <a href="#baseToken">baseToken</a> · <a href="#datatoken">datatoken</a> · <a href="#language">language</a> · <a href="#version">version</a> · <a href="#container">container</a> · <a href="#entrypoint">entrypoint</a> · <a href="#image">image</a> · <a href="#tag">tag</a> · <a href="#checksum">checksum</a></p>
+      <section class="term" id="chainId">
+        <h3><a href="#chainId">oec:chainId</a> <span class="kind">Property</span></h3>
+        <p class="label">Chain ID</p>
+        <p>Blockchain chain ID where the asset NFT is registered.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/chainId</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="nftAddress">
+        <h3><a href="#nftAddress">oec:nftAddress</a> <span class="kind">Property</span></h3>
+        <p class="label">NFT Address</p>
+        <p>Contract address of the data NFT representing the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/nftAddress</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="issuer">
+        <h3><a href="#issuer">oec:issuer</a> <span class="kind">Property</span></h3>
+        <p class="label">Issuer</p>
+        <p>DID of the entity that issued the Verifiable Credential.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/issuer</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="datatokens">
+        <h3><a href="#datatokens">oec:datatokens</a> <span class="kind">Property</span></h3>
+        <p class="label">Datatokens</p>
+        <p>Array of access tokens (datatokens) attached to the asset, one per service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/datatokens</code></dd>
+          <dt>Range</dt><dd><a href="#Datatoken"><code>oec:Datatoken</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="algorithm">
+        <h3><a href="#algorithm">oec:algorithm</a> <span class="kind">Property</span></h3>
+        <p class="label">Algorithm</p>
+        <p>Container and language metadata for algorithm assets.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/algorithm</code></dd>
+          <dt>Range</dt><dd><a href="#Algorithm"><code>oec:Algorithm</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="event">
+        <h3><a href="#event">oec:event</a> <span class="kind">Property</span></h3>
+        <p class="label">Blockchain Event</p>
+        <p>On-chain event that created or updated the asset metadata.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/event</code></dd>
+          <dt>Range</dt><dd><a href="#Event"><code>oec:Event</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="nft">
+        <h3><a href="#nft">oec:nft</a> <span class="kind">Property</span></h3>
+        <p class="label">NFT Metadata</p>
+        <p>Metadata of the data NFT (name, symbol, owner, state).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/nft</code></dd>
+          <dt>Range</dt><dd><a href="#NFT"><code>oec:NFT</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="stats">
+        <h3><a href="#stats">oec:stats</a> <span class="kind">Property</span></h3>
+        <p class="label">Stats</p>
+        <p>Aggregated order/price statistics for the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/stats</code></dd>
+          <dt>Range</dt><dd><a href="#Stats"><code>oec:Stats</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="purgatory">
+        <h3><a href="#purgatory">oec:purgatory</a> <span class="kind">Property</span></h3>
+        <p class="label">Purgatory</p>
+        <p>Purgatory state of the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/purgatory</code></dd>
+          <dt>Range</dt><dd><a href="#Purgatory"><code>oec:Purgatory</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="accessDetails">
+        <h3><a href="#accessDetails">oec:accessDetails</a> <span class="kind">Property</span></h3>
+        <p class="label">Access Details</p>
+        <p>Pricing and access configuration derived from the DDO.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/accessDetails</code></dd>
+          <dt>Range</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="services">
+        <h3><a href="#services">oec:services</a> <span class="kind">Property</span></h3>
+        <p class="label">Services</p>
+        <p>Array of data services exposed by the asset, each typed as dcat:DataService.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/services</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/ns/dcat#DataService"><code>dcat:DataService</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="additionalDdos">
+        <h3><a href="#additionalDdos">oec:additionalDdos</a> <span class="kind">Property</span></h3>
+        <p class="label">Additional DDOs</p>
+        <p>Additional DDO entries attached to the asset (extensions).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/additionalDdos</code></dd>
+          <dt>Range</dt><dd><a href="#AdditionalDdo"><code>oec:AdditionalDdo</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="data">
+        <h3><a href="#data">oec:data</a> <span class="kind">Property</span></h3>
+        <p class="label">Data</p>
+        <p>Free-form data attached to an additional DDO entry.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/data</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AdditionalDdo"><code>oec:AdditionalDdo</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="serviceType">
+        <h3><a href="#serviceType">oec:serviceType</a> <span class="kind">Property</span></h3>
+        <p class="label">Service Type</p>
+        <p>Type of the service: &quot;access&quot; or &quot;compute&quot;.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/serviceType</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="datatokenAddress">
+        <h3><a href="#datatokenAddress">oec:datatokenAddress</a> <span class="kind">Property</span></h3>
+        <p class="label">Datatoken Address</p>
+        <p>Contract address of the datatoken for this service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/datatokenAddress</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="files">
+        <h3><a href="#files">oec:files</a> <span class="kind">Property</span></h3>
+        <p class="label">Files</p>
+        <p>Encrypted file descriptor (0x-prefixed hex).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/files</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="timeout">
+        <h3><a href="#timeout">oec:timeout</a> <span class="kind">Property</span></h3>
+        <p class="label">Timeout</p>
+        <p>Service timeout in seconds.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/timeout</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="state">
+        <h3><a href="#state">oec:state</a> <span class="kind">Property</span></h3>
+        <p class="label">State</p>
+        <p>Service state code (0 = active).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/state</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><a href="#NFT"><code>oec:NFT</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="compute">
+        <h3><a href="#compute">oec:compute</a> <span class="kind">Property</span></h3>
+        <p class="label">Compute Configuration</p>
+        <p>Trusted algorithm and network policies for compute services.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/compute</code></dd>
+          <dt>Range</dt><dd><a href="#Compute"><code>oec:Compute</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="consumerParameters">
+        <h3><a href="#consumerParameters">oec:consumerParameters</a> <span class="kind">Property</span></h3>
+        <p class="label">Consumer Parameters</p>
+        <p>Parameters the consumer supplies when ordering the service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/consumerParameters</code></dd>
+          <dt>Range</dt><dd><a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="credentials">
+        <h3><a href="#credentials">oec:credentials</a> <span class="kind">Property</span></h3>
+        <p class="label">Credentials</p>
+        <p>SSI credential and address allow/deny lists required to access the service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/credentials</code></dd>
+          <dt>Range</dt><dd><a href="#Credentials"><code>oec:Credentials</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="address">
+        <h3><a href="#address">oec:address</a> <span class="kind">Property</span></h3>
+        <p class="label">Address</p>
+        <p>Blockchain address.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/address</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Datatoken"><code>oec:Datatoken</code></a>, <a href="#NFT"><code>oec:NFT</code></a>, <a href="#Token"><code>oec:Token</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="name">
+        <h3><a href="#name">oec:name</a> <span class="kind">Property</span></h3>
+        <p class="label">Name</p>
+        <p>Human-readable name.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/name</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Datatoken"><code>oec:Datatoken</code></a>, <a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a>, <a href="#NFT"><code>oec:NFT</code></a>, <a href="#Token"><code>oec:Token</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="symbol">
+        <h3><a href="#symbol">oec:symbol</a> <span class="kind">Property</span></h3>
+        <p class="label">Symbol</p>
+        <p>Token symbol.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/symbol</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Datatoken"><code>oec:Datatoken</code></a>, <a href="#NFT"><code>oec:NFT</code></a>, <a href="#Token"><code>oec:Token</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="serviceId">
+        <h3><a href="#serviceId">oec:serviceId</a> <span class="kind">Property</span></h3>
+        <p class="label">Service ID</p>
+        <p>Identifier of the service this datatoken grants access to.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/serviceId</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Datatoken"><code>oec:Datatoken</code></a>, <a href="#TrustedAlgorithm"><code>oec:TrustedAlgorithm</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="decimals">
+        <h3><a href="#decimals">oec:decimals</a> <span class="kind">Property</span></h3>
+        <p class="label">Decimals</p>
+        <p>Number of decimals for a token amount.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/decimals</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Datatoken"><code>oec:Datatoken</code></a>, <a href="#Token"><code>oec:Token</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="allowNetworkAccess">
+        <h3><a href="#allowNetworkAccess">oec:allowNetworkAccess</a> <span class="kind">Property</span></h3>
+        <p class="label">Allow Network Access</p>
+        <p>Whether compute jobs on this service can access the network.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/allowNetworkAccess</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#boolean"><code>xsd:boolean</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Compute"><code>oec:Compute</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="allowRawAlgorithm">
+        <h3><a href="#allowRawAlgorithm">oec:allowRawAlgorithm</a> <span class="kind">Property</span></h3>
+        <p class="label">Allow Raw Algorithm</p>
+        <p>Whether raw (unpublished) algorithms may be run.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/allowRawAlgorithm</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#boolean"><code>xsd:boolean</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Compute"><code>oec:Compute</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="publisherTrustedAlgorithms">
+        <h3><a href="#publisherTrustedAlgorithms">oec:publisherTrustedAlgorithms</a> <span class="kind">Property</span></h3>
+        <p class="label">Publisher Trusted Algorithms</p>
+        <p>List of algorithm DIDs the publisher has pre-approved for this compute service.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/publisherTrustedAlgorithms</code></dd>
+          <dt>Range</dt><dd><a href="#TrustedAlgorithm"><code>oec:TrustedAlgorithm</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Compute"><code>oec:Compute</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="publisherTrustedAlgorithmPublishers">
+        <h3><a href="#publisherTrustedAlgorithmPublishers">oec:publisherTrustedAlgorithmPublishers</a> <span class="kind">Property</span></h3>
+        <p class="label">Publisher Trusted Algorithm Publishers</p>
+        <p>List of publisher addresses whose algorithms are trusted.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/publisherTrustedAlgorithmPublishers</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Compute"><code>oec:Compute</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="did">
+        <h3><a href="#did">oec:did</a> <span class="kind">Property</span></h3>
+        <p class="label">DID</p>
+        <p>Decentralized identifier.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/did</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#TrustedAlgorithm"><code>oec:TrustedAlgorithm</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="filesChecksum">
+        <h3><a href="#filesChecksum">oec:filesChecksum</a> <span class="kind">Property</span></h3>
+        <p class="label">Files Checksum</p>
+        <p>SHA-256 checksum of the algorithm files.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/filesChecksum</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#TrustedAlgorithm"><code>oec:TrustedAlgorithm</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="containerSectionChecksum">
+        <h3><a href="#containerSectionChecksum">oec:containerSectionChecksum</a> <span class="kind">Property</span></h3>
+        <p class="label">Container Section Checksum</p>
+        <p>SHA-256 checksum of the algorithm container section.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/containerSectionChecksum</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#TrustedAlgorithm"><code>oec:TrustedAlgorithm</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="allow">
+        <h3><a href="#allow">oec:allow</a> <span class="kind">Property</span></h3>
+        <p class="label">Allow</p>
+        <p>Allow list of credential/address policies.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/allow</code></dd>
+          <dt>Range</dt><dd><a href="#CredentialRule"><code>oec:CredentialRule</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="deny">
+        <h3><a href="#deny">oec:deny</a> <span class="kind">Property</span></h3>
+        <p class="label">Deny</p>
+        <p>Deny list of credential/address policies.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/deny</code></dd>
+          <dt>Range</dt><dd><a href="#CredentialRule"><code>oec:CredentialRule</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="matchDeny">
+        <h3><a href="#matchDeny">oec:matchDeny</a> <span class="kind">Property</span></h3>
+        <p class="label">Match Deny</p>
+        <p>How allow/deny matches are combined (&quot;any&quot; | &quot;all&quot;).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/matchDeny</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="type">
+        <h3><a href="#type">oec:type</a> <span class="kind">Property</span></h3>
+        <p class="label">Type</p>
+        <p>Type discriminator for a policy or parameter entry.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/type</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a>, <a href="#CredentialRule"><code>oec:CredentialRule</code></a>, <a href="#RequestCredential"><code>oec:RequestCredential</code></a>, <a href="#AccessDetails"><code>oec:AccessDetails</code></a>, <a href="#AdditionalDdo"><code>oec:AdditionalDdo</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="values">
+        <h3><a href="#values">oec:values</a> <span class="kind">Property</span></h3>
+        <p class="label">Values</p>
+        <p>Values carried by this policy entry.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/values</code></dd>
+          <dt>Range</dt><dd><span class="muted">any</span></dd>
+          <dt>Used in</dt><dd><a href="#CredentialRule"><code>oec:CredentialRule</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="requestCredentials">
+        <h3><a href="#requestCredentials">oec:requestCredentials</a> <span class="kind">Property</span></h3>
+        <p class="label">Request Credentials</p>
+        <p>Credentials the consumer must present.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/requestCredentials</code></dd>
+          <dt>Range</dt><dd><a href="#RequestCredential"><code>oec:RequestCredential</code></a></dd>
+          <dt>Used in</dt><dd><a href="#CredentialRule"><code>oec:CredentialRule</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="format">
+        <h3><a href="#format">oec:format</a> <span class="kind">Property</span></h3>
+        <p class="label">Format</p>
+        <p>Credential format (e.g. jwt_vc_json).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/format</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#RequestCredential"><code>oec:RequestCredential</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="policies">
+        <h3><a href="#policies">oec:policies</a> <span class="kind">Property</span></h3>
+        <p class="label">Policies</p>
+        <p>Credential policies (arrays or JSON-encoded strings).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/policies</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#RequestCredential"><code>oec:RequestCredential</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="vcPolicies">
+        <h3><a href="#vcPolicies">oec:vcPolicies</a> <span class="kind">Property</span></h3>
+        <p class="label">VC Policies</p>
+        <p>Policies applied to the Verifiable Credential.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/vcPolicies</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#CredentialRule"><code>oec:CredentialRule</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="vpPolicies">
+        <h3><a href="#vpPolicies">oec:vpPolicies</a> <span class="kind">Property</span></h3>
+        <p class="label">VP Policies</p>
+        <p>Policies applied to the Verifiable Presentation.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/vpPolicies</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#CredentialRule"><code>oec:CredentialRule</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="label">
+        <h3><a href="#label">oec:label</a> <span class="kind">Property</span></h3>
+        <p class="label">Label</p>
+        <p>Human-readable label for the parameter.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/label</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="description">
+        <h3><a href="#description">oec:description</a> <span class="kind">Property</span></h3>
+        <p class="label">Description</p>
+        <p>Human-readable description.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/description</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="default">
+        <h3><a href="#default">oec:default</a> <span class="kind">Property</span></h3>
+        <p class="label">Default</p>
+        <p>Default value for the parameter.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/default</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="required">
+        <h3><a href="#required">oec:required</a> <span class="kind">Property</span></h3>
+        <p class="label">Required</p>
+        <p>Whether the consumer must supply the parameter.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/required</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#boolean"><code>xsd:boolean</code></a></dd>
+          <dt>Used in</dt><dd><a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="options">
+        <h3><a href="#options">oec:options</a> <span class="kind">Property</span></h3>
+        <p class="label">Options</p>
+        <p>Selectable options for a `select`-type parameter.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/options</code></dd>
+          <dt>Range</dt><dd><span class="muted">any</span></dd>
+          <dt>Used in</dt><dd><a href="#ConsumerParameter"><code>oec:ConsumerParameter</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="owner">
+        <h3><a href="#owner">oec:owner</a> <span class="kind">Property</span></h3>
+        <p class="label">Owner</p>
+        <p>Blockchain address of the current owner.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/owner</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#NFT"><code>oec:NFT</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="tokenURI">
+        <h3><a href="#tokenURI">oec:tokenURI</a> <span class="kind">Property</span></h3>
+        <p class="label">Token URI</p>
+        <p>URI of the token metadata (image, description).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/tokenURI</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#NFT"><code>oec:NFT</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="block">
+        <h3><a href="#block">oec:block</a> <span class="kind">Property</span></h3>
+        <p class="label">Block</p>
+        <p>Block number of the event.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/block</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Event"><code>oec:Event</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="contract">
+        <h3><a href="#contract">oec:contract</a> <span class="kind">Property</span></h3>
+        <p class="label">Contract</p>
+        <p>Contract address that emitted the event.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/contract</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Event"><code>oec:Event</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="datetime">
+        <h3><a href="#datetime">oec:datetime</a> <span class="kind">Property</span></h3>
+        <p class="label">Datetime</p>
+        <p>Timestamp of the event.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/datetime</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#dateTime"><code>xsd:dateTime</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Event"><code>oec:Event</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="from">
+        <h3><a href="#from">oec:from</a> <span class="kind">Property</span></h3>
+        <p class="label">From</p>
+        <p>Address that initiated the event.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/from</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Event"><code>oec:Event</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="tx">
+        <h3><a href="#tx">oec:tx</a> <span class="kind">Property</span></h3>
+        <p class="label">Transaction</p>
+        <p>Transaction hash of the event.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/tx</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Event"><code>oec:Event</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="allocated">
+        <h3><a href="#allocated">oec:allocated</a> <span class="kind">Property</span></h3>
+        <p class="label">Allocated</p>
+        <p>Total number of allocated orders.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/allocated</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="orders">
+        <h3><a href="#orders">oec:orders</a> <span class="kind">Property</span></h3>
+        <p class="label">Orders</p>
+        <p>Total number of orders.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/orders</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="price">
+        <h3><a href="#price">oec:price</a> <span class="kind">Property</span></h3>
+        <p class="label">Price</p>
+        <p>Price information for the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/price</code></dd>
+          <dt>Range</dt><dd><a href="#Price"><code>oec:Price</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="tokenAddress">
+        <h3><a href="#tokenAddress">oec:tokenAddress</a> <span class="kind">Property</span></h3>
+        <p class="label">Token Address</p>
+        <p>Address of the payment token.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/tokenAddress</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Price"><code>oec:Price</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="tokenSymbol">
+        <h3><a href="#tokenSymbol">oec:tokenSymbol</a> <span class="kind">Property</span></h3>
+        <p class="label">Token Symbol</p>
+        <p>Symbol of the payment token (e.g. EURC).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/tokenSymbol</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Price"><code>oec:Price</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="value">
+        <h3><a href="#value">oec:value</a> <span class="kind">Property</span></h3>
+        <p class="label">Value</p>
+        <p>Numeric or string value.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/value</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Price"><code>oec:Price</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="addressOrId">
+        <h3><a href="#addressOrId">oec:addressOrId</a> <span class="kind">Property</span></h3>
+        <p class="label">Address or ID</p>
+        <p>Address or identifier used to look up the price.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/addressOrId</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="isOwned">
+        <h3><a href="#isOwned">oec:isOwned</a> <span class="kind">Property</span></h3>
+        <p class="label">Is Owned</p>
+        <p>Whether the caller already owns the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/isOwned</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#boolean"><code>xsd:boolean</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="isPurchasable">
+        <h3><a href="#isPurchasable">oec:isPurchasable</a> <span class="kind">Property</span></h3>
+        <p class="label">Is Purchasable</p>
+        <p>Whether the asset is currently purchasable.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/isPurchasable</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#boolean"><code>xsd:boolean</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="publisherMarketOrderFee">
+        <h3><a href="#publisherMarketOrderFee">oec:publisherMarketOrderFee</a> <span class="kind">Property</span></h3>
+        <p class="label">Publisher Market Order Fee</p>
+        <p>Fee charged by the publisher per order.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/publisherMarketOrderFee</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="templateId">
+        <h3><a href="#templateId">oec:templateId</a> <span class="kind">Property</span></h3>
+        <p class="label">Template ID</p>
+        <p>ID of the datatoken template used.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/templateId</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#integer"><code>xsd:integer</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="validOrderTx">
+        <h3><a href="#validOrderTx">oec:validOrderTx</a> <span class="kind">Property</span></h3>
+        <p class="label">Valid Order Transaction</p>
+        <p>Transaction hash of a valid order, if any.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/validOrderTx</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="paymentCollector">
+        <h3><a href="#paymentCollector">oec:paymentCollector</a> <span class="kind">Property</span></h3>
+        <p class="label">Payment Collector</p>
+        <p>Address that collects payments for this asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/paymentCollector</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AccessDetails"><code>oec:AccessDetails</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="baseToken">
+        <h3><a href="#baseToken">oec:baseToken</a> <span class="kind">Property</span></h3>
+        <p class="label">Base Token</p>
+        <p>Base token used to price the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/baseToken</code></dd>
+          <dt>Range</dt><dd><a href="#Token"><code>oec:Token</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="datatoken">
+        <h3><a href="#datatoken">oec:datatoken</a> <span class="kind">Property</span></h3>
+        <p class="label">Datatoken</p>
+        <p>Datatoken granting access to the asset.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/datatoken</code></dd>
+          <dt>Range</dt><dd><a href="#Token"><code>oec:Token</code></a></dd>
+          <dt>Used in</dt><dd><code>dcat:Dataset</code> / <code>dcat:DataService</code></dd>
+        </dl>
+      </section>
+      <section class="term" id="language">
+        <h3><a href="#language">oec:language</a> <span class="kind">Property</span></h3>
+        <p class="label">Language</p>
+        <p>Programming language of the algorithm (e.g. py, js).</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/language</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Algorithm"><code>oec:Algorithm</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="version">
+        <h3><a href="#version">oec:version</a> <span class="kind">Property</span></h3>
+        <p class="label">Version</p>
+        <p>Version of the algorithm or container.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/version</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Algorithm"><code>oec:Algorithm</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="container">
+        <h3><a href="#container">oec:container</a> <span class="kind">Property</span></h3>
+        <p class="label">Container</p>
+        <p>Container information for the algorithm.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/container</code></dd>
+          <dt>Range</dt><dd><a href="#AlgorithmContainer"><code>oec:AlgorithmContainer</code></a></dd>
+          <dt>Used in</dt><dd><a href="#Algorithm"><code>oec:Algorithm</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="entrypoint">
+        <h3><a href="#entrypoint">oec:entrypoint</a> <span class="kind">Property</span></h3>
+        <p class="label">Entrypoint</p>
+        <p>Container entrypoint command.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/entrypoint</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AlgorithmContainer"><code>oec:AlgorithmContainer</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="image">
+        <h3><a href="#image">oec:image</a> <span class="kind">Property</span></h3>
+        <p class="label">Image</p>
+        <p>Container image name.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/image</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AlgorithmContainer"><code>oec:AlgorithmContainer</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="tag">
+        <h3><a href="#tag">oec:tag</a> <span class="kind">Property</span></h3>
+        <p class="label">Tag</p>
+        <p>Container image tag.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/tag</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AlgorithmContainer"><code>oec:AlgorithmContainer</code></a></dd>
+        </dl>
+      </section>
+      <section class="term" id="checksum">
+        <h3><a href="#checksum">oec:checksum</a> <span class="kind">Property</span></h3>
+        <p class="label">Checksum</p>
+        <p>Container checksum.</p>
+        <dl>
+          <dt>IRI</dt><dd><code>https://oceanenterprise.io/vocab/checksum</code></dd>
+          <dt>Range</dt><dd><a href="http://www.w3.org/2001/XMLSchema#string"><code>xsd:string</code></a></dd>
+          <dt>Used in</dt><dd><a href="#AlgorithmContainer"><code>oec:AlgorithmContainer</code></a></dd>
+        </dl>
+      </section>
+  </main>
+</body>
+</html>

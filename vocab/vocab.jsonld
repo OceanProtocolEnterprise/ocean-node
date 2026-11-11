@@ -1,0 +1,1729 @@
+{
+  "@context": {
+    "oec": "https://oceanenterprise.io/vocab/",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "dct": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "vann": "http://purl.org/vocab/vann/"
+  },
+  "@graph": [
+    {
+      "@id": "https://oceanenterprise.io/vocab/",
+      "@type": "owl:Ontology",
+      "dct:title": {
+        "@value": "Ocean Enterprise Vocabulary",
+        "@language": "en"
+      },
+      "dct:description": {
+        "@value": "Terms used in the DCAT representation of Ocean Enterprise assets that are not covered by DCAT-AP or GeoDCAT-AP: blockchain, datatoken, compute-to-data, access-policy and pricing metadata.",
+        "@language": "en"
+      },
+      "owl:versionInfo": "1.0.0",
+      "dct:issued": {
+        "@value": "2026-10-13",
+        "@type": "xsd:date"
+      },
+      "dct:modified": {
+        "@value": "2026-10-13",
+        "@type": "xsd:date"
+      },
+      "dct:publisher": {
+        "@id": "https://oceanenterprise.io"
+      },
+      "dct:license": {
+        "@id": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "vann:preferredNamespacePrefix": "oec",
+      "vann:preferredNamespaceUri": "https://oceanenterprise.io/vocab/"
+    },
+    {
+      "@id": "oec:Datatoken",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Datatoken",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "ERC-20 access token granting access to one service of an asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Token",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Token",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "ERC-20 token (base token or datatoken) used in pricing.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Algorithm",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Algorithm",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Language, version and container metadata of an algorithm asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:AlgorithmContainer",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Algorithm Container",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Docker container (image, tag, entrypoint, checksum) that runs an algorithm.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Compute",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Compute Configuration",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Compute-to-Data policy of a compute service: trusted algorithms and network access.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:TrustedAlgorithm",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Trusted Algorithm",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Algorithm the publisher has approved to run on a compute service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:ConsumerParameter",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Consumer Parameter",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Input the consumer supplies when ordering a service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Credentials",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Credentials",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Allow and deny lists that control who may access an asset or service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:CredentialRule",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Credential Rule",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "One allow or deny entry: an address list or an SSI policy.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:RequestCredential",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Request Credential",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Verifiable Credential (type, format, policies) the consumer must present.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:NFT",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Data NFT",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "ERC-721 data NFT that represents ownership of the asset on-chain.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Event",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Blockchain Event",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "On-chain event that created or last updated the asset metadata.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Stats",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Stats",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Order and price statistics for one service of the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Price",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Price",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Price of a service: payment token and amount.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:Purgatory",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Purgatory",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Whether the asset has been flagged and placed in purgatory.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:AccessDetails",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Access Details",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Pricing and access configuration derived from the DDO.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:AdditionalDdo",
+      "@type": [
+        "rdfs:Class",
+        "owl:Class"
+      ],
+      "rdfs:label": {
+        "@value": "Additional DDO",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Extension entry attached to the DDO outside the credential subject.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:chainId",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Chain ID",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Blockchain chain ID where the asset NFT is registered.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:nftAddress",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "NFT Address",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Contract address of the data NFT representing the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:issuer",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Issuer",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "DID of the entity that issued the Verifiable Credential.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:datatokens",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Datatokens",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Array of access tokens (datatokens) attached to the asset, one per service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Datatoken"
+      }
+    },
+    {
+      "@id": "oec:algorithm",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Algorithm",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Container and language metadata for algorithm assets.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Algorithm"
+      }
+    },
+    {
+      "@id": "oec:event",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Blockchain Event",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "On-chain event that created or updated the asset metadata.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Event"
+      }
+    },
+    {
+      "@id": "oec:nft",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "NFT Metadata",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Metadata of the data NFT (name, symbol, owner, state).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:NFT"
+      }
+    },
+    {
+      "@id": "oec:stats",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Stats",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Aggregated order/price statistics for the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Stats"
+      }
+    },
+    {
+      "@id": "oec:purgatory",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Purgatory",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Purgatory state of the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Purgatory"
+      }
+    },
+    {
+      "@id": "oec:accessDetails",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Access Details",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Pricing and access configuration derived from the DDO.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:AccessDetails"
+      }
+    },
+    {
+      "@id": "oec:services",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Services",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Array of data services exposed by the asset, each typed as dcat:DataService.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "dcat:DataService"
+      }
+    },
+    {
+      "@id": "oec:additionalDdos",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Additional DDOs",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Additional DDO entries attached to the asset (extensions).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:AdditionalDdo"
+      }
+    },
+    {
+      "@id": "oec:data",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Data",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Free-form data attached to an additional DDO entry.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:serviceType",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Service Type",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Type of the service: \"access\" or \"compute\".",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:datatokenAddress",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Datatoken Address",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Contract address of the datatoken for this service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:files",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Files",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Encrypted file descriptor (0x-prefixed hex).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:timeout",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Timeout",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Service timeout in seconds.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:state",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "State",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Service state code (0 = active).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:compute",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Compute Configuration",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Trusted algorithm and network policies for compute services.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Compute"
+      }
+    },
+    {
+      "@id": "oec:consumerParameters",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Consumer Parameters",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Parameters the consumer supplies when ordering the service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:ConsumerParameter"
+      }
+    },
+    {
+      "@id": "oec:credentials",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Credentials",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "SSI credential and address allow/deny lists required to access the service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Credentials"
+      }
+    },
+    {
+      "@id": "oec:address",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Address",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Blockchain address.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:name",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Name",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Human-readable name.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:symbol",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Symbol",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Token symbol.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:serviceId",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Service ID",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Identifier of the service this datatoken grants access to.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:decimals",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Decimals",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Number of decimals for a token amount.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:allowNetworkAccess",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Allow Network Access",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Whether compute jobs on this service can access the network.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:boolean"
+      }
+    },
+    {
+      "@id": "oec:allowRawAlgorithm",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Allow Raw Algorithm",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Whether raw (unpublished) algorithms may be run.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:boolean"
+      }
+    },
+    {
+      "@id": "oec:publisherTrustedAlgorithms",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Publisher Trusted Algorithms",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "List of algorithm DIDs the publisher has pre-approved for this compute service.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:TrustedAlgorithm"
+      }
+    },
+    {
+      "@id": "oec:publisherTrustedAlgorithmPublishers",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Publisher Trusted Algorithm Publishers",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "List of publisher addresses whose algorithms are trusted.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:did",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "DID",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Decentralized identifier.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:filesChecksum",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Files Checksum",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "SHA-256 checksum of the algorithm files.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:containerSectionChecksum",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Container Section Checksum",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "SHA-256 checksum of the algorithm container section.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:allow",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Allow",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Allow list of credential/address policies.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:CredentialRule"
+      }
+    },
+    {
+      "@id": "oec:deny",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Deny",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Deny list of credential/address policies.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:CredentialRule"
+      }
+    },
+    {
+      "@id": "oec:matchDeny",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Match Deny",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "How allow/deny matches are combined (\"any\" | \"all\").",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:type",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Type",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Type discriminator for a policy or parameter entry.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:values",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Values",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Values carried by this policy entry.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:requestCredentials",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Request Credentials",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Credentials the consumer must present.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:RequestCredential"
+      }
+    },
+    {
+      "@id": "oec:format",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Format",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Credential format (e.g. jwt_vc_json).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:policies",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Policies",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Credential policies (arrays or JSON-encoded strings).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:vcPolicies",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "VC Policies",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Policies applied to the Verifiable Credential.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:vpPolicies",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "VP Policies",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Policies applied to the Verifiable Presentation.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:label",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Label",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Human-readable label for the parameter.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:description",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Description",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Human-readable description.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:default",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Default",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Default value for the parameter.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:required",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Required",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Whether the consumer must supply the parameter.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:boolean"
+      }
+    },
+    {
+      "@id": "oec:options",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Options",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Selectable options for a `select`-type parameter.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      }
+    },
+    {
+      "@id": "oec:owner",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Owner",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Blockchain address of the current owner.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:tokenURI",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Token URI",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "URI of the token metadata (image, description).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:block",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Block",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Block number of the event.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:contract",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Contract",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Contract address that emitted the event.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:datetime",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Datetime",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Timestamp of the event.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:dateTime"
+      }
+    },
+    {
+      "@id": "oec:from",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "From",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Address that initiated the event.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:tx",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Transaction",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Transaction hash of the event.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:allocated",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Allocated",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Total number of allocated orders.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:orders",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Orders",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Total number of orders.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:price",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Price",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Price information for the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Price"
+      }
+    },
+    {
+      "@id": "oec:tokenAddress",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Token Address",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Address of the payment token.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:tokenSymbol",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Token Symbol",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Symbol of the payment token (e.g. EURC).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:value",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Value",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Numeric or string value.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:addressOrId",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Address or ID",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Address or identifier used to look up the price.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:isOwned",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Is Owned",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Whether the caller already owns the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:boolean"
+      }
+    },
+    {
+      "@id": "oec:isPurchasable",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Is Purchasable",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Whether the asset is currently purchasable.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:boolean"
+      }
+    },
+    {
+      "@id": "oec:publisherMarketOrderFee",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Publisher Market Order Fee",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Fee charged by the publisher per order.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:templateId",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Template ID",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "ID of the datatoken template used.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:integer"
+      }
+    },
+    {
+      "@id": "oec:validOrderTx",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Valid Order Transaction",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Transaction hash of a valid order, if any.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:paymentCollector",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Payment Collector",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Address that collects payments for this asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:baseToken",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Base Token",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Base token used to price the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Token"
+      }
+    },
+    {
+      "@id": "oec:datatoken",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Datatoken",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Datatoken granting access to the asset.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:Token"
+      }
+    },
+    {
+      "@id": "oec:language",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Language",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Programming language of the algorithm (e.g. py, js).",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:version",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Version",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Version of the algorithm or container.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:container",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Container",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Container information for the algorithm.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "oec:AlgorithmContainer"
+      }
+    },
+    {
+      "@id": "oec:entrypoint",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Entrypoint",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Container entrypoint command.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:image",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Image",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Container image name.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:tag",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Tag",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Container image tag.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    },
+    {
+      "@id": "oec:checksum",
+      "@type": "rdf:Property",
+      "rdfs:label": {
+        "@value": "Checksum",
+        "@language": "en"
+      },
+      "rdfs:comment": {
+        "@value": "Container checksum.",
+        "@language": "en"
+      },
+      "rdfs:isDefinedBy": {
+        "@id": "https://oceanenterprise.io/vocab/"
+      },
+      "rdfs:range": {
+        "@id": "xsd:string"
+      }
+    }
+  ]
+}
