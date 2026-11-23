@@ -31,6 +31,7 @@ import {
 } from '../../utils/index.js'
 import { DownloadHandler } from '../../components/core/handler/downloadHandler.js'
 import { GetDdoHandler } from '../../components/core/handler/ddoHandler.js'
+import { ProviderFees } from '../../components/core/utils/feesHandler.js'
 
 import { Readable } from 'stream'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
@@ -321,6 +322,24 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
   it('should start an order for all consumers', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 3)
 
+    // Enterprise checks credentials at getFees/initialize, so denied consumers get no
+    // provider fee from FeesHandler. Build the fees directly to place the on-chain orders;
+    // the download tests below then assert the credential denial.
+    const providerFeesFactory = new ProviderFees(oceanNode)
+    const createTestProviderFees = async (asset: any) => {
+      const service = asset.services[0]
+      const now = Date.now() / 1000
+      const validUntil = service.timeout === 0 ? 0 : now + service.timeout
+      const providerFees = await providerFeesFactory.createProviderFee(
+        asset,
+        service,
+        validUntil
+      )
+      assert(providerFees, 'provider fees could not be created')
+      return providerFees
+    }
+
+    const providerFees = await createTestProviderFees(ddo)
     for (let i = 0; i < 3; i++) {
       const orderTxReceipt = await orderAsset(
         ddo,
@@ -328,13 +347,16 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
         consumerAccounts[i],
         consumerAddresses[i],
         publisherAccount,
-        oceanNode
+        oceanNode,
+        providerFees
       )
       assert(orderTxReceipt, `order transaction for consumer ${i} failed`)
       const txHash = orderTxReceipt.hash
       assert(txHash, `transaction id not found for consumer ${i}`)
       orderTxIds.push(txHash)
     }
+
+    const providerFeesWithMatchAll = await createTestProviderFees(ddoWithMatchAll)
     for (let i = 0; i < 3; i++) {
       const orderTxReceipt = await orderAsset(
         ddoWithMatchAll,
@@ -342,7 +364,8 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
         consumerAccounts[i],
         consumerAddresses[i],
         publisherAccount,
-        oceanNode
+        oceanNode,
+        providerFeesWithMatchAll
       )
       assert(orderTxReceipt, `order transaction for consumer ${i} failed`)
       const txHash = orderTxReceipt.hash
