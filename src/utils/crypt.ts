@@ -1,67 +1,56 @@
-import eciesjs from 'eciesjs'
 import { EncryptMethod } from '../@types/fileObject.js'
 import crypto from 'crypto'
-import { getConfiguration } from './config.js'
-
-/**
- * This method encrypts data according to a given algorithm using node keys
- * @param data data to encrypt
- * @param algorithm encryption algorithm AES or ECIES
- */
-export async function encrypt(
-  data: Uint8Array,
-  algorithm: EncryptMethod
-): Promise<Buffer> {
-  let encryptedData: Buffer
-  const config = await getConfiguration()
-  const { privateKey, publicKey } = config.keys
-  if (algorithm === EncryptMethod.AES) {
-    // use first 16 bytes of public key as an initialisation vector
-    const initVector = publicKey.subarray(0, 16)
-    // creates cipher object, with the given algorithm, key and initialization vector
-    const cipher = crypto.createCipheriv('aes-256-cbc', privateKey.raw, initVector)
-    // encoding is ignored because we are working with bytes and want to return a buffer
-    encryptedData = Buffer.concat([cipher.update(data), cipher.final()])
-  } else if (algorithm === EncryptMethod.ECIES) {
-    const sk = new eciesjs.PrivateKey(privateKey.raw)
-    // get public key from Elliptic curve
-    encryptedData = Buffer.from(eciesjs.encrypt(sk.publicKey.toHex(), data))
-  }
-  return encryptedData
-}
-
-/**
- * This method decrypts data according to a given algorithm using node keys
- * @param data data to decrypt
- * @param algorithm decryption algorithm AES or ECIES
- */
-export async function decrypt(
-  data: Uint8Array,
-  algorithm: EncryptMethod
-): Promise<Buffer> {
-  let decryptedData: Buffer
-  const config = await getConfiguration()
-  const { privateKey, publicKey } = config.keys
-  if (algorithm === EncryptMethod.AES) {
-    // use first 16 bytes of public key as an initialisation vector
-    const initVector = publicKey.subarray(0, 16)
-    // creates decipher object, with the given algorithm, key and initialization vector
-
-    const decipher = crypto.createDecipheriv('aes-256-cbc', privateKey.raw, initVector)
-
-    // encoding is ignored because we are working with bytes and want to return a buffer
-    decryptedData = Buffer.concat([decipher.update(data), decipher.final()])
-  } else if (algorithm === EncryptMethod.ECIES) {
-    const sk = new eciesjs.PrivateKey(privateKey.raw)
-    decryptedData = Buffer.from(eciesjs.decrypt(sk.secret, data))
-  }
-  return decryptedData
-}
+import { PROTOCOL_COMMANDS } from './constants.js'
 
 // this can be handy as we do this kind of hash in multiple places
 export function create256Hash(input: string): string {
   const result = crypto.createHash('sha256').update(input).digest('hex')
   return '0x' + result
+}
+
+/**
+ * ON-02: single source of truth for the DECRYPT_DDO signed message.
+ *
+ * The signer (Indexer `BaseProcessor.decryptDDO`) and the verifier
+ * (`verifySignatureForConsumer` in core/utils/nonceHandler) MUST build this message
+ * identically or every cross-node HTTP decrypt breaks — so it lives in exactly one place that
+ * both import, and must never be forked into an "accept the old scheme too" variant.
+ *
+ * Unlike the generic `consumer + nonce + command + issuerPeerId` message used by every other
+ * command, the DECRYPT_DDO message additionally binds:
+ *  - `issuerPeerId`  → the VERIFIER node's own peerId (destination binding): a signature minted
+ *    for node A is useless at node B.
+ *  - `chainId + txId + dataNftAddress` → resource binding: a signature for one asset cannot be
+ *    replayed to decrypt another.
+ *
+ * All fields are stringified exactly as the legacy construction did, so a value is bound by its
+ * string form. Empty/undefined binding fields collapse to '' — never pass this helper for a
+ * non-DECRYPT_DDO command (those keep their byte-for-byte original message).
+ *
+ * `dataNftAddress` is lower-cased so the binding is casing-agnostic: a caller that signs the
+ * lower-case form of the NFT address still verifies, exactly the tolerance `verifyConsumerSignature`
+ * already gives the decrypter address (via `addressCasingVariants`). Because both the signer and
+ * the verifier go through this one helper, lower-casing here keeps node↔node identical while also
+ * accepting a lower-case-signing client — the node checksum-normalizes the address on ingress, so
+ * without this an SDK that signed the lower-case form would never match.
+ */
+export function buildDecryptDDOSignatureMessage(fields: {
+  decrypterAddress: string
+  nonce: string | number
+  issuerPeerId: string
+  chainId: string | number
+  txId: string
+  dataNftAddress: string
+}): string {
+  return String(
+    String(fields.decrypterAddress) +
+      String(fields.nonce) +
+      String(PROTOCOL_COMMANDS.DECRYPT_DDO) +
+      String(fields.issuerPeerId ?? '') +
+      String(fields.chainId ?? '') +
+      String(fields.txId ?? '') +
+      String(fields.dataNftAddress ?? '').toLowerCase()
+  )
 }
 
 // convert from string format to EncryptMethod (case insensitive)

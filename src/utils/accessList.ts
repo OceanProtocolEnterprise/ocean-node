@@ -1,6 +1,8 @@
 import AccessListJson from '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessList.sol/AccessList.json' with { type: 'json' }
 import { ethers, Signer } from 'ethers'
 import { CORE_LOGGER } from './logging/common.js'
+import { LOG_LEVELS_STR } from './logging/Logger.js'
+import { errorSummary } from './logging/redact.js'
 import { AccessList } from '../@types/AccessList.js'
 import { OceanNode } from '../OceanNode.js'
 
@@ -16,8 +18,10 @@ export async function checkAddressOnAccessListWithSigner(
   addressToCheck: string,
   signer: Signer
 ): Promise<boolean> {
-  if (!accessListContractAddress) {
-    return true
+  // Fail closed: an empty/invalid contract address must never grant access. ("No list
+  // configured = open" is decided by the callers, before they get here.)
+  if (!accessListContractAddress || !ethers.isAddress(accessListContractAddress)) {
+    return false
   }
   const accessListContract = new ethers.Contract(
     accessListContractAddress,
@@ -27,17 +31,20 @@ export async function checkAddressOnAccessListWithSigner(
   try {
     // if has at least 1 token than is is authorized
     const balance = await accessListContract.balanceOf(addressToCheck)
+    CORE_LOGGER.resetThrottle(`accessList:${accessListContractAddress}`)
     if (Number(balance) > 0) {
       return true
     } else {
-      CORE_LOGGER.error(
-        `Account ${addressToCheck} is NOT part of the given access list group.`
+      CORE_LOGGER.debug(
+        `Account ${addressToCheck} is not on access list ${accessListContractAddress}`
       )
       return false
     }
   } catch (error) {
-    CORE_LOGGER.error(
-      `Failed to check access list ${accessListContractAddress}: ${error.message}`
+    CORE_LOGGER.throttled(
+      `accessList:${accessListContractAddress}`,
+      LOG_LEVELS_STR.LEVEL_ERROR,
+      `Failed to check access list ${accessListContractAddress}: ${errorSummary(error)}`
     )
     return false
   }
@@ -56,18 +63,35 @@ export async function checkAddressOnAccessList(
   for (const accessListMap of access) {
     if (!accessListMap) continue
     for (const chain of Object.keys(accessListMap)) {
-      const { chainId } = supportedNetworks[chain]
+      const network = supportedNetworks?.[chain]
+      if (!network) {
+        CORE_LOGGER.warn(
+          `Access list references chain ${chain}, which is not a supported network, skipping`
+        )
+        continue
+      }
+      const { chainId } = network
       try {
         const blockchain = oceanNode.getBlockchain(chainId)
         if (!blockchain) {
-          CORE_LOGGER.logMessage(
-            `Blockchain instance not available for chain ${chainId}, skipping access list check`,
-            true
+          CORE_LOGGER.warn(
+            `Blockchain instance not available for chain ${chainId}, skipping access list check`
           )
           continue
         }
         const signer = await blockchain.getSigner()
-        for (const accessListAddress of accessListMap[chain]) {
+        for (const accessListAddress of accessListMap[chain] ?? []) {
+          // An empty/invalid entry must never grant access (the signer-level helper treats a
+          // falsy contract address as "no restriction"), so skip anything that is not an address.
+          if (
+            typeof accessListAddress !== 'string' ||
+            !ethers.isAddress(accessListAddress)
+          ) {
+            CORE_LOGGER.warn(
+              `Ignoring invalid access list entry "${accessListAddress}" on chain ${chain}`
+            )
+            continue
+          }
           const hasAccess = await checkAddressOnAccessListWithSigner(
             accessListAddress,
             consumerAddress,
@@ -78,9 +102,8 @@ export async function checkAddressOnAccessList(
           }
         }
       } catch (error) {
-        CORE_LOGGER.logMessage(
-          `Failed to check access lists on chain ${chain}: ${error.message}`,
-          true
+        CORE_LOGGER.error(
+          `Failed to check access lists on chain ${chain}: ${errorSummary(error)}`
         )
       }
     }

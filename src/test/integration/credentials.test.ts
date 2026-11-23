@@ -20,7 +20,7 @@ import { OceanIndexer } from '../../components/Indexer/index.js'
 import { OceanNode } from '../../OceanNode.js'
 import { RPCS, SupportedNetwork } from '../../@types/blockchain.js'
 import { streamToObject } from '../../utils/util.js'
-import { expectedTimeoutFailure, waitForCondition, waitToIndex } from './testUtils.js'
+import { expectedTimeoutFailure, waitToIndex, waitForCondition } from './testUtils.js'
 
 import {
   Blockchain,
@@ -31,7 +31,6 @@ import {
 } from '../../utils/index.js'
 import { DownloadHandler } from '../../components/core/handler/downloadHandler.js'
 import { GetDdoHandler } from '../../components/core/handler/ddoHandler.js'
-import { ProviderFees } from '../../components/core/utils/feesHandler.js'
 
 import { Readable } from 'stream'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
@@ -70,6 +69,7 @@ import { createHashForSignature, safeSign } from '../utils/signature.js'
 describe('**********         [Credentials Flow] - Should run a complete node flow.', () => {
   let config: OceanNodeConfig
   let oceanNode: OceanNode
+  let database: Database
   let provider: JsonRpcProvider
   let computeEnvironments: any
   let firstEnv: any
@@ -136,7 +136,18 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
     )
 
     config = await getConfiguration(true) // Force reload the configuration
-    const database = await Database.init(config.dbConfig)
+    database = await Database.init(config.dbConfig)
+
+    // Stop any indexer left running by a previous integration test file before we spin up our
+    // own. Integration suites share one process, one DB and the OceanNode singleton, so a stale
+    // indexer constructed WITHOUT this suite's AUTHORIZED_PUBLISHERS config keeps polling chain
+    // 8996 and would index assets this suite expects to be rejected — the root cause of the flaky
+    // "should NOT allow to index ... AUTHORIZED_PUBLISHERS" failures.
+    const oldIndexer = OceanNode.getInstance(config, database).getIndexer()
+    if (oldIndexer) {
+      await oldIndexer.stopAllChainIndexers()
+    }
+
     oceanNode = OceanNode.getInstance(
       config,
       database,
@@ -147,9 +158,8 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
       null,
       true
     )
-    // A forced singleton replacement tears the previous node down asynchronously. Wait here
-    // before constructing the test indexer so its processor cache cannot be repopulated by an
-    // older indexer carrying another suite's authorization config.
+    // Wait for the previous instance's async teardown (scheduled by getInstance above) to finish
+    // so the old and new indexers never overlap while crawling.
     await OceanNode.awaitPendingTeardown()
     const indexer = new OceanIndexer(database, config, oceanNode.blockchainRegistry)
     oceanNode.addIndexer(indexer)
@@ -311,21 +321,6 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
   it('should start an order for all consumers', async function () {
     this.timeout(DEFAULT_TEST_TIMEOUT * 3)
 
-    const providerFeesFactory = new ProviderFees(oceanNode)
-    const createTestProviderFees = async (asset: any) => {
-      const service = asset.services[0]
-      const now = Date.now() / 1000
-      const validUntil = service.timeout === 0 ? 0 : now + service.timeout
-      const providerFees = await providerFeesFactory.createProviderFee(
-        asset,
-        service,
-        validUntil
-      )
-      assert(providerFees, 'provider fees could not be created')
-      return providerFees
-    }
-
-    const providerFees = await createTestProviderFees(ddo)
     for (let i = 0; i < 3; i++) {
       const orderTxReceipt = await orderAsset(
         ddo,
@@ -333,16 +328,13 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
         consumerAccounts[i],
         consumerAddresses[i],
         publisherAccount,
-        oceanNode,
-        providerFees
+        oceanNode
       )
       assert(orderTxReceipt, `order transaction for consumer ${i} failed`)
       const txHash = orderTxReceipt.hash
       assert(txHash, `transaction id not found for consumer ${i}`)
       orderTxIds.push(txHash)
     }
-
-    const providerFeesWithMatchAll = await createTestProviderFees(ddoWithMatchAll)
     for (let i = 0; i < 3; i++) {
       const orderTxReceipt = await orderAsset(
         ddoWithMatchAll,
@@ -350,8 +342,7 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
         consumerAccounts[i],
         consumerAddresses[i],
         publisherAccount,
-        oceanNode,
-        providerFeesWithMatchAll
+        oceanNode
       )
       assert(orderTxReceipt, `order transaction for consumer ${i} failed`)
       const txHash = orderTxReceipt.hash
@@ -622,31 +613,47 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
     const nonAuthorizedAccount = (await provider.getSigner(4)) as Signer
     const authorizedAccount = await publisherAccount.getAddress()
 
-    expect(
-      config.authorizedPublishers.length === 1 &&
-        config.authorizedPublishers[0] === authorizedAccount,
-      'Unable to set AUTHORIZED_PUBLISHERS'
+    // #3: the previous `expect(boolean, msg)` had no matcher, so it asserted nothing — a
+    // mis-applied AUTHORIZED_PUBLISHERS override passed silently and left the rest of the test
+    // meaningless. Assert the config for real.
+    expect(config.authorizedPublishers.length).to.equal(1)
+    expect(config.authorizedPublishers[0].toLowerCase()).to.equal(
+      authorizedAccount.toLowerCase()
     )
 
     const publishedDataset = await publishAsset(
       downloadAssetWithCredentials,
       nonAuthorizedAccount
     )
+    const rejectedDid = publishedDataset?.ddo.id
 
-    const did = publishedDataset?.ddo.id
-    const database = await oceanNode.getDatabase()
-    const rejectionState = await waitForCondition(async () => {
-      const state = await database.ddoState.retrieve(did)
-      return state?.valid === false ? state : null
+    // It must NOT land in the DDO collection (this wait times out on success).
+    const { ddo: indexedDdo } = await waitToIndex(
+      oceanNode,
+      rejectedDid,
+      EVENTS.METADATA_CREATED,
+      DEFAULT_TEST_TIMEOUT
+    )
+    assert(indexedDdo === null, 'DDO should NOT have been indexed')
+
+    // #2: assert the gate POSITIVELY rejected this publisher instead of only asserting absence
+    // from the collection — "absent" also holds when the event was simply never processed, which
+    // is exactly what masked the flake. The MetadataEventProcessor records an invalid ddoState
+    // ("... is NOT part of the AUTHORIZED_PUBLISHERS group.") when it rejects, so require that
+    // explicit record: a deterministic signal that this node's gate actually fired.
+    const rejectedState = await waitForCondition(async () => {
+      const state = await database.ddoState.retrieve(rejectedDid)
+      return state && state.valid === false ? state : null
     }, DEFAULT_TEST_TIMEOUT)
-
-    expect(rejectionState, 'Missing rejected DDO state').to.not.equal(null)
-    expect(rejectionState?.error?.toLowerCase()).to.include(
-      `not part of the ${ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS.name.toLowerCase()} group`
+    assert(
+      rejectedState && rejectedState.valid === false,
+      'DDO should be recorded as rejected: publisher not on AUTHORIZED_PUBLISHERS'
     )
     assert(
-      (await database.ddo.retrieve(did)) === null,
-      'DDO should NOT have been indexed'
+      String(rejectedState.error).includes(
+        ENVIRONMENT_VARIABLES.AUTHORIZED_PUBLISHERS.name
+      ),
+      'ddoState rejection reason should reference AUTHORIZED_PUBLISHERS'
     )
   })
 })

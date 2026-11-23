@@ -94,7 +94,22 @@ import {
   deployAndGetAccessListConfig,
   ensureEnterpriseFeeTokenAllowed
 } from '../utils/contracts.js'
-import * as tar from 'tar'
+import yauzl from 'yauzl'
+
+async function readOutputZip(file: string, filename: string): Promise<string> {
+  const zip = await yauzl.openPromise(file)
+  try {
+    for await (const entry of zip.eachEntry()) {
+      if (entry.fileName !== filename) continue
+      const chunks: Buffer[] = []
+      for await (const chunk of await zip.openReadStreamPromise(entry)) chunks.push(chunk)
+      return Buffer.concat(chunks).toString('utf8')
+    }
+    throw new Error(`Expected ${filename} inside ${file}`)
+  } finally {
+    zip.close()
+  }
+}
 
 /**
  * Polls getComputeEnvironments until every environment's resources (and free.resources)
@@ -524,7 +539,10 @@ describe('**********         Compute', () => {
         token: paymentToken
       },
       maxJobDuration: computeJobDuration,
-      consumerAddress: firstEnv.consumerAddress,
+      // consumer must be the order's payer (consumerAccount started the order), not the
+      // env address: the order check now binds payer === caller, so validOrder is only
+      // returned for the wallet that actually paid.
+      consumerAddress: await consumerAccount.getAddress(),
       command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE
     }
     const resp = await new ComputeInitializeHandler(oceanNode).handle(
@@ -620,7 +638,10 @@ describe('**********         Compute', () => {
         token: paymentToken
       },
       maxJobDuration: computeJobDuration,
-      consumerAddress: firstEnv.consumerAddress,
+      // consumer must be the order's payer (consumerAccount started both orders), not the
+      // env address: the order check now binds payer === caller, so validOrder is only
+      // returned for the wallet that actually paid.
+      consumerAddress: await consumerAccount.getAddress(),
       command: PROTOCOL_COMMANDS.COMPUTE_INITIALIZE
     }
     const resp = await new ComputeInitializeHandler(oceanNode).handle(
@@ -719,15 +740,14 @@ describe('**********         Compute', () => {
       .deposit(initializeResponse.payment.token, balance)
     await depositTx.wait()
 
-    const authorizeTx = await escrowContract
-      .connect(consumerAccount)
-      .authorize(
-        initializeResponse.payment.token,
-        firstEnv.consumerAddress,
-        balance,
-        initializeResponse.payment.minLockSeconds,
-        10
-      )
+    const authorizeTx = await escrowContract.connect(consumerAccount).authorize(
+      initializeResponse.payment.token,
+      firstEnv.consumerAddress,
+      balance,
+      initializeResponse.payment.minLockSeconds,
+      10,
+      0 // expiryTimestamp: 0 = indefinite (Escrow v2)
+    )
     await authorizeTx.wait()
 
     const fundsBefore = await oceanNode.escrow.getUserAvailableFunds(
@@ -808,6 +828,192 @@ describe('**********         Compute', () => {
     jobWithOutputURL = jobs[0].jobId
   })
 
+  // ── user-supplied subsidyProviders (PaidComputeStartHandler) ──────────────
+  // Mirrors the service-handler coverage in services.test.ts. These reuse the same valid
+  // datasets/orders/env as the successful start above; the reject cases return before createLock
+  // (no escrow funds consumed).
+  const SUBSIDY_WHITELISTED = '0xe2DD09d719Da89e5a3D0F2549c7E24566e947260'
+  const SUBSIDY_NON_WHITELISTED = '0x529043886F21D9bc1AE0feDb751e34265a246e47'
+
+  // Temporarily flip the live node config to SUBSIDY_PROVIDER_FILTER=on with a whitelist, run fn,
+  // then restore. Handlers read config by reference via getConfig(); try/finally prevents leakage.
+  async function withSubsidyFilter(
+    whitelist: Record<string, string[]>,
+    fn: () => Promise<void>
+  ): Promise<void> {
+    const cfg = oceanNode.getConfig()
+    const prevFilter = cfg.subsidyProviderFilter
+    const prevProviders = cfg.subsidyProviders
+    cfg.subsidyProviderFilter = true
+    cfg.subsidyProviders = whitelist
+    try {
+      await fn()
+    } finally {
+      cfg.subsidyProviderFilter = prevFilter
+      cfg.subsidyProviders = prevProviders
+    }
+  }
+
+  // Temporarily install a SUBSIDY_PROVIDER_ALLOWED_IMAGES map on the live node config, run fn,
+  // then restore. Same reference-config trick as withSubsidyFilter.
+  async function withAllowedImages(
+    map: Record<string, string[]> | null,
+    fn: () => Promise<void>
+  ): Promise<void> {
+    const cfg = oceanNode.getConfig()
+    const prev = cfg.subsidyProviderAllowedImages
+    cfg.subsidyProviderAllowedImages = map
+    try {
+      await fn()
+    } finally {
+      cfg.subsidyProviderAllowedImages = prev
+    }
+  }
+
+  async function buildPaidStartTask(
+    subsidyProviders?: string[]
+  ): Promise<PaidComputeStartCommand> {
+    const nonce = Date.now().toString()
+    const signature = await safeSign(
+      consumerAccount,
+      createHashForSignature(
+        await consumerAccount.getAddress(),
+        nonce,
+        PROTOCOL_COMMANDS.COMPUTE_START
+      )
+    )
+    const re = firstEnv.resources.map((res) => ({ id: res.id, amount: res.min }))
+    const task: PaidComputeStartCommand = {
+      command: PROTOCOL_COMMANDS.COMPUTE_START,
+      consumerAddress: await consumerAccount.getAddress(),
+      signature,
+      nonce,
+      environment: firstEnv.id,
+      datasets: [
+        {
+          documentId: publishedComputeDataset.ddo.id,
+          serviceId: publishedComputeDataset.ddo.services[0].id,
+          transferTxId: datasetOrderTxId
+        }
+      ],
+      algorithm: {
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: algoOrderTxId,
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      },
+      payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken },
+      maxJobDuration: computeJobDuration,
+      resources: re
+    }
+    if (subsidyProviders !== undefined) task.subsidyProviders = subsidyProviders
+    return task
+  }
+
+  it('COMPUTE_START rejects an invalid subsidyProviders address (400)', async () => {
+    const task = await buildPaidStartTask(['0xnot-an-address'])
+    const response = await new PaidComputeStartHandler(oceanNode).handle(task)
+    expect(response.status.httpStatus).to.equal(400)
+    expect(response.status.error).to.contain('subsidy provider')
+  })
+
+  it('COMPUTE_START rejects a provider outside the whitelist when the filter is on (400)', async () => {
+    await withSubsidyFilter(
+      { [String(DEVELOPMENT_CHAIN_ID)]: [SUBSIDY_WHITELISTED] },
+      async () => {
+        const task = await buildPaidStartTask([SUBSIDY_NON_WHITELISTED])
+        const response = await new PaidComputeStartHandler(oceanNode).handle(task)
+        expect(response.status.httpStatus).to.equal(400)
+        expect(response.status.error).to.contain('not allowed')
+      }
+    )
+  })
+
+  it('COMPUTE_START persists a checksummed, whitelisted subsidyProviders list on the job payment', async function () {
+    // Needs escrow funds (createLock runs). Funds are still available here — the next test drains
+    // them. The persisted value is written synchronously by startComputeJob, so it is readable
+    // straight from the DB regardless of what the async batched claim does later (the whitelisted
+    // EOA is not a real subsidy contract, so that claim is expected to revert-and-cancel).
+    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+    await withSubsidyFilter(
+      { [String(DEVELOPMENT_CHAIN_ID)]: [SUBSIDY_WHITELISTED] },
+      async () => {
+        // lower-case on input; the resolver must persist the EIP-55 checksummed form
+        const task = await buildPaidStartTask([SUBSIDY_WHITELISTED.toLowerCase()])
+        const response = await new PaidComputeStartHandler(oceanNode).handle(task)
+        assert(
+          response.status.httpStatus === 200,
+          `expected 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+        )
+        const startedJobs = await streamToObject(response.stream as Readable)
+        const { jobId } = startedJobs[0]
+        assert(jobId, 'no jobId returned')
+
+        // The public jobId is `<clusterHash>-<internalId>` (see getComputeJobStatus). The DB keys
+        // on the internal id, so strip the cluster-hash prefix before looking it up.
+        const internalJobId = jobId.substring(jobId.indexOf('-') + 1)
+        const [stored] = await dbconn.c2d.getJob(internalJobId)
+        assert(stored, 'compute job not persisted')
+        expect(stored.payment.subsidyProviders).to.deep.equal([
+          getAddress(SUBSIDY_WHITELISTED)
+        ])
+      }
+    )
+  })
+
+  it('COMPUTE_START gates out a subsidy whose allowed-image list does not match the algo, persisting droppedSubsidies', async function () {
+    // SUBSIDY_PROVIDER_ALLOWED_IMAGES restricts this provider to an image the algo never runs, so
+    // the gate drops it: the persisted payment carries an empty subsidyProviders (not sponsored)
+    // and the removed address in droppedSubsidies, visible via the DB / status endpoints.
+    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+    await withAllowedImages(
+      { [getAddress(SUBSIDY_WHITELISTED)]: ['never/matches:0'] },
+      async () => {
+        const task = await buildPaidStartTask([SUBSIDY_WHITELISTED])
+        const response = await new PaidComputeStartHandler(oceanNode).handle(task)
+        assert(
+          response.status.httpStatus === 200,
+          `expected 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+        )
+        const startedJobs = await streamToObject(response.stream as Readable)
+        const { jobId } = startedJobs[0]
+        const internalJobId = jobId.substring(jobId.indexOf('-') + 1)
+        const [stored] = await dbconn.c2d.getJob(internalJobId)
+        assert(stored, 'compute job not persisted')
+        expect(stored.payment.subsidyProviders).to.deep.equal([])
+        expect(stored.payment.droppedSubsidies).to.deep.equal([
+          getAddress(SUBSIDY_WHITELISTED)
+        ])
+      }
+    )
+  })
+
+  it('COMPUTE_START leaves an unlisted subsidy address untouched under a populated allowed-images map', async function () {
+    // The gate is per-address: a populated map only restricts the addresses it names. A subsidy
+    // address that is NOT a key passes through unchanged (and droppedSubsidies stays empty).
+    this.timeout(DEFAULT_TEST_TIMEOUT * 3)
+    await withAllowedImages(
+      { [getAddress(SUBSIDY_NON_WHITELISTED)]: ['never/matches:0'] },
+      async () => {
+        const task = await buildPaidStartTask([SUBSIDY_WHITELISTED])
+        const response = await new PaidComputeStartHandler(oceanNode).handle(task)
+        assert(
+          response.status.httpStatus === 200,
+          `expected 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+        )
+        const startedJobs = await streamToObject(response.stream as Readable)
+        const { jobId } = startedJobs[0]
+        const internalJobId = jobId.substring(jobId.indexOf('-') + 1)
+        const [stored] = await dbconn.c2d.getJob(internalJobId)
+        assert(stored, 'compute job not persisted')
+        expect(stored.payment.subsidyProviders).to.deep.equal([
+          getAddress(SUBSIDY_WHITELISTED)
+        ])
+        expect(stored.payment.droppedSubsidies ?? []).to.deep.equal([])
+      }
+    )
+  })
+
   it('should fail to start a compute job without escrow funds', async () => {
     // ensure clean escrow state: no funds, no auths, no locks
     const funds = await oceanNode.escrow.getUserAvailableFunds(
@@ -829,7 +1035,7 @@ describe('**********         Compute', () => {
     if (auth.length > 0) {
       await escrowContract
         .connect(consumerAccount)
-        .authorize(initializeResponse.payment.token, firstEnv.consumerAddress, 0, 0, 0)
+        .authorize(initializeResponse.payment.token, firstEnv.consumerAddress, 0, 0, 0, 0)
     }
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
@@ -913,15 +1119,14 @@ describe('**********         Compute', () => {
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
 
-    await escrowContract
-      .connect(consumerAccount)
-      .authorize(
-        initializeResponse.payment.token,
-        firstEnv.consumerAddress,
-        balance,
-        initializeResponse.payment.minLockSeconds,
-        10
-      )
+    await escrowContract.connect(consumerAccount).authorize(
+      initializeResponse.payment.token,
+      firstEnv.consumerAddress,
+      balance,
+      initializeResponse.payment.minLockSeconds,
+      10,
+      0 // expiryTimestamp: 0 = indefinite (Escrow v2)
+    )
     const auth = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,
@@ -946,12 +1151,14 @@ describe('**********         Compute', () => {
     )
     assert(BigInt(fundsBefore.toString()) > BigInt(0), 'Should have funds in escrow')
 
-    const locksBefore = await oceanNode.escrow.getLocks(
-      DEVELOPMENT_CHAIN_ID,
-      paymentToken,
-      await consumerAccount.getAddress(),
-      firstEnv.consumerAddress
-    )
+    const locksBefore = (
+      await oceanNode.escrow.getLocks(
+        DEVELOPMENT_CHAIN_ID,
+        paymentToken,
+        await consumerAccount.getAddress(),
+        firstEnv.consumerAddress
+      )
+    ).length
 
     const nonce = Date.now().toString()
     const messageHashBytes = createHashForSignature(
@@ -1021,9 +1228,7 @@ describe('**********         Compute', () => {
       await consumerAccount.getAddress(),
       firstEnv.consumerAddress
     )
-    if (locksBefore && locksAfter) {
-      assert(locksAfter.length > locksBefore.length, 'We should have locks')
-    }
+    assert(locksAfter.length > locksBefore, 'We should have locks')
 
     const authAfter = await oceanNode.escrow.getAuthorizations(
       DEVELOPMENT_CHAIN_ID,
@@ -1143,6 +1348,55 @@ describe('**********         Compute', () => {
     console.log('**** Started FREE compute job with id: ', jobs[0].jobId)
     console.log(jobs[0])
     freeJobId = jobs[0].jobId
+  })
+
+  it('FREE_COMPUTE_START ignores subsidyProviders (no escrow claim), even an invalid one', async () => {
+    // Free compute never claims escrow, so the resolver is not wired into FreeComputeStartHandler.
+    // A garbage subsidyProviders value must therefore be silently ignored (200), NOT rejected as it
+    // would be on a paid start. Locks in that "ignored" contract so a future refactor that wires the
+    // resolver into the shared base handler is caught.
+    const nonce = Date.now().toString()
+    const signature = await safeSign(
+      consumerAccount,
+      createHashForSignature(
+        await consumerAccount.getAddress(),
+        nonce,
+        PROTOCOL_COMMANDS.FREE_COMPUTE_START
+      )
+    )
+    const startComputeTask: FreeComputeStartCommand = {
+      command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
+      consumerAddress: await consumerAccount.getAddress(),
+      signature,
+      nonce,
+      environment: firstEnv.id,
+      datasets: [
+        {
+          fileObject: computeAsset.services[0].files.files[0],
+          documentId: publishedComputeDataset.ddo.id,
+          serviceId: publishedComputeDataset.ddo.services[0].id,
+          transferTxId: datasetOrderTxId
+        }
+      ],
+      algorithm: {
+        fileObject: algoAsset.services[0].files.files[0],
+        documentId: publishedAlgoDataset.ddo.id,
+        serviceId: publishedAlgoDataset.ddo.services[0].id,
+        transferTxId: algoOrderTxId,
+        meta: publishedAlgoDataset.ddo.metadata.algorithm
+      },
+      output: null,
+      queueMaxWaitTime: 300,
+      // would be a 400 on a paid start; must be ignored here
+      subsidyProviders: ['0xnot-an-address']
+    }
+    const response = await new FreeComputeStartHandler(oceanNode).handle(startComputeTask)
+    assert(
+      response.status.httpStatus === 200,
+      `expected free compute to ignore subsidyProviders and return 200, got ${response.status.httpStatus}: ${response.status?.error ?? ''}`
+    )
+    const startedJobs = await streamToObject(response.stream as Readable)
+    assert(startedJobs[0].jobId, 'expected a jobId for the free job')
   })
 
   it('should get job status by jobId', async () => {
@@ -2286,7 +2540,7 @@ describe('**********         Compute', () => {
       status === C2DStatusNumber.JobFinished || status === C2DStatusNumber.JobSettle,
       `Job ${jobWithOutputURL} did not reach status 70 (JobFinished) in time (last status: ${status})`
     )
-    const outputUrl = `http://172.15.0.7:80/outputs-${jobWithOutputURL}.tar`
+    const outputUrl = `http://172.15.0.7:80/outputs-${jobWithOutputURL}.zip`
     const downloadResponse = await fetch(outputUrl)
     assert(
       downloadResponse.ok,
@@ -2476,23 +2730,10 @@ describe('**********         Compute', () => {
       await waitForComputeJobFinished(oceanNode, fullJobId, 180_000)
 
       const base = (psDockerEngine as any).getStoragePath() as string
-      const outputsTarPath = path.join(base, innerJobId, 'data/outputs/outputs.tar')
+      const outputsZipPath = path.join(base, innerJobId, 'data/outputs/outputs.zip')
       /* eslint-disable security/detect-non-literal-fs-filename -- job paths from C2D engine */
-      assert(existsSync(outputsTarPath), `expected outputs archive at ${outputsTarPath}`)
-      const extractDir = await fsp.mkdtemp(path.join(tmpdir(), 'ocean-ps-out-'))
-      try {
-        await tar.x({ file: outputsTarPath, cwd: extractDir }, [
-          `outputs/${outputFileName}`
-        ])
-        const extracted = path.join(extractDir, `outputs/${outputFileName}`)
-        assert(
-          existsSync(extracted),
-          `expected outputs/${outputFileName} inside outputs.tar`
-        )
-        return await fsp.readFile(extracted, 'utf8')
-      } finally {
-        await fsp.rm(extractDir, { recursive: true, force: true })
-      }
+      assert(existsSync(outputsZipPath), `expected outputs archive at ${outputsZipPath}`)
+      return readOutputZip(outputsZipPath, outputFileName)
       /* eslint-enable security/detect-non-literal-fs-filename */
     }
 
@@ -2687,31 +2928,11 @@ describe('**********         Compute', () => {
       await waitForComputeJobFinished(oceanNode, fullJobId, 180_000)
 
       const base = (psDockerEngine as any).getStoragePath() as string
-      const outputsTarPath = path.join(base, innerJobId, 'data/outputs/outputs.tar')
+      const outputsZipPath = path.join(base, innerJobId, 'data/outputs/outputs.zip')
       /* eslint-disable security/detect-non-literal-fs-filename -- job paths from C2D engine */
-      assert(
-        existsSync(outputsTarPath),
-        `expected outputs archive at ${outputsTarPath} (algorithm should write into /data/outputs before tar)`
-      )
-      const extractDir = await fsp.mkdtemp(path.join(tmpdir(), 'ocean-ps-tar-'))
-      try {
-        await tar.x(
-          {
-            file: outputsTarPath,
-            cwd: extractDir
-          },
-          ['outputs/ps-result.txt']
-        )
-        const extractedFile = path.join(extractDir, 'outputs/ps-result.txt')
-        assert(
-          existsSync(extractedFile),
-          'expected outputs/ps-result.txt inside outputs.tar'
-        )
-        const written = await fsp.readFile(extractedFile, 'utf8')
-        assert.equal(written, secret)
-      } finally {
-        await fsp.rm(extractDir, { recursive: true, force: true })
-      }
+      assert(existsSync(outputsZipPath), `expected outputs archive at ${outputsZipPath}`)
+      const written = await readOutputZip(outputsZipPath, 'ps-result.txt')
+      assert.equal(written, secret)
       /* eslint-enable security/detect-non-literal-fs-filename */
     })
 
@@ -2943,10 +3164,103 @@ describe('**********         Compute', () => {
         'mixed-result.txt'
       )
       // the persistent-storage dataset is bind-mounted, the URL dataset is downloaded
-      // into /data/inputs alongside algoCustomData.json
+      // into its own /data/inputs/<index> folder (counted here as a directory entry)
       assert(written.startsWith(secret + '|inputs='), `unexpected output: ${written}`)
       const count = parseInt(written.split('|inputs=')[1], 10)
       assert(count >= 1, `expected at least one downloaded non-PS input, got ${count}`)
+    })
+
+    it('writes same-named inputs to separate per-index folders (no collision)', async function () {
+      // two datasets whose URLs end in the same file name (README.md). Before the
+      // per-index layout the second silently overwrote the first in /data/inputs/README.md.
+      const rawcode = [
+        "const fs = require('fs');",
+        "const root = '/data/inputs';",
+        'const dirs = fs',
+        '  .readdirSync(root)',
+        "  .filter((f) => fs.statSync(root + '/' + f).isDirectory());",
+        'const found = dirs',
+        '  .map((d) => {',
+        "    const name = fs.readdirSync(root + '/' + d)[0];",
+        "    return { dir: d, name, size: fs.statSync(root + '/' + d + '/' + name).size };",
+        '  })',
+        '  .sort((a, b) => a.dir.localeCompare(b.dir));',
+        "fs.mkdirSync('/data/outputs', { recursive: true });",
+        "fs.writeFileSync('/data/outputs/collision.json', JSON.stringify(found), 'utf8');"
+      ].join('\n')
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+
+      const written = await runFreeJobAndReadOutput(
+        consumerAccount,
+        [
+          {
+            fileObject: {
+              type: 'url',
+              method: 'GET',
+              url: 'https://raw.githubusercontent.com/oceanprotocol/ocean-node/main/README.md'
+            } as any
+          },
+          {
+            fileObject: {
+              type: 'url',
+              method: 'GET',
+              url: 'https://raw.githubusercontent.com/oceanprotocol/contracts/main/README.md'
+            } as any
+          }
+        ],
+        { meta: { ...algoMeta, rawcode } },
+        'collision.json'
+      )
+      const found = JSON.parse(written)
+      // both inputs survived, each in its own index folder, both keep their real name
+      assert.equal(found.length, 2, `expected 2 inputs, got ${written}`)
+      assert.deepEqual(
+        found.map((f: any) => f.dir),
+        ['0', '1']
+      )
+      assert(
+        found.every((f: any) => f.name === 'README.md'),
+        `expected both named README.md, got ${written}`
+      )
+      // different sizes => distinct files, i.e. neither overwrote the other
+      assert.notEqual(found[0].size, found[1].size, 'inputs should be distinct files')
+    })
+
+    it('a dataset named algoCustomData.json cannot overwrite the consumer parameters', async function () {
+      // the dataset URL ends in algoCustomData.json; the consumer parameters live at
+      // /data/inputs/algoCustomData.json while the dataset lands in /data/inputs/0/.
+      const rawcode = [
+        "const fs = require('fs');",
+        "const params = fs.readFileSync('/data/inputs/algoCustomData.json', 'utf8');",
+        "fs.mkdirSync('/data/outputs', { recursive: true });",
+        "fs.writeFileSync('/data/outputs/params.json', params, 'utf8');"
+      ].join('\n')
+      const algoMeta = publishedAlgoDataset.ddo.metadata.algorithm
+
+      const written = await runFreeJobAndReadOutput(
+        consumerAccount,
+        [
+          {
+            fileObject: {
+              type: 'url',
+              method: 'GET',
+              // any URL whose path ends in algoCustomData.json reproduces the old clash
+              url: 'https://httpbin.org/anything/algoCustomData.json'
+            } as any
+          }
+        ],
+        {
+          meta: { ...algoMeta, rawcode },
+          algocustomdata: { threshold: 'set-by-consumer' }
+        },
+        'params.json'
+      )
+      const params = JSON.parse(written)
+      assert.equal(
+        params.threshold,
+        'set-by-consumer',
+        `consumer parameters were overwritten by the dataset: ${written}`
+      )
     })
 
     it('denies a persistent-storage ALGORITHM when the consumer is not on the bucket ACL', async function () {
@@ -3140,7 +3454,7 @@ describe('**********         Compute', () => {
       })
 
       /* eslint-disable security/detect-non-literal-fs-filename -- test paths */
-      it('stores job results directly in the bucket as individual files (no outputs.tar)', async function () {
+      it('stores job results directly in the bucket as individual files (no output archive)', async function () {
         this.timeout(300_000)
         const { job, innerJobId } = await startFreeJobAndWait(
           seedFileName,
@@ -3157,8 +3471,12 @@ describe('**********         Compute', () => {
         )
 
         const base = (psDockerEngine as any).getStoragePath() as string
-        const outputsTarPath = path.join(base, innerJobId, 'data/outputs/outputs.tar')
-        assert(!existsSync(outputsTarPath), 'outputs.tar should not exist')
+        for (const filename of ['outputs.zip', 'outputs.tar']) {
+          assert(
+            !existsSync(path.join(base, innerJobId, 'data/outputs', filename)),
+            `${filename} should not exist`
+          )
+        }
         assert(
           !(job.results || []).some((r: any) => r.type === 'output'),
           'no output entry expected in results'
@@ -3809,7 +4127,7 @@ describe('**********         Compute Access Restrictions', () => {
         // Remove authorization by setting to 0
         await escrowContract
           .connect(consumerAccount)
-          .authorize(paymentToken, providerAddress, 0, 0, 0)
+          .authorize(paymentToken, providerAddress, 0, 0, 0, 0)
       }
 
       // Check and withdraw existing funds if any
@@ -3847,7 +4165,7 @@ describe('**********         Compute Access Restrictions', () => {
 
       const authorizeTx = await escrowContract
         .connect(consumerAccount)
-        .authorize(paymentToken, providerAddress, balance, 3600, 10)
+        .authorize(paymentToken, providerAddress, balance, 3600, 10, 0)
       await authorizeTx.wait()
 
       // Verify authorization is set up correctly

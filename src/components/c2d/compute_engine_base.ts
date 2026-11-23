@@ -21,6 +21,7 @@ import {
   DEFAULT_SERVICE_MIN_DURATION_SECONDS,
   type ServiceJob
 } from '../../@types/C2D/ServiceOnDemand.js'
+import type { ServiceResult } from './serviceOutputsZip.js'
 import { C2DClusterType, C2DStatusNumber } from '../../@types/C2D/C2D.js'
 import { C2DDatabase } from '../database/C2DDatabase.js'
 import { Escrow } from '../core/utils/escrow.js'
@@ -215,6 +216,26 @@ export abstract class C2DEngine {
     since?: number
   ): Promise<NodeJS.ReadableStream | null> {
     return null
+  }
+
+  // Streams one archived /data/outputs zip of a service (see ServiceJob.outputArchives), or,
+  // with index 'live', a zip of the running container's /data/outputs. Null when the service
+  // is unknown to the engine; throws ServiceResultError for a refused request.
+  // eslint-disable-next-line require-await
+  public async getServiceResult(
+    serviceId: string,
+    owner: string,
+    index: number | 'live',
+    offset?: number
+  ): Promise<ServiceResult | null> {
+    return null
+  }
+
+  // Deletes the output archives of expired services whose environment's storageExpiry has
+  // elapsed since expiresAt. Returns how many services had their archives deleted.
+  // eslint-disable-next-line require-await
+  public async cleanupExpiredServiceOutputs(): Promise<number> {
+    return 0
   }
 
   public abstract checkDockerImage(
@@ -661,7 +682,9 @@ export abstract class C2DEngine {
     try {
       jobs = await this.db.getRunningJobs(this.getC2DConfig().hash)
     } catch (e) {
-      CORE_LOGGER.error('Failed to get running jobs:' + e.message)
+      CORE_LOGGER.error(
+        `Failed to get running jobs for engine ${this.getC2DConfig().hash}: ${e.message}`
+      )
     }
 
     const envResourceMap = new Map((env.resources || []).map((r) => [r.id, r]))
@@ -1100,11 +1123,15 @@ export abstract class C2DEngine {
 
       decryptedDockerRegistryAuth = JSON.parse(decryptedDockerRegistryAuthString)
     } catch (error: any) {
-      const errorMessage = `Invalid encryptedDockerRegistryAuth: failed to parse JSON - ${error?.message || String(error)}`
-      CORE_LOGGER.error(errorMessage)
+      // error.message may quote a snippet of the decrypted credentials, keep it out of BOTH
+      // the logs AND the caller-facing reason (ON-18: no internals reflected to the caller).
+      CORE_LOGGER.logByStatus(
+        400,
+        `Invalid encryptedDockerRegistryAuth: cannot decrypt or parse (${error?.name || 'Error'})`
+      )
       return {
         valid: false,
-        reason: errorMessage,
+        reason: 'Invalid encryptedDockerRegistryAuth: could not decrypt or parse',
         status: 400
       }
     }
@@ -1118,7 +1145,7 @@ export abstract class C2DEngine {
         .map((err) => err.message)
         .join('; ')
       const errorMessage = `Invalid encryptedDockerRegistryAuth: ${errorMessageValidation}`
-      CORE_LOGGER.error(errorMessage)
+      CORE_LOGGER.debug(errorMessage)
       return {
         valid: false,
         reason: errorMessage,

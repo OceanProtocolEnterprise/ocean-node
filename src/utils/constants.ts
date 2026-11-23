@@ -64,7 +64,9 @@ export const PROTOCOL_COMMANDS = {
   SERVICE_GET_STATUS: 'serviceGetStatus',
   SERVICE_LIST: 'serviceList',
   SERVICE_EXTEND: 'serviceExtend',
-  SERVICE_GET_STREAMABLE_LOGS: 'serviceGetStreamableLogs'
+  SERVICE_GET_STREAMABLE_LOGS: 'serviceGetStreamableLogs',
+  SERVICE_GET_RESULT: 'serviceGetResult',
+  SET_MAINTENANCE: 'setMaintenance'
 }
 // more visible, keep then close to make sure we always update both
 export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
@@ -128,8 +130,22 @@ export const SUPPORTED_PROTOCOL_COMMANDS: string[] = [
   PROTOCOL_COMMANDS.SERVICE_GET_STATUS,
   PROTOCOL_COMMANDS.SERVICE_LIST,
   PROTOCOL_COMMANDS.SERVICE_EXTEND,
-  PROTOCOL_COMMANDS.SERVICE_GET_STREAMABLE_LOGS
+  PROTOCOL_COMMANDS.SERVICE_GET_STREAMABLE_LOGS,
+  PROTOCOL_COMMANDS.SERVICE_GET_RESULT,
+  PROTOCOL_COMMANDS.SET_MAINTENANCE
 ]
+
+// Maintenance (drain) mode. When enabled, the node refuses NEW commitment (compute/service
+// starts, initialize, extend) but keeps serving already-committed work. The flag persists in
+// the SQLite config DB under this key and is cached in memory on the OceanNode singleton.
+export const MAINTENANCE_MODE_CONFIG_KEY = 'maintenanceMode'
+// Stable machine-readable code clients discriminate on. 503 is already reused in these handlers
+// for "subsystem unavailable" (e.g. "Compute engines not configured"), so the status alone is
+// NOT enough — clients must branch on this `code`.
+export const MAINTENANCE_MODE_CODE = 'MAINTENANCE_MODE'
+// Stable human-readable rejection message.
+export const MAINTENANCE_MODE_ERROR =
+  'Node is in maintenance mode; not accepting new compute or service requests'
 
 export const MetadataStates = {
   ACTIVE: 0,
@@ -139,6 +155,18 @@ export const MetadataStates = {
   ORDERING_DISABLED: 4,
   UNLISTED: 5
 }
+
+// jobType passed to the Escrow claim functions so a Subsidy Provider can gate on the kind of
+// job being settled. The numeric values are part of the on-chain claim ABI — the escrow and any
+// Subsidy Provider contract read them directly, so they MUST NOT be renumbered. Future features
+// add their own id.
+/* eslint-disable no-unused-vars */
+export enum JobType {
+  NONE = 0,
+  COMPUTE = 1, // C2D compute jobs
+  SERVICE = 2 // service-on-demand
+}
+/* eslint-enable no-unused-vars */
 
 export const EVENTS = {
   METADATA_CREATED: 'MetadataCreated',
@@ -164,7 +192,11 @@ export const EVENTS = {
   ESCROW_CLAIMED: 'Claimed',
   ESCROW_CANCELED: 'Canceled',
   ESCROW_DEPOSIT: 'Deposit',
-  ESCROW_WITHDRAW: 'Withdraw'
+  ESCROW_WITHDRAW: 'Withdraw',
+  ESCROW_SUBSIDIZED: 'Subsidized',
+  // Escrow v2 lock-time ("prepaid") sponsorship events.
+  ESCROW_LOCK_SPONSORED: 'LockSponsored',
+  ESCROW_SPONSOR_REFUNDED: 'SponsorRefunded'
 }
 
 export const ESCROW_EVENTS = [
@@ -174,7 +206,10 @@ export const ESCROW_EVENTS = [
   EVENTS.ESCROW_CLAIMED,
   EVENTS.ESCROW_CANCELED,
   EVENTS.ESCROW_DEPOSIT,
-  EVENTS.ESCROW_WITHDRAW
+  EVENTS.ESCROW_WITHDRAW,
+  EVENTS.ESCROW_SUBSIDIZED,
+  EVENTS.ESCROW_LOCK_SPONSORED,
+  EVENTS.ESCROW_SPONSOR_REFUNDED
 ]
 
 export const INDEXER_CRAWLING_EVENTS = {
@@ -257,9 +292,9 @@ export const EVENT_HASHES: Hashes = {
     type: EVENTS.NEW_ACCESS_LIST,
     text: 'NewAccessList(address,address)'
   },
-  '0x5a3021f46552b1ac3c96e967ff1ecfeb100603ccc2940941cad97db3ee2baec7': {
+  '0x47f2ef7a6a140df663e93e9dd0adaec413cb4dbe13624c53a5247c47eda35a45': {
     type: EVENTS.ESCROW_AUTH,
-    text: 'Auth(address,address,address,uint256,uint256,uint256)'
+    text: 'Auth(address,address,address,uint256,uint256,uint256,uint256)'
   },
   '0xb746b0421b0b98debe76bb312ec9fb701603af22ddb107f7e639b0187e4ff880': {
     type: EVENTS.ESCROW_LOCK,
@@ -284,6 +319,18 @@ export const EVENT_HASHES: Hashes = {
   '0x9b1bfa7fa9ee420a16e124f794c35ac9f90472acc99140eb2f6447c714cad8eb': {
     type: EVENTS.ESCROW_WITHDRAW,
     text: 'Withdraw(address,address,uint256)'
+  },
+  '0x04e202f6138ce0268067aab74c4038deaca9e8f15460867eff076939f0b06336': {
+    type: EVENTS.ESCROW_SUBSIDIZED,
+    text: 'Subsidized(address,address,uint256,address,address,uint256,uint256)'
+  },
+  '0xe7e10d1edd43df8fcf505863fbef6140798ab67b9d2a9bf0a84a1aa11c0d3825': {
+    type: EVENTS.ESCROW_LOCK_SPONSORED,
+    text: 'LockSponsored(address,address,uint256,address,address,uint256)'
+  },
+  '0x481f34587ff8179417e483b191c864eb16743e5d059e88b3f4e67f65ca23ab74': {
+    type: EVENTS.ESCROW_SPONSOR_REFUNDED,
+    text: 'SponsorRefunded(address,address,uint256,address,address,uint256,bool)'
   }
 }
 
@@ -362,6 +409,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   },
   FEE_TOKENS: { name: 'FEE_TOKENS', value: process.env.FEE_TOKENS, required: false },
   FEE_AMOUNT: { name: 'FEE_AMOUNT', value: process.env.FEE_AMOUNT, required: false },
+  SKIP_FEE_TOKEN_VALIDATION: {
+    name: 'SKIP_FEE_TOKEN_VALIDATION',
+    value: process.env.SKIP_FEE_TOKEN_VALIDATION,
+    required: false
+  },
   ADDRESS_FILE: {
     name: 'ADDRESS_FILE',
     value: process.env.ADDRESS_FILE,
@@ -407,6 +459,7 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     required: false // without a value set, it defaults to 30 secs
   },
   LOG_RETENTION_TIME: {
+    // DB logs only: max age in ms (default 30 days)
     name: 'LOG_RETENTION_TIME',
     value: process.env.LOG_RETENTION_TIME,
     required: false
@@ -416,9 +469,39 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.ALLOWED_ADMINS,
     required: false
   },
+  MAINTENANCE_MODE: {
+    // boot the node directly into maintenance (drain) mode. "true" enables it; the value is
+    // written through to the SQLite config DB and is STICKY across restarts — returning to
+    // normal service requires an explicit `setMaintenance { enabled: false }` admin command
+    // AND unsetting this env before the next restart.
+    name: 'MAINTENANCE_MODE',
+    value: process.env.MAINTENANCE_MODE,
+    required: false
+  },
   ALLOWED_ADMINS_LIST: {
     name: 'ALLOWED_ADMINS_LIST',
     value: process.env.ALLOWED_ADMINS_LIST,
+    required: false
+  },
+  SUBSIDY_PROVIDERS: {
+    // per-chain map of Subsidy Provider contract addresses passed to the escrow at claim time
+    name: 'SUBSIDY_PROVIDERS',
+    value: process.env.SUBSIDY_PROVIDERS,
+    required: false
+  },
+  SUBSIDY_PROVIDER_FILTER: {
+    // when ON, a user-supplied subsidy-provider list may only contain addresses already present
+    // in this node's SUBSIDY_PROVIDERS whitelist for the request chain; anything else is rejected
+    name: 'SUBSIDY_PROVIDER_FILTER',
+    value: process.env.SUBSIDY_PROVIDER_FILTER,
+    required: false
+  },
+  SUBSIDY_PROVIDER_ALLOWED_IMAGES: {
+    // optional map `{ "<subsidyContractAddr>": ["image:tag", "image@sha256:.."] }` restricting a
+    // subsidy contract to specific docker images run with no custom entrypoint/cmd; unset/`{}`
+    // means no gating (see docs/subsidyProviders.md)
+    name: 'SUBSIDY_PROVIDER_ALLOWED_IMAGES',
+    value: process.env.SUBSIDY_PROVIDER_ALLOWED_IMAGES,
     required: false
   },
   ASSET_PURGATORY_URL: {
@@ -443,6 +526,15 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.MAX_CONNECTIONS_PER_MINUTE,
     required: false
   },
+  TRUST_PROXY: {
+    // Express "trust proxy" setting controlling how the client IP is derived from
+    // X-Forwarded-For. Default off (ignore the header, use the socket peer). Set to the
+    // number of trusted proxy hops, 'loopback', or a comma-separated list of trusted
+    // IPs/CIDRs when the node runs behind a reverse proxy. See docs/env.md.
+    name: 'TRUST_PROXY',
+    value: process.env.TRUST_PROXY,
+    required: false
+  },
   RATE_DENY_LIST: {
     // rate limit / deny list (peers and ips)
     name: 'RATE_DENY_LIST',
@@ -456,25 +548,51 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     required: false
   },
   LOG_LEVEL: {
-    // default log level (if not specified, "debug" for "development" and "info" for "production")
+    // console and DB log level (if not specified, "debug" for "development" and "info" otherwise)
     name: 'LOG_LEVEL',
     value: process.env.LOG_LEVEL,
     required: false
   },
   LOG_CONSOLE: {
-    // log to console output? true if no other bellow is set
+    // log to console output? default true; "false" is ignored if there is no other output
     name: 'LOG_CONSOLE',
     value: process.env.LOG_CONSOLE,
     required: false
   },
   LOG_FILES: {
-    // log to files?
+    // log to daily rotating files? default true unless LOG_DB=true. "false" disables all
+    // disk logging (including the exceptions file and the fallback when the log DB is down)
     name: 'LOG_FILES',
     value: process.env.LOG_FILES,
     required: false
   },
+  LOG_FILES_LEVEL: {
+    // log files level, default "info"
+    name: 'LOG_FILES_LEVEL',
+    value: process.env.LOG_FILES_LEVEL,
+    required: false
+  },
+  LOG_FILES_RETENTION_DAYS: {
+    // days to keep log files, default 30
+    name: 'LOG_FILES_RETENTION_DAYS',
+    value: process.env.LOG_FILES_RETENTION_DAYS,
+    required: false
+  },
+  LOG_FILES_MAX_SIZE: {
+    // max size of a module's daily file before it splits (.1, .2...), e.g. 500k, 20m, 1g. default 20m
+    name: 'LOG_FILES_MAX_SIZE',
+    value: process.env.LOG_FILES_MAX_SIZE,
+    required: false
+  },
+  LOG_FILES_DIR: {
+    // log files directory, default "logs" (relative to the working directory)
+    name: 'LOG_FILES_DIR',
+    value: process.env.LOG_FILES_DIR,
+    required: false
+  },
   LOG_DB: {
-    // log to DB?
+    // log to the DB (Typesense / Elasticsearch)? default false. falls back to files when the
+    // log DB is not available
     name: 'LOG_DB',
     value: process.env.LOG_DB,
     required: false
@@ -482,6 +600,43 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   UNSAFE_URLS: {
     name: 'UNSAFE_URLS',
     value: process.env.UNSAFE_URLS,
+    required: false
+  },
+  ALLOWED_PRIVATE_URL_RANGES: {
+    // CIDRs / IPs that caller-supplied URLs may point at although they are private
+    name: 'ALLOWED_PRIVATE_URL_RANGES',
+    value: process.env.ALLOWED_PRIVATE_URL_RANGES,
+    required: false
+  },
+  ALLOWED_DOCKER_REGISTRIES: {
+    // ON-18: opt-in allow-list of Docker registry hosts (JSON array). Empty = any registry.
+    name: 'ALLOWED_DOCKER_REGISTRIES',
+    value: process.env.ALLOWED_DOCKER_REGISTRIES,
+    required: false
+  },
+  ALLOWED_DOCKER_REGISTRY_REALMS: {
+    // ON-18: opt-in extra token-realm hosts trusted to receive registry credentials (JSON
+    // array). Separate from ALLOWED_DOCKER_REGISTRIES so trusting a realm never enables the
+    // registry allow-list. Built-in realms (Docker Hub, GitLab) are always trusted.
+    name: 'ALLOWED_DOCKER_REGISTRY_REALMS',
+    value: process.env.ALLOWED_DOCKER_REGISTRY_REALMS,
+    required: false
+  },
+  FILEINFO_ALLOWED_HEADERS: {
+    // ON-07: JSON array of extra request-header names allowed through to the upstream when a
+    // caller supplies `file.headers` on the raw-`file` fileInfo path (the only path whose caller
+    // headers are treated as untrusted and filtered). Extends the default allow-list (accept,
+    // accept-encoding, range, content-type); everything else (authorization, cookie, x-* keys) is
+    // dropped. DDO-sourced headers (download / compute / did+serviceId) are trusted, not filtered.
+    name: 'FILEINFO_ALLOWED_HEADERS',
+    value: process.env.FILEINFO_ALLOWED_HEADERS,
+    required: false
+  },
+  FILEINFO_MAX_REQ_PER_MINUTE: {
+    // ON-07: dedicated, stricter per-caller rate limit for the raw-`file` fileInfo path
+    // (separate bucket from MAX_REQ_PER_MINUTE). 0 or unset = disabled.
+    name: 'FILEINFO_MAX_REQ_PER_MINUTE',
+    value: process.env.FILEINFO_MAX_REQ_PER_MINUTE,
     required: false
   },
   DB_TYPE: {
@@ -569,6 +724,21 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.SERVICE_TEMPLATES_PATH,
     required: false
   },
+  SERVICE_HF_MIRROR_URL: {
+    name: 'SERVICE_HF_MIRROR_URL',
+    value: process.env.SERVICE_HF_MIRROR_URL,
+    required: false
+  },
+  SERVICE_HF_CLIENT_PATCH: {
+    name: 'SERVICE_HF_CLIENT_PATCH',
+    value: process.env.SERVICE_HF_CLIENT_PATCH,
+    required: false
+  },
+  PASS_CONTAINER_ENVS: {
+    name: 'PASS_CONTAINER_ENVS',
+    value: process.env.PASS_CONTAINER_ENVS,
+    required: false
+  },
   DOCKER_REGISTRY_AUTHS: {
     name: 'DOCKER_REGISTRY_AUTHS',
     value: process.env.DOCKER_REGISTRY_AUTHS,
@@ -629,6 +799,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
     value: process.env.POLICY_SERVER_URL,
     required: false
   },
+  NODE_OWNER_INFO: {
+    name: 'NODE_OWNER_INFO',
+    value: process.env.NODE_OWNER_INFO,
+    required: false
+  },
   VALIDATE_UNSIGNED_DDO: {
     name: 'VALIDATE_UNSIGNED_DDO',
     value: process.env.VALIDATE_UNSIGNED_DDO,
@@ -647,6 +822,11 @@ export const ENVIRONMENT_VARIABLES: Record<any, EnvVariable> = {
   PERSISTENT_STORAGE: {
     name: 'PERSISTENT_STORAGE',
     value: process.env.PERSISTENT_STORAGE,
+    required: false
+  },
+  PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING: {
+    name: 'PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING',
+    value: process.env.PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING,
     required: false
   },
   C2D_DOWNLOAD_TIMEOUT: {
@@ -675,6 +855,11 @@ export const CONNECTION_HISTORY_DELETE_THRESHOLD = 300
 export const CONNECTIONS_RATE_INTERVAL = 60 * 1000
 // Typesense's maximum limit to send 250 hits at a time
 export const TYPESENSE_HITS_CAP = 250
+
+// Upper bound on how many escrow rows the handler will scan from the store when a client-side
+// (BigInt) range filter is active. Keeps deep pagination bounded; beyond this the result is
+// whatever matched within the scanned window.
+export const MAX_ESCROW_CLIENT_SCAN = 2000
 export const DDO_IDENTIFIER_PREFIX = 'did:op:'
 // global ocean node API services path
 export const SERVICES_API_BASE_PATH = '/api/services'

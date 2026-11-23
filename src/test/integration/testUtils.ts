@@ -106,15 +106,6 @@ export async function waitForCondition<T>(
   return null
 }
 
-export const deleteAsset = async (did: string, database: Database): Promise<any> => {
-  try {
-    return await database.ddo.delete(did)
-  } catch (e) {
-    INDEXER_LOGGER.logMessage(`Error could not delete the DDO ${did}: ${e}`)
-    return false
-  }
-}
-
 export async function signMessage(
   message: string,
   address: string,

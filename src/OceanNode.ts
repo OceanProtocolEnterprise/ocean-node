@@ -12,7 +12,7 @@ import { Database } from './components/database/index.js'
 import { Escrow } from './components/core/utils/escrow.js'
 import { CoreHandlersRegistry } from './components/core/handler/coreHandlersRegistry.js'
 import { OCEAN_NODE_LOGGER } from './utils/logging/common.js'
-import { GENERIC_EMOJIS, LOG_LEVELS_STR } from './utils/logging/Logger.js'
+import { errorSummary } from './utils/logging/redact.js'
 import { BaseHandler } from './components/core/handler/handler.js'
 import { C2DEngines } from './components/c2d/compute_engines.js'
 import { Auth } from './components/Auth/index.js'
@@ -24,6 +24,10 @@ import { PersistentStorageFactory } from './components/persistentStorage/Persist
 import { isAddress, FallbackProvider, ethers } from 'ethers'
 import { create256Hash } from './utils/crypt.js'
 import { isPolicyServerConfigured } from './utils/config.js'
+import {
+  MAINTENANCE_MODE_CONFIG_KEY,
+  SUPPORTED_PROTOCOL_COMMANDS
+} from './utils/constants.js'
 
 export interface RequestLimiter {
   requester: string | string[] // IP address or peer ID
@@ -53,6 +57,13 @@ export class OceanNode {
   private auth: Auth
   private persistentStorage: PersistentStorageFactory
   private database: Database
+  // In-memory cache of the maintenance (drain) flag so the hot path (every compute/service
+  // start) does not hit SQLite per request. Source of truth is the SQLite config DB; this is
+  // loaded from it at startup (loadMaintenanceMode) and kept in sync on every toggle.
+  private maintenanceMode = false
+  // Serializes maintenance toggles so a DB write and its cache update are atomic relative to
+  // any concurrent toggle (prevents DB/cache divergence under overlapping calls).
+  private maintenanceWriteLock: Promise<unknown> = Promise.resolve()
 
   private constructor(
     private config: OceanNodeConfig,
@@ -80,15 +91,16 @@ export class OceanNode {
       this.escrow = new Escrow(
         this.config.supportedNetworks,
         this.config.claimDurationTimeout,
-        this.blockchainRegistry
+        this.blockchainRegistry,
+        this.config.subsidyProviders
       )
       if (this.config.persistentStorage?.enabled) {
         OCEAN_NODE_LOGGER.info(
-          `Starting PersistenStorage with type ${this.config.persistentStorage.type}`
+          `Persistent storage enabled (type: ${this.config.persistentStorage.type})`
         )
         this.persistentStorage = createPersistentStorage(this)
       } else {
-        OCEAN_NODE_LOGGER.info(`Starting without PersistenStorage`)
+        OCEAN_NODE_LOGGER.info('Persistent storage disabled')
         this.persistentStorage = null
       }
     }
@@ -129,7 +141,7 @@ export class OceanNode {
           try {
             await instanceToTearDown.tearDownAll()
           } catch (err: unknown) {
-            OCEAN_NODE_LOGGER.warn(
+            OCEAN_NODE_LOGGER.error(
               `Failed to tear down previous OceanNode instance: ${
                 err instanceof Error ? err.message : String(err)
               }`
@@ -147,8 +159,6 @@ export class OceanNode {
         keyManager,
         blockchainRegistry
       )
-    } else {
-      OCEAN_NODE_LOGGER.debug('Return cached OceanNode instance')
     }
     return this.instance
   }
@@ -177,9 +187,16 @@ export class OceanNode {
   public addIndexer(_indexer: OceanIndexer) {
     const previous = this.indexer
     this.indexer = _indexer
-    if (previous) {
+    // Only stop a genuinely DIFFERENT previous indexer. The constructor's `private indexer`
+    // parameter property has already assigned this.indexer to the passed instance before the
+    // constructor body calls addIndexer(indexer), so here `previous === _indexer`. Without this
+    // guard, construction immediately stops the just-created indexer — and because stop() now
+    // cancels in-flight starts by generation, that permanently aborts its startup crawl (the node
+    // then never indexes anything). A real replacement (tests, a new OceanNode instance) passes a
+    // different instance and still stops the old one.
+    if (previous && previous !== _indexer) {
       previous.stop().catch((err: unknown) => {
-        OCEAN_NODE_LOGGER.warn(
+        OCEAN_NODE_LOGGER.error(
           `Failed to stop replaced indexer: ${err instanceof Error ? err.message : String(err)}`
         )
       })
@@ -282,7 +299,8 @@ export class OceanNode {
       this.escrow = new Escrow(
         this.config.supportedNetworks,
         this.config.claimDurationTimeout,
-        this.blockchainRegistry
+        this.blockchainRegistry,
+        this.config.subsidyProviders
       )
     }
   }
@@ -293,16 +311,158 @@ export class OceanNode {
   }
 
   /**
+   * Whether the node is in maintenance (drain) mode. Hot-path read of the in-memory cache.
+   */
+  public isInMaintenance(): boolean {
+    return this.maintenanceMode
+  }
+
+  /**
+   * Toggle maintenance mode. Persists the flag to the SQLite config DB (durable, sticky across
+   * restarts) and only THEN updates the in-memory cache, so a failed write never leaves the
+   * cache claiming a drain that was not persisted (it would silently revert on reboot). Calls
+   * are serialized on a promise chain so two overlapping toggles cannot end with the DB and the
+   * cache disagreeing. Throws if the write fails — the admin handler maps that to a 500.
+   */
+  public setMaintenanceMode(enabled: boolean): Promise<void> {
+    // Serialize: chain onto the previous write so DB-write + cache-assignment are atomic
+    // relative to any concurrent toggle. Keep the chain alive even if an op throws.
+    const run = this.maintenanceWriteLock.then(() => this.applyMaintenanceMode(enabled))
+    this.maintenanceWriteLock = run.catch(() => {})
+    return run
+  }
+
+  private async applyMaintenanceMode(enabled: boolean): Promise<void> {
+    const db = await this.getDatabase()
+    if (db?.sqliteConfig) {
+      // createOrUpdateConfig swallows DB errors and returns null; treat that as a failure and
+      // do NOT update the cache, so the node never reports an un-persisted drain.
+      const result = await db.sqliteConfig.createOrUpdateConfig(
+        MAINTENANCE_MODE_CONFIG_KEY,
+        enabled ? 'true' : 'false'
+      )
+      if (result === null) {
+        throw new Error('Failed to persist maintenance mode flag to the config DB')
+      }
+    } else {
+      OCEAN_NODE_LOGGER.warn(
+        'Maintenance mode set without a config DB: the flag will NOT persist across restarts'
+      )
+    }
+    this.maintenanceMode = enabled
+    OCEAN_NODE_LOGGER.info(`Maintenance mode ${enabled ? 'ENABLED' : 'DISABLED'}`)
+  }
+
+  /**
+   * Load the persisted maintenance flag into the in-memory cache at startup. If the
+   * MAINTENANCE_MODE env var is set it wins at boot and is written through to the DB, so the
+   * persisted state stays consistent with the env override. Guards for a missing config DB.
+   */
+  public async loadMaintenanceMode(): Promise<void> {
+    const envValue = process.env.MAINTENANCE_MODE
+    const db = await this.getDatabase()
+    const sqliteConfig = db?.sqliteConfig
+    // Env override wins at boot and is written through to the DB (per design). Only the exact
+    // strings "true"/"false" are honored; any other non-empty value (a typo, "1", "yes") is
+    // IGNORED with a warning, so a leftover malformed env var cannot silently clear a drain.
+    if (envValue !== undefined && envValue.trim() !== '') {
+      const normalized = envValue.trim().toLowerCase()
+      if (normalized !== 'true' && normalized !== 'false') {
+        OCEAN_NODE_LOGGER.warn(
+          `Ignoring invalid MAINTENANCE_MODE value "${envValue}" (expected "true" or "false"); falling back to the persisted flag`
+        )
+      } else {
+        const enabled = normalized === 'true'
+        this.maintenanceMode = enabled
+        if (sqliteConfig) {
+          const result = await sqliteConfig.createOrUpdateConfig(
+            MAINTENANCE_MODE_CONFIG_KEY,
+            enabled ? 'true' : 'false'
+          )
+          if (result === null) {
+            OCEAN_NODE_LOGGER.warn(
+              'MAINTENANCE_MODE env override could not be persisted to the config DB; it applies for this process only'
+            )
+          }
+        }
+        OCEAN_NODE_LOGGER.info(
+          `Maintenance mode ${enabled ? 'ENABLED' : 'DISABLED'} from MAINTENANCE_MODE env var`
+        )
+        return
+      }
+    }
+    if (!sqliteConfig) {
+      return
+    }
+    try {
+      const stored = await sqliteConfig.retrieveValue(MAINTENANCE_MODE_CONFIG_KEY)
+      // Distinguish a FAILED query from a confirmed-absent key: SQLLiteConfigDatabase
+      // .retrieveValue returns null on a DB error, but { value: null } when the key simply
+      // isn't there (never toggled).
+      if (stored === null) {
+        // The read FAILED — we cannot confirm the node isn't supposed to be draining. Fail
+        // CLOSED (stay in maintenance) rather than silently resume accepting work, which is
+        // exactly the "restarts mid-drain and silently accepts work again" failure the
+        // persisted flag exists to prevent. An admin resumes with setMaintenance{enabled:false}
+        // once the config DB is healthy.
+        this.maintenanceMode = true
+        OCEAN_NODE_LOGGER.error(
+          'Could not read the maintenance mode flag from the config DB; staying in MAINTENANCE (fail-closed) until it can be confirmed'
+        )
+        return
+      }
+      if (stored.value === null || stored.value === undefined) {
+        // Confirmed absent (never toggled): normal, default OFF.
+        OCEAN_NODE_LOGGER.warn(
+          'Maintenance mode flag not present in the config DB; defaulting to OFF'
+        )
+        this.maintenanceMode = false
+        return
+      }
+      this.maintenanceMode = stored.value === 'true'
+      if (this.maintenanceMode) {
+        OCEAN_NODE_LOGGER.warn(
+          'Node started in MAINTENANCE mode (persisted flag): new compute/service requests are rejected until an admin sends setMaintenance { enabled: false }'
+        )
+      }
+    } catch (error) {
+      // retrieveValue does not throw today, but if it ever does, fail CLOSED too rather than
+      // silently resume accepting work.
+      this.maintenanceMode = true
+      OCEAN_NODE_LOGGER.error(
+        `Failed to load maintenance mode flag; staying in MAINTENANCE (fail-closed): ${errorSummary(
+          error
+        )}`
+      )
+    }
+  }
+
+  /**
    * v3: Direct protocol command handler - no P2P, just call handler directly
    * Returns {status, stream} without buffering
    * @param message - JSON command string
+   * @param caller - trusted caller supplied by the transport (HTTP request IP, P2P peer id).
+   *   When provided it is stamped over any `caller` present in the message body, so the
+   *   handler-level rate limiter (which keys on task.caller) cannot be evaded by putting a
+   *   fresh/forged caller in the request body. Never trust a body-supplied caller.
    */
-  async handleDirectProtocolCommand(message: string): Promise<P2PCommandResponse> {
-    OCEAN_NODE_LOGGER.logMessage('Incoming direct command for ocean peer', true)
-    OCEAN_NODE_LOGGER.logMessage('Performing task: ' + message, true)
-
+  async handleDirectProtocolCommand(
+    message: string,
+    caller?: string | string[]
+  ): Promise<P2PCommandResponse> {
+    let command: string | undefined
     try {
       const task = JSON.parse(message)
+      // Override any client-supplied caller with the trusted transport value.
+      if (caller !== undefined) {
+        task.caller = caller
+      }
+      // only known command names are logged: a raw, caller-supplied string could embed
+      // control characters and forge extra log lines (CWE-117)
+      command = SUPPORTED_PROTOCOL_COMMANDS.includes(task?.command)
+        ? task.command
+        : 'unknown'
+      OCEAN_NODE_LOGGER.debug(`Direct command: ${command}`)
       const handler: BaseHandler = this.coreHandlers.getHandler(task.command)
 
       if (!handler) {
@@ -318,11 +478,8 @@ export class OceanNode {
       // Return response directly without buffering
       return await handler.handle(task)
     } catch (err) {
-      OCEAN_NODE_LOGGER.logMessageWithEmoji(
-        'handleDirectProtocolCommands Error: ' + err.message,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
+      OCEAN_NODE_LOGGER.error(
+        `Direct command ${command ?? '(unparsed)'} failed: ${errorSummary(err)}`
       )
 
       return {
@@ -351,7 +508,7 @@ export class OceanNode {
 
   checkSupportedChainId(chainId: number): ValidateChainId {
     if (!chainId || !(`${chainId.toString()}` in this.config.supportedNetworks)) {
-      OCEAN_NODE_LOGGER.error(`Chain ID ${chainId} is not supported`)
+      OCEAN_NODE_LOGGER.debug(`Chain ID ${chainId} is not supported`)
       return {
         validation: false,
         networkRpc: ''
@@ -411,23 +568,8 @@ export class OceanNode {
       const s = ethers.hexlify(signatureSplitted.s)
       return { hash: hashedDDO, publicKey: providerWallet.address, r, s, v }
     } catch (error) {
-      OCEAN_NODE_LOGGER.logMessage(`Validation signature error: ${error}`, true)
+      OCEAN_NODE_LOGGER.error(`Validation signature error: ${errorSummary(error)}`)
       return { hash: '', publicKey: '', r: '', s: '', v: '' }
     }
-  }
-
-  isRemoteDDO(ddo: any): boolean {
-    let keys
-    try {
-      keys = Object.keys(ddo)
-    } catch (e) {
-      return false
-    }
-
-    if (keys.length === 1 && keys[0] === 'remote') {
-      return true
-    }
-
-    return false
   }
 }

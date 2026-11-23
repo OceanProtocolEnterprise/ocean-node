@@ -2,11 +2,11 @@ import { Readable } from 'stream'
 import { P2PCommandResponse } from '../../../@types/OceanNode.js'
 import { C2DClusterType } from '../../../@types/C2D/C2D.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
+import { errorSummary } from '../../../utils/logging/redact.js'
 import { CommandHandler } from '../handler/handler.js'
 import { ComputeInitializeCommand } from '../../../@types/commands.js'
 import { ProviderComputeInitializeResults } from '../../../@types/Fees.js'
 import {
-  AssetUtils,
   getFilesObjectFromConfidentialEVM,
   isConfidentialChainDDO,
   isDataTokenTemplate4,
@@ -16,6 +16,7 @@ import { ProviderFees } from '../utils/feesHandler.js'
 
 import { validateOrderTransaction } from '../utils/validateOrders.js'
 import { EncryptMethod } from '../../../@types/fileObject.js'
+import { validateAccess } from './startCompute.js'
 
 import {
   ValidateParams,
@@ -33,16 +34,18 @@ import {
   resolveComputeFileObject
 } from '../../c2d/compute_engine_docker.js'
 
-import { Credentials, DDOManager } from '@oceanprotocol/ddo-js'
+import { Credentials, DDOManager, Service, isComputeService } from '@oceanprotocol/ddo-js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { PolicyServer } from '../../policyServer/index.js'
 import {
+  bindAlgorithmContainerToDDO,
   generateUniqueID,
   getAlgoChecksums,
   validateAlgoForDataset,
   validateOutput
 } from './utils.js'
 import { ensureConsumerAllowedForPersistentStorageLocalfsFileObject } from '../../persistentStorage/PersistentStorageFactory.js'
+import { maintenanceGuard } from '../utils/maintenance.js'
 
 export class ComputeInitializeHandler extends CommandHandler {
   validate(command: ComputeInitializeCommand): ValidateParams {
@@ -55,7 +58,10 @@ export class ComputeInitializeHandler extends CommandHandler {
       // we might also need a "signature" (did + nonce) for confidential evm template 4
     ])
     if (validation.valid) {
-      if (command.consumerAddress && !isAddress(command.consumerAddress)) {
+      // Reject empty as well as malformed addresses (isAddress('') === false). An empty
+      // consumerAddress must not pass: it is the payer the order check binds against, and a
+      // falsy value would otherwise weaken that check. Matches the paid/free start handlers.
+      if (!isAddress(command.consumerAddress)) {
         return buildInvalidRequestMessage(
           'Parameter : "consumerAddress" is not a valid web3 address'
         )
@@ -77,6 +83,12 @@ export class ComputeInitializeHandler extends CommandHandler {
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
+    }
+    // Maintenance (drain) gate — BEFORE any order/payment/escrow work, so a draining node
+    // never creates a paid order for a job it will not run.
+    const maintenanceResponse = maintenanceGuard(this.getOceanNode())
+    if (maintenanceResponse) {
+      return maintenanceResponse
     }
     if (!task.queueMaxWaitTime) {
       task.queueMaxWaitTime = 0
@@ -103,12 +115,39 @@ export class ComputeInitializeHandler extends CommandHandler {
         }
       }
 
+      // Resolve the algorithm DDO ONCE and reuse it for the bind, the checksums and the
+      // asset-validation loop below (no duplicate fetch, no cross-version drift).
+      const algorithmDDO = task.algorithm.documentId
+        ? await new FindDdoHandler(node).findAndFormatDdo(task.algorithm.documentId)
+        : null
+      // SECURITY: bind the algorithm container to its DDO BEFORE anything reads meta
+      // (the rawcode gate below, and getAlgorithmImage() -> checkDockerImage later), so fee
+      // estimation validates the same image that paid/free start will actually run - not a
+      // client-supplied one. A documentId that cannot be bound to a usable published algorithm
+      // - a non-algorithm DDO, or one that does not resolve at all - is rejected (400) instead
+      // of letting the client's meta.container survive.
+      const bindOutcome = await bindAlgorithmContainerToDDO(
+        task.algorithm,
+        node,
+        algorithmDDO
+      )
+      if (bindOutcome === 'invalid') {
+        return {
+          stream: null,
+          status: {
+            httpStatus: 400,
+            error: `Algorithm ${task.algorithm.documentId} is not a valid algorithm asset`
+          }
+        }
+      }
+
       const algoChecksums = await getAlgoChecksums(
         task.algorithm.documentId,
         task.algorithm.serviceId,
         node,
         config,
-        task.consumerAddress
+        task.consumerAddress,
+        algorithmDDO
       )
 
       const isRawCodeAlgorithm = task.algorithm.meta?.rawcode
@@ -117,7 +156,7 @@ export class ComputeInitializeHandler extends CommandHandler {
       if (!isRawCodeAlgorithm && !hasValidChecksums) {
         const errorMessage =
           'Failed to retrieve algorithm checksums. Both container and files checksums are required.'
-        CORE_LOGGER.error(errorMessage)
+        CORE_LOGGER.debug(errorMessage)
         return {
           stream: null,
           status: {
@@ -143,6 +182,18 @@ export class ComputeInitializeHandler extends CommandHandler {
             status: {
               httpStatus: 500,
               error: 'Invalid C2D Environment'
+            }
+          }
+        }
+        // Early-fail only: this handler does not authenticate consumerAddress, so this is not a
+        // security boundary (startCompute enforces access with an authenticated caller). It
+        // just avoids quoting an environment the caller would be refused on anyway.
+        if (!(await validateAccess(task.consumerAddress, env.access, node))) {
+          return {
+            stream: null,
+            status: {
+              httpStatus: 403,
+              error: 'Access denied'
             }
           }
         }
@@ -247,7 +298,11 @@ export class ComputeInitializeHandler extends CommandHandler {
         if ('documentId' in elem && elem.documentId) {
           result.did = elem.documentId
           result.serviceId = elem.serviceId
-          const ddo = await new FindDdoHandler(node).findAndFormatDdo(elem.documentId)
+          // Reuse the algorithm DDO already fetched above instead of re-fetching it.
+          const ddo =
+            algorithmDDO && elem.documentId === task.algorithm.documentId
+              ? algorithmDDO
+              : await new FindDdoHandler(node).findAndFormatDdo(elem.documentId)
           if (!ddo) {
             const error = `DDO ${elem.documentId} not found`
             return {
@@ -265,15 +320,11 @@ export class ComputeInitializeHandler extends CommandHandler {
             credentials,
             metadata
           } = ddoInstance.getDDOFields()
-          if (metadata.type === 'algorithm' && metadata.algorithm?.container) {
-            task.algorithm.meta = {
-              ...metadata.algorithm,
-              container: { ...metadata.algorithm.container }
-            }
-          }
           const isOrdable = isOrderingAllowedForAsset(ddo)
           if (!isOrdable.isOrdable) {
-            CORE_LOGGER.error(isOrdable.reason)
+            CORE_LOGGER.debug(
+              `Asset ${ddoInstance.getDid()} not orderable: ${isOrdable.reason}`
+            )
             return {
               stream: null,
               status: {
@@ -352,9 +403,8 @@ export class ComputeInitializeHandler extends CommandHandler {
               )
             }
             if (!accessGrantedDDOLevel) {
-              CORE_LOGGER.logMessage(
-                `Error: Access to asset ${ddoInstance.getDid()} was denied`,
-                true
+              CORE_LOGGER.debug(
+                `Access to asset ${ddoInstance.getDid()} denied for ${task.consumerAddress}`
               )
               return {
                 stream: null,
@@ -365,7 +415,7 @@ export class ComputeInitializeHandler extends CommandHandler {
               }
             }
           }
-          const service = AssetUtils.getServiceById(ddo, elem.serviceId)
+          const service = ddoInstance.getService(elem.serviceId) as Service
           if (!service) {
             const error = `Cannot find service ${elem.serviceId} in DDO ${elem.documentId}`
             return {
@@ -400,9 +450,8 @@ export class ComputeInitializeHandler extends CommandHandler {
             }
 
             if (!accessGrantedServiceLevel) {
-              CORE_LOGGER.logMessage(
-                `Error: Access to service with id ${service.id} was denied`,
-                true
+              CORE_LOGGER.debug(
+                `Access to service ${service.id} denied for ${task.consumerAddress}`
               )
               return {
                 stream: null,
@@ -462,7 +511,7 @@ export class ComputeInitializeHandler extends CommandHandler {
           const signer = await blockchain.getSigner()
 
           // check if oasis evm or similar
-          const confidentialEVM = isConfidentialChainDDO(BigInt(ddoChainId), service)
+          const confidentialEVM = isConfidentialChainDDO(BigInt(ddo.chainId), service)
           // let's see if we can access this asset
           let canDecrypt = false
           try {
@@ -484,8 +533,8 @@ export class ComputeInitializeHandler extends CommandHandler {
               )
               if (isTemplate4) {
                 if (!task.signature) {
-                  CORE_LOGGER.error(
-                    'Could not decrypt ddo files on template 4, missing consumer signature!'
+                  CORE_LOGGER.debug(
+                    `Could not decrypt ddo files of ${ddoInstance.getDid()} on template 4, missing consumer signature!`
                   )
                 } else if (await isERC20Template4Active(ddoChainId, signer)) {
                   // we need to get the proper data for the signature
@@ -494,7 +543,7 @@ export class ComputeInitializeHandler extends CommandHandler {
                     task.datasets[0].documentId +
                     (await getNonceAsNumber(task.consumerAddress))
                   // call smart contract to decrypt
-                  const serviceIndex = AssetUtils.getServiceIndexById(ddo, service.id)
+                  const serviceIndex = ddoInstance.getServiceIndex(service.id)
                   const filesObject = await getFilesObjectFromConfidentialEVM(
                     serviceIndex,
                     service.datatokenAddress,
@@ -507,17 +556,19 @@ export class ComputeInitializeHandler extends CommandHandler {
                     canDecrypt = true
                   }
                 } else {
-                  CORE_LOGGER.error(
-                    'Could not decrypt ddo files on template 4, template is not active!'
+                  CORE_LOGGER.debug(
+                    `Could not decrypt ddo files of ${ddoInstance.getDid()} on template 4, template is not active!`
                   )
                 }
               }
             }
           } catch (e) {
             // do nothing
-            CORE_LOGGER.error(`Could not decrypt ddo files:  ${e.message} `)
+            CORE_LOGGER.error(
+              `Could not decrypt ddo files of ${ddoInstance.getDid()}: ${errorSummary(e)}`
+            )
           }
-          if (service.type === 'compute' && !canDecrypt) {
+          if (isComputeService(service) && !canDecrypt) {
             const error = `Service ${elem.serviceId} from DDO ${elem.documentId} cannot be used in compute on this provider`
             return {
               stream: null,
@@ -540,15 +591,20 @@ export class ComputeInitializeHandler extends CommandHandler {
           const fees = new ProviderFees(node)
           if ('transferTxId' in elem && elem.transferTxId) {
             // search for that compute env and see if it has access to dataset
+            // Option B (env-AND) early-warning check: consumer must be this env AND the
+            // payer must be the caller. result.consumerAddress above stays env.consumerAddress
+            // (the address the client must set as the order's consumer); validOrder is only set
+            // when the AND passes, so the consumer learns early if their order will be rejected.
             const paymentValidation = await validateOrderTransaction(
               elem.transferTxId,
               env.consumerAddress,
               provider,
               nftAddress,
               service.datatokenAddress,
-              AssetUtils.getServiceIndexById(ddo, service.id),
+              ddoInstance.getServiceIndex(service.id),
               service.timeout,
-              await blockchain.getSigner()
+              await blockchain.getSigner(),
+              task.consumerAddress
             )
             if (paymentValidation.isValid === true) {
               // order is valid, so let's check providerFees
@@ -589,7 +645,7 @@ export class ComputeInitializeHandler extends CommandHandler {
         }
       }
     } catch (error) {
-      CORE_LOGGER.error(error.message)
+      CORE_LOGGER.error(`ComputeInitialize failed: ${error.message}`)
       return {
         stream: null,
         status: {

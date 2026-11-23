@@ -3,8 +3,8 @@ import { GetFeesCommand } from '../../../@types/commands.js'
 import { P2PCommandResponse } from '../../../@types/OceanNode.js'
 import { ProviderFees } from '../utils/feesHandler.js'
 import { Readable } from 'stream'
-import { GENERIC_EMOJIS, LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { PROVIDER_LOGGER } from '../../../utils/logging/common.js'
+import { errorSummary } from '../../../utils/logging/redact.js'
 import {
   ValidateParams,
   buildInvalidRequestMessage,
@@ -16,7 +16,7 @@ import { ProviderInitialize } from '../../../@types/Fees.js'
 import { getNonce } from '../utils/nonceHandler.js'
 import { streamToString } from '../../../utils/util.js'
 import { isOrderingAllowedForAsset } from './downloadHandler.js'
-import { Credentials, DDOManager } from '@oceanprotocol/ddo-js'
+import { Credentials, DDOManager, isComputeService } from '@oceanprotocol/ddo-js'
 import { checkCredentials } from '../../../utils/credentials.js'
 import { isPolicyServerConfigured } from '../../../utils/index.js'
 import { PolicyServer } from '../../policyServer/index.js'
@@ -41,9 +41,8 @@ export class FeesHandler extends CommandHandler {
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
-    PROVIDER_LOGGER.logMessage(
-      `Try to calculate fees for DDO with id: ${task.ddoId} and serviceId: ${task.serviceId}`,
-      true
+    PROVIDER_LOGGER.debug(
+      `Try to calculate fees for DDO with id: ${task.ddoId} and serviceId: ${task.serviceId}`
     )
     let errorMsg: string = null
     const ddo = await new FindDdoHandler(this.getOceanNode()).findAndFormatDdo(task.ddoId)
@@ -53,7 +52,7 @@ export class FeesHandler extends CommandHandler {
 
     const isOrdable = isOrderingAllowedForAsset(ddo)
     if (!isOrdable.isOrdable) {
-      PROVIDER_LOGGER.error(isOrdable.reason)
+      PROVIDER_LOGGER.debug(`getFees ${task.ddoId}: ${isOrdable.reason}`)
       return {
         stream: null,
         status: {
@@ -62,27 +61,36 @@ export class FeesHandler extends CommandHandler {
         }
       }
     }
+
     const ddoInstance = DDOManager.getDDOClass(ddo)
-    const {
-      chainId: ddoChainId,
-      credentials,
-      services
-    } = ddoInstance.getDDOFields() as any
-    const service = services.find((what: any) => what.id === task.serviceId)
+    const service = ddoInstance.getService(task.serviceId) as any
+
     if (!service) {
-      errorMsg = 'Invalid serviceId'
+      PROVIDER_LOGGER.debug(`getFees ${task.ddoId}/${task.serviceId}: Invalid serviceId`)
+      return {
+        stream: null,
+        status: {
+          httpStatus: 500,
+          error: 'Invalid serviceId'
+        }
+      }
     }
-    if (service?.type === 'compute') {
+    if (isComputeService(service)) {
       errorMsg = 'Use the initializeCompute endpoint to initialize compute jobs'
+    }
+    const now = new Date().getTime() / 1000
+    let validUntil = service.timeout === 0 ? 0 : now + service.timeout // first, make it service default
+    if (task.validUntil && !isNaN(task.validUntil)) {
+      // so user input is a number
+      if (service.timeout > 0 && task.validUntil > validUntil) {
+        errorMsg = 'Required validUntil is higher than service timeout'
+      }
+      // eslint-disable-next-line prefer-destructuring
+      validUntil = task.validUntil
     }
 
     if (errorMsg) {
-      PROVIDER_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      PROVIDER_LOGGER.debug(`getFees ${task.ddoId}/${task.serviceId}: ${errorMsg}`)
       return {
         stream: null,
         status: {
@@ -92,7 +100,9 @@ export class FeesHandler extends CommandHandler {
       }
     }
 
-    const policyServer = new PolicyServer()
+    // check credentials before quoting a price, so a consumer without access is refused
+    // before paying. With a policy server, start its verification (OID4VP) session instead.
+    const { chainId: ddoChainId, credentials } = ddoInstance.getDDOFields() as any
     if (credentials || service.credentials) {
       if (!task.consumerAddress) {
         return {
@@ -104,6 +114,7 @@ export class FeesHandler extends CommandHandler {
         }
       }
 
+      const policyServer = new PolicyServer()
       let signer
       if (!isPolicyServerConfigured()) {
         const oceanNode = this.getOceanNode()
@@ -117,7 +128,6 @@ export class FeesHandler extends CommandHandler {
             }
           }
         }
-
         const blockchain = oceanNode.getBlockchain(supportedNetwork.chainId)
         if (!blockchain) {
           return {
@@ -128,7 +138,6 @@ export class FeesHandler extends CommandHandler {
             }
           }
         }
-
         const { ready, error } = await blockchain.isNetworkReady()
         if (!ready) {
           return {
@@ -142,47 +151,37 @@ export class FeesHandler extends CommandHandler {
         signer = await blockchain.getSigner()
       }
 
+      // check credentials (DDO level)
       let accessGrantedDDOLevel = false
-      PROVIDER_LOGGER.info(
-        `Checking credentials for consumer address: ${task.consumerAddress} AND credentials: ${JSON.stringify(credentials)}`
-      )
       if (credentials) {
         if (isPolicyServerConfigured()) {
-          PROVIDER_LOGGER.info(
-            `Checking credentials for consumer address on policy server: ${task.consumerAddress}`
-          )
           const response = await policyServer.initializePSVerification(
             ddoInstance.getDid(),
             ddo,
-            task.serviceId,
+            service.id,
             task.consumerAddress,
             task.policyServer
           )
           accessGrantedDDOLevel = response.success
         } else {
-          PROVIDER_LOGGER.info(
-            `Checking credentials for consumer address internal: ${task.consumerAddress}`
-          )
           accessGrantedDDOLevel = await checkCredentials(
             task.consumerAddress,
             credentials as Credentials,
             signer
           )
         }
-      }
-
-      PROVIDER_LOGGER.info(`credentials: ${JSON.stringify(credentials)}`)
-      PROVIDER_LOGGER.info(`accessGrantedDDOLevel: ${accessGrantedDDOLevel}`)
-
-      if (credentials && !accessGrantedDDOLevel) {
-        const error = `Error: Access to asset ${ddoInstance.getDid()} was denied`
-        PROVIDER_LOGGER.error(error)
-        return {
-          stream: null,
-          status: { httpStatus: 403, error }
+        if (!accessGrantedDDOLevel) {
+          const error = `Error: Access to asset ${ddoInstance.getDid()} was denied`
+          PROVIDER_LOGGER.debug(`getFees ${task.ddoId}: ${error}`)
+          return {
+            stream: null,
+            status: { httpStatus: 403, error }
+          }
         }
       }
 
+      // check credentials on service level
+      // with a policy server, a DDO-level grant also covers the service
       if (service.credentials) {
         let accessGrantedServiceLevel: boolean
         if (isPolicyServerConfigured()) {
@@ -195,55 +194,19 @@ export class FeesHandler extends CommandHandler {
           )
           accessGrantedServiceLevel = accessGrantedDDOLevel || response.success
         } else {
-          PROVIDER_LOGGER.info(
-            'Checking credentials for consumer address internal for service: ' +
-              task.consumerAddress
-          )
           accessGrantedServiceLevel = await checkCredentials(
             task.consumerAddress,
             service.credentials,
             signer
           )
         }
-        PROVIDER_LOGGER.info(
-          `service.credentials: ${JSON.stringify(service.credentials)}`
-        )
-        PROVIDER_LOGGER.info(`accessGrantedServiceLevel: ${accessGrantedServiceLevel}`)
-
         if (!accessGrantedServiceLevel) {
           const error = `Error: Access to service with id ${service.id} was denied`
-          PROVIDER_LOGGER.error(error)
+          PROVIDER_LOGGER.debug(`getFees ${task.ddoId}: ${error}`)
           return {
             stream: null,
             status: { httpStatus: 403, error }
           }
-        }
-      }
-    }
-
-    const now = new Date().getTime() / 1000
-    let validUntil = service.timeout === 0 ? 0 : now + service.timeout // first, make it service default
-    if (task.validUntil && !isNaN(task.validUntil)) {
-      // so user input is a number
-      if (service.timeout > 0 && task.validUntil > validUntil) {
-        errorMsg = 'Required validUntil is higher than service timeout'
-      }
-      // eslint-disable-next-line prefer-destructuring
-      validUntil = task.validUntil
-    }
-
-    if (errorMsg) {
-      PROVIDER_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
-      return {
-        stream: null,
-        status: {
-          httpStatus: 500,
-          error: errorMsg
         }
       }
     }
@@ -267,12 +230,7 @@ export class FeesHandler extends CommandHandler {
         }
       } else {
         const error = `Unable to calculate fees (null) for DDO with id: ${task.ddoId} and serviceId: ${task.serviceId}`
-        PROVIDER_LOGGER.logMessageWithEmoji(
-          error,
-          true,
-          GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-          LOG_LEVELS_STR.LEVEL_ERROR
-        )
+        PROVIDER_LOGGER.error(error)
         return {
           stream: null,
           status: {
@@ -282,11 +240,8 @@ export class FeesHandler extends CommandHandler {
         }
       }
     } catch (error) {
-      PROVIDER_LOGGER.logMessageWithEmoji(
-        error.message,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
+      PROVIDER_LOGGER.error(
+        `Fee calculation failed for ${task.ddoId}/${task.serviceId}: ${errorSummary(error)}`
       )
       return {
         stream: null,

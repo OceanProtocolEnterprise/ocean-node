@@ -3,6 +3,7 @@ import { fetchEventFromTransaction } from '../../../utils/util.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
+import { errorSummary } from '../../../utils/logging/redact.js'
 import { EVENTS } from '../../../utils/index.js'
 
 interface ValidateTransactionResponse {
@@ -29,8 +30,7 @@ export async function fetchTransactionReceipt(
       }
       retries--
     } catch (error) {
-      const errorMsg = `Error fetching transaction receipt: ${error}`
-      CORE_LOGGER.logMessage(errorMsg)
+      CORE_LOGGER.error(`RPC error fetching receipt for ${txId}: ${errorSummary(error)}`)
       return null
     }
   }
@@ -44,22 +44,32 @@ export async function validateOrderTransaction(
   datatokenAddress: string,
   serviceIndex: number,
   serviceTimeout: number,
-  signer: Signer
+  signer: Signer,
+  payerAddress?: string
 ): Promise<ValidateTransactionResponse> {
   const contractInterface = new Interface(ERC20Template.abi)
   let txReceiptMined = await fetchTransactionReceipt(txId, provider)
   if (!txReceiptMined) {
     const errorMsg = `Tx receipt cannot be processed, because tx id ${txId} was not mined.`
-    CORE_LOGGER.logMessage(errorMsg)
+    CORE_LOGGER.debug(errorMsg)
     return {
       isValid: false,
       message: errorMsg
     }
   }
+  // The authenticity of the order is bound to the datatoken named by the DDO service, NOT to
+  // the receipt `to`: a tx addressed to the datatoken can still carry logs emitted by other
+  // (attacker-controlled) contracts, and `receipt.to` of the submitted tx is attacker-chosen.
+  // So derive the NFT from the DDO datatoken and require every order event below to be emitted
+  // BY that datatoken (ON-01 - forged-order emitter).
+  const datatokenContract = new Contract(datatokenAddress, ERC20Template.abi, signer)
+  const erc721Address = await datatokenContract.getERC721Address()
+
   const orderReusedEvent = fetchEventFromTransaction(
     txReceiptMined,
     EVENTS.ORDER_REUSED,
-    contractInterface
+    contractInterface,
+    datatokenAddress
   )
 
   if (orderReusedEvent && orderReusedEvent?.length > 0) {
@@ -67,7 +77,9 @@ export async function validateOrderTransaction(
     txReceiptMined = await fetchTransactionReceipt(reusedTxId, provider)
     if (!txReceiptMined) {
       const errorMsg = `Tx receipt cannot be processed, because tx id ${txId} was not mined.`
-      CORE_LOGGER.logMessage(errorMsg)
+      CORE_LOGGER.debug(
+        `Tx receipt cannot be processed, because reused tx id ${reusedTxId} was not mined.`
+      )
       return {
         isValid: false,
         message: errorMsg
@@ -77,34 +89,40 @@ export async function validateOrderTransaction(
   const OrderStartedEvent = fetchEventFromTransaction(
     txReceiptMined,
     EVENTS.ORDER_STARTED,
-    contractInterface
+    contractInterface,
+    datatokenAddress
   )
+  // Fail closed: if the datatoken from the DDO never emitted an OrderStarted in this tx (e.g. a
+  // forged order self-emitted by another contract was filtered out), the order is not valid.
+  if (!OrderStartedEvent || OrderStartedEvent.length === 0) {
+    return {
+      isValid: false,
+      message:
+        'No OrderStarted event emitted by the datatoken was found for this transaction.'
+    }
+  }
   let orderEvent
-  for (const event of OrderStartedEvent || []) {
-    const eventDatatokenAddress = event.log.address
-    const userMatches =
-      userAddress?.toLowerCase() === event.args[0]?.toLowerCase() ||
-      userAddress?.toLowerCase() === event.args[1]?.toLowerCase()
-    const datatokenMatches =
-      eventDatatokenAddress?.toLowerCase() === datatokenAddress?.toLowerCase()
-
-    if (!userMatches || !datatokenMatches) continue
-
-    try {
-      const datatokenContract = new Contract(
-        eventDatatokenAddress,
-        ERC20Template.abi,
-        signer
-      )
-      const erc721Address = await datatokenContract.getERC721Address()
-      if (erc721Address?.toLowerCase() !== dataNftAddress?.toLowerCase()) continue
-
+  for (const event of OrderStartedEvent) {
+    // event.args[0] = consumer, event.args[1] = payer (ERC20Template OrderStarted).
+    // When payerAddress is provided (compute path) we bind positions explicitly:
+    // consumer must be userAddress AND payer must be payerAddress. Without it
+    // (download path) we keep the original position-agnostic OR so the caller can be
+    // either the consumer or the payer.
+    // Use `!== undefined` (not truthiness): an empty-string payerAddress must still take
+    // the strict AND branch (where it can never match a real payer) rather than fall back
+    // to the permissive OR — fail-closed.
+    const addressMatch =
+      payerAddress !== undefined
+        ? userAddress?.toLowerCase() === event.args[0]?.toLowerCase() &&
+          payerAddress?.toLowerCase() === event.args[1]?.toLowerCase()
+        : userAddress?.toLowerCase() === event.args[0]?.toLowerCase() ||
+          userAddress?.toLowerCase() === event.args[1]?.toLowerCase()
+    // The datatoken<->emitter binding is already enforced by fetchEventFromTransaction
+    // (the event was emitted by datatokenAddress); here we only still need the NFT of that
+    // datatoken to match the DDO's data NFT.
+    if (addressMatch && erc721Address?.toLowerCase() === dataNftAddress?.toLowerCase()) {
       orderEvent = event
       break
-    } catch (error) {
-      CORE_LOGGER.logMessage(
-        `Could not validate datatoken ${eventDatatokenAddress}: ${error}`
-      )
     }
   }
 
@@ -140,7 +158,7 @@ export async function validateOrderTransaction(
   const currentTimestamp = Math.floor(Date.now() / 1000)
 
   const timeElapsed = currentTimestamp - eventTimestamp
-  CORE_LOGGER.logMessage(
+  CORE_LOGGER.debug(
     `serviceTimeout ${serviceTimeout} vs. timeElapsed ${timeElapsed} when validating order.`
   )
 

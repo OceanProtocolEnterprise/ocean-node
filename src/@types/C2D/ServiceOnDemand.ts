@@ -4,23 +4,32 @@ import type {
   ComputeResourceRequestWithPrice,
   ContainerMetricsSnapshot
 } from './C2D.js'
-
-// ── Resource requirements ─────────────────────────────────────────────
-
-export interface TemplateResourceRequirement {
-  // Exactly one of `id` or `kind` must be set.
-  id?: string // exact resource id: 'cpu' | 'ram' | 'disk' | named GPU ('gpu-0')
-  kind?: 'discrete' | 'fungible' // match ANY resource of this kind across the env pool
-  type?: string // optional: further filter within kind ('gpu', 'fpga', 'tpu')
-
-  min: number // MUST have at least this much — service is rejected otherwise
-  recommended?: number // ideal amount; below this the env gets a lower score
-  unit?: string // display hint: 'cores' | 'GB' | 'count'
-  description?: string // shown in UI: "CUDA GPU — 2 recommended for large models"
+/**
+ * One allowed way to spread the recommended VRAM over identical GPUs of ONE type on ONE host.
+ * `gpuCount` is exactly what gets booked and used (TP width, TEP width, or one-model-per-card placement).
+ */
+export interface GpuLayout {
+  gpuCount: number // integer >= 1; layouts strictly ascending by gpuCount
+  // VRAM each GPU must have for this layout, decimal GB, including headroom (compile peaks, replicated KV).
+  // REQUIRED when gpuCount > 1. FORBIDDEN when gpuCount === 1: that one GPU must hold `recommended`.
+  vramPerGpu?: number
 }
 
-// ── Template definition ───────────────────────────────────────────────
-
+// A template's resource recommendation. Advisory only: the node does NOT gate SERVICE_START
+// on it — choosing an environment (and the exact resources to request) is the client's job.
+// There is no `min`: environment minima, granularity and constraints are what the node enforces.
+export type TemplateResourceRequirement =
+  | { id: 'cpu'; recommended: number; unit: 'cores'; description?: string } // recommended >= 0
+  | { id: 'ram' | 'disk'; recommended: number; unit: 'GB'; description?: string } // decimal GB, >= 0
+  | {
+      kind: 'discrete'
+      type: 'gpu'
+      recommended: number // > 0. TOTAL VRAM, decimal GB: the headline. normally the smallest layout total (authoring convention).
+      unit: 'GB'
+      gpuCountEnv?: string // userConfigurableEnvVars key forcing exact GPU width; never an envVars key
+      layouts: GpuLayout[] // mandatory; runtime schema requires nonempty
+      description?: string // human prose, never parsed
+    }
 export interface UserConfigurableEnvVar {
   key: string // env var name, passed in userData
   validation?: string // optional regex; validated at SERVICE_START time
@@ -28,10 +37,10 @@ export interface UserConfigurableEnvVar {
   required?: boolean // advisory hint: the app cannot do its job without it (e.g. HF_TOKEN for a gated model). Not enforced node-side.
 }
 
-// ── Catalogue classification (advisory; consumed by UIs) ───────────────
-
 // How an entry presents itself. Absent means 'service' — every template published before this field.
-export type ServiceTemplateKind = 'service' | 'bundle'
+// 'bundle' and 'curated' are both built on a parent `service`; 'curated' is a hand-picked model
+// template (fixed model + fixed serve args, no user command/model override, e.g. a vLLM-served model).
+export type ServiceTemplateKind = 'service' | 'bundle' | 'curated'
 
 // Closed set so catalogue buckets stay consistent across nodes.
 // Pinned: prettier 2 collapses this union onto one line, prettier 3 keeps the leading pipes,
@@ -71,8 +80,8 @@ export interface ServiceTemplate {
   description?: string
   // ── Catalogue metadata — advisory, never affects how the container runs ──
   kind?: ServiceTemplateKind // default 'service'
-  service?: string // bundles only: id of the service template this is a variant of
-  outcome?: string // bundles only: the one concrete thing this gets done
+  service?: string // bundle/curated only: id of the service template this is a variant of
+  outcome?: string // bundle/curated only: the one concrete thing this gets done
   category?: ServiceTemplateCategory
   includes?: TemplateIncludedItem[] // bundles only: manifest of what the command downloads
   unlisted?: boolean // true: left out of the catalogue listing, still reachable by a direct link
@@ -91,8 +100,9 @@ export interface ServiceTemplate {
   // (mutually exclusive with `command`)
   commandFile?: string
   entrypoint?: string[] // Docker ENTRYPOINT override
-  requiredResources?: TemplateResourceRequirement[] // MUST satisfy — gates SERVICE_START
-  recommendedResources?: TemplateResourceRequirement[] // SHOULD satisfy — used for scoring + UI
+  // The ONLY resource declaration (at most one entry per cpu/ram/disk/gpu). Absent GPU entry =
+  // no template GPU demand. Never checked at SERVICE_START; clients use it to pick an env.
+  recommendedResources?: TemplateResourceRequirement[]
   workflows?: ServiceTemplateWorkflow[] // client-selectable graphs; no operator secrets, so public
 }
 
@@ -117,6 +127,12 @@ export const DEFAULT_SERVICE_MAX_DURATION_SECONDS = 86400 // 24 h
 // minJobDuration) is what applies — keeping an unconfigured node billing exactly as before.
 export const DEFAULT_SERVICE_MIN_DURATION_SECONDS = 0
 
+// Hard ceiling on how long a Dockerfile image build may run before it is aborted. This is a
+// SEPARATE budget from a job/service's full runtime duration: a build is only meant to take a
+// few minutes, so a short cap limits how long an untrusted, user-supplied Dockerfile can keep
+// the daemon busy. Always capped by the job/service maxDuration so it can never exceed it.
+export const DEFAULT_BUILD_TIMEOUT_SECONDS = 300 // 5 min
+
 export interface ServiceOnDemandConfig {
   enabled: boolean
   nodeHost: string // host (or IP) clients use to reach forwarded service ports; e.g. 'localhost'
@@ -124,9 +140,66 @@ export interface ServiceOnDemandConfig {
   minDurationSeconds?: number // default: DEFAULT_SERVICE_MIN_DURATION_SECONDS (no daemon floor)
   maxDurationSeconds?: number // default: DEFAULT_SERVICE_MAX_DURATION_SECONDS (24 h)
   allowImageBuild?: boolean // default: false — gates Dockerfile-based services per daemon
+  buildTimeoutSeconds?: number // max image-build runtime; unset → runtime default (DEFAULT_BUILD_TIMEOUT_SECONDS)
 }
 
-// ── Runtime service job ───────────────────────────────────────────────
+/**
+ * Whether a service can actually serve requests, as opposed to merely having a running container.
+ */
+export type ServiceReadinessState =
+  | 'waiting' // not answering as expected yet — the normal warm-up window
+  | 'ready' // answered the engine's readiness request
+  | 'failing' // it WAS ready and stopped answering
+
+export interface ServiceReadiness {
+  state: ServiceReadinessState
+  engine: string // which profile decided this ('vllm'), so a client can say what was checked
+  readySince?: number // Unix ms of the first successful check of THIS container
+  lastCheckedAt?: number // Unix ms
+  consecutiveFailures?: number
+  httpStatus?: number // last response status (absent when the connection itself failed)
+  lastError?: string // owner-only: stripped from SERVICE_LIST
+  probedUrl?: string // owner-only: which candidate address answered (diagnostics)
+}
+
+/**
+ * Live progress of the image pull, aggregated from the Docker daemon's own per-layer byte
+ * counts.
+ */
+export interface ServiceImagePullProgress {
+  phase: 'downloading' | 'extracting' | 'complete'
+  downloadedBytes: number
+  totalBytes: number
+  percent: number
+  layersTotal: number
+  layersDone: number
+  updatedAt: number // Unix ms
+}
+
+/**
+ * How much of its model a recognized engine has downloaded, read from the container's own cache.
+ */
+export interface ServiceModelDownload {
+  modelId?: string // the repo being fetched, when it is a Hub id
+  downloadedBytes: number
+  totalBytes?: number
+  percent?: number
+  filesComplete: number
+  filesInFlight: number // the hub fetches files in parallel, so only the aggregate is meaningful
+  filesTotal?: number // from the download manifest
+  updatedAt: number // Unix ms
+}
+
+// One zip of /data/outputs, taken right before a container of the service was removed. A
+// service without an output bucket gets one per container it ran, downloadable through
+// SERVICE_GET_RESULT until expiresAt + the environment's storageExpiry.
+export interface ServiceOutputArchive {
+  index: number
+  filename: string // e.g. outputs-0.zip, under <storage>/services/<serviceId>/
+  filesize: number // bytes
+  createdAt: number // Unix ms timestamp
+  containerId: string // container it was taken from — a retried teardown must not archive it twice
+}
 
 export interface ServiceEndpoint {
   containerPort: number
@@ -149,6 +222,7 @@ export enum ServiceStatusNumber {
   Stopping = 50,
   Stopped = 70,
   Expired = 75,
+  DiskQuotaExceeded = 76, // stopped after exceeding disk; reservation remains restartable
   Error = 99
 }
 /* eslint-enable no-unused-vars */
@@ -167,7 +241,18 @@ export const ServiceStatusText: Record<ServiceStatusNumber, string> = {
   [ServiceStatusNumber.Stopping]: 'Stopping',
   [ServiceStatusNumber.Stopped]: 'Stopped',
   [ServiceStatusNumber.Expired]: 'Expired',
+  [ServiceStatusNumber.DiskQuotaExceeded]: 'DiskQuotaExceeded',
   [ServiceStatusNumber.Error]: 'Error'
+}
+
+// Both states keep the paid reservation and allow restart/edit until expiresAt.
+export const SERVICE_STOPPED_STATUSES: readonly ServiceStatusNumber[] = [
+  ServiceStatusNumber.Stopped,
+  ServiceStatusNumber.DiskQuotaExceeded
+]
+
+export function isStoppedLike(status: ServiceStatusNumber): boolean {
+  return SERVICE_STOPPED_STATUSES.includes(status)
 }
 
 // Statuses of a service job that is mid-start/restart and owned by an exclusive
@@ -201,6 +286,8 @@ export interface ServiceJob {
   networkId: string // per-service Docker network id
   status: ServiceStatusNumber
   statusText: string
+  // Internal pending disk-stop reason: retry failed teardown without ending the reservation.
+  terminationReason?: ServiceStatusNumber.DiskQuotaExceeded
   dateCreated: string // ISO timestamp
   updatedAt?: number
   expiresAt: number // Unix ms timestamp
@@ -215,10 +302,23 @@ export interface ServiceJob {
   // compute equivalent is readable by anyone holding the jobId, whereas this is owner-only.
   metadata?: DBComputeJobMetadata
   outputBucketId?: string // persistent-storage bucket bind-mounted at /data/outputs
+  // Archives of /data/outputs, only for services without an outputBucketId.
+  outputArchives?: ServiceOutputArchive[]
+  // Internal, only while a restart is in flight: the stopped old container, kept until its
+  // /data/outputs has been carried over into the new one (orphan recovery archives and
+  // removes it if the node dies before that). Never returned to clients.
+  previousContainerId?: string
   resources: ComputeResourceRequestWithPrice[]
   payment: DBComputeJobPayment // initial start payment
   extendPayments?: DBComputeJobPayment[] // one entry per successful SERVICE_EXTEND
   // Best-effort Docker/NVML runtime metrics sampled while the service container runs.
   // DB-only: stripped from every public response by toPublicServiceJob / toListedServiceJob.
   runtimeMetrics?: ContainerMetricsSnapshot
+  // Whether the workload can serve requests yet, for engines the node recognizes. Absent otherwise,
+  // which clients read as "not reported" and fall back to treating Running as usable.
+  readiness?: ServiceReadiness
+  // Image pull byte progress, written while the job is in PullImage.
+  imagePull?: ServiceImagePullProgress
+  // Model-weight download progress, sampled from the container's cache while it warms up.
+  modelDownload?: ServiceModelDownload
 }

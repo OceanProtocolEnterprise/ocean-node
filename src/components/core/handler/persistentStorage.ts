@@ -52,6 +52,10 @@ function requirePersistentStorage(handler: CommandHandler): PersistentStorageFac
   return storage
 }
 
+function logHandlerError(handlerName: string, message: string): void {
+  CORE_LOGGER.error(`${handlerName} error: ${message}`)
+}
+
 export class PersistentStorageCreateBucketHandler extends CommandHandler {
   validate(command: PersistentStorageCreateBucketCommand): ValidateParams {
     const base = validateCommandParameters(command, ['accessLists'])
@@ -81,6 +85,16 @@ export class PersistentStorageCreateBucketHandler extends CommandHandler {
 
     try {
       const storage = requirePersistentStorage(this)
+      if (task.accessLists.length > 0 && !storage.isBucketSharingAllowed()) {
+        return {
+          stream: null,
+          status: {
+            httpStatus: 400,
+            error:
+              'Bucket sharing is disabled on this node: "accessLists" must be an empty array'
+          }
+        }
+      }
       const node = this.getOceanNode()
       const config = node.getConfig()
       // if we have access lists,check them.
@@ -125,7 +139,7 @@ export class PersistentStorageCreateBucketHandler extends CommandHandler {
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      CORE_LOGGER.error(`PersistentStorageCreateBucketHandler error: ${message}`)
+      logHandlerError('PersistentStorageCreateBucketHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }
@@ -176,7 +190,7 @@ export class PersistentStorageUpdateBucketHandler extends CommandHandler {
       if (message.toLowerCase().includes('not found')) {
         return { stream: null, status: { httpStatus: 404, error: message } }
       }
-      CORE_LOGGER.error(`PersistentStorageUpdateBucketHandler error: ${message}`)
+      logHandlerError('PersistentStorageUpdateBucketHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }
@@ -208,10 +222,10 @@ export class PersistentStorageGetBucketsHandler extends CommandHandler {
     if (isAuthRequestValid.status.httpStatus !== 200) return isAuthRequestValid
 
     let ownerNormalized: string
-    // let consumerNormalized: string
+    let consumerNormalized: string
     try {
       ownerNormalized = getAddress(task.owner)
-      // consumerNormalized = getAddress(task.consumerAddress)
+      consumerNormalized = getAddress(isAuthRequestValid.consumerAddress)
     } catch {
       return {
         stream: null,
@@ -224,8 +238,10 @@ export class PersistentStorageGetBucketsHandler extends CommandHandler {
 
     try {
       const storage = requirePersistentStorage(this)
-      // const node = this.getOceanNode()
-      const rows = await storage.listBuckets(ownerNormalized)
+      const rows = await storage.listBucketsForConsumer(
+        ownerNormalized,
+        consumerNormalized
+      )
 
       return {
         stream: Readable.from(JSON.stringify(rows)),
@@ -233,7 +249,7 @@ export class PersistentStorageGetBucketsHandler extends CommandHandler {
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      CORE_LOGGER.error(`PersistentStorageGetBucketsHandler error: ${message}`)
+      logHandlerError('PersistentStorageGetBucketsHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }
@@ -278,7 +294,7 @@ export class PersistentStorageListFilesHandler extends CommandHandler {
         }
       }
       const message = e instanceof Error ? e.message : String(e)
-      CORE_LOGGER.error(`PersistentStorageListFilesHandler error: ${message}`)
+      logHandlerError('PersistentStorageListFilesHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }
@@ -328,7 +344,7 @@ export class PersistentStorageGetFileObjectHandler extends CommandHandler {
       if (message.toLowerCase().includes('file not found')) {
         return { stream: null, status: { httpStatus: 404, error: message } }
       }
-      CORE_LOGGER.error(`PersistentStorageGetFileObjectHandler error: ${message}`)
+      logHandlerError('PersistentStorageGetFileObjectHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }
@@ -382,7 +398,7 @@ export class PersistentStorageUploadFileHandler extends CommandHandler {
         }
       }
       const message = e instanceof Error ? e.message : String(e)
-      CORE_LOGGER.error(`PersistentStorageUploadFileHandler error: ${message}`)
+      logHandlerError('PersistentStorageUploadFileHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }
@@ -424,7 +440,7 @@ export class PersistentStorageDeleteFileHandler extends CommandHandler {
         }
       }
       const message = e instanceof Error ? e.message : String(e)
-      CORE_LOGGER.error(`PersistentStorageDeleteFileHandler error: ${message}`)
+      logHandlerError('PersistentStorageDeleteFileHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }
@@ -502,7 +518,7 @@ export class PersistentStorageDownloadFileHandler extends CommandHandler {
       if (message.toLowerCase().includes('not found')) {
         return { stream: null, status: { httpStatus: 404, error: message } }
       }
-      CORE_LOGGER.error(`PersistentStorageDownloadFileHandler error: ${message}`)
+      logHandlerError('PersistentStorageDownloadFileHandler', message)
       return { stream: null, status: { httpStatus: 500, error: message } }
     }
   }

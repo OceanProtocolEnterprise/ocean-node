@@ -1,6 +1,5 @@
 import { ethers, Signer, FallbackProvider, Interface } from 'ethers'
 import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
-import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import { BaseEventProcessor } from './BaseProcessor.js'
 import { getContractAddress } from '../utils.js'
 import { EVENTS } from '../../../utils/constants.js'
@@ -61,6 +60,9 @@ export class EscrowEventProcessor extends BaseEventProcessor {
           record.maxLockedAmount = num(args.maxLockedAmount)
           record.maxLockSeconds = num(args.maxLockSeconds)
           record.maxLockCounts = num(args.maxLockCounts)
+          // Escrow v2: 0 = indefinite, >0 = unix ts after which the payee can no longer
+          // create/extend locks. Indexed only (not enforced node-side).
+          record.expiryTimestamp = num(args.expiryTimestamp)
           break
         case EVENTS.ESCROW_LOCK:
           record.payer = addr(args.payer)
@@ -100,6 +102,36 @@ export class EscrowEventProcessor extends BaseEventProcessor {
           record.token = addr(args.token)
           record.amount = num(args.amount)
           break
+        case EVENTS.ESCROW_SUBSIDIZED:
+          // Subsidized(payee, payer, jobId, token, provider, subsidyAmount, bonusAmount)
+          record.payee = addr(args.payee)
+          record.payer = addr(args.payer)
+          record.jobId = num(args.jobId)
+          record.token = addr(args.token)
+          record.provider = addr(args.provider)
+          record.subsidyAmount = num(args.subsidyAmount)
+          record.bonusAmount = num(args.bonusAmount)
+          break
+        case EVENTS.ESCROW_LOCK_SPONSORED:
+          // LockSponsored(payer, payee, jobId, token, provider, amount)
+          record.payer = addr(args.payer)
+          record.payee = addr(args.payee)
+          record.jobId = num(args.jobId)
+          record.token = addr(args.token)
+          record.provider = addr(args.provider)
+          record.amount = num(args.amount)
+          break
+        case EVENTS.ESCROW_SPONSOR_REFUNDED:
+          // SponsorRefunded(payer, payee, jobId, token, provider, amount, reclaimable)
+          // reclaimable=true => push failed, parked for the provider to sweep.
+          record.payer = addr(args.payer)
+          record.payee = addr(args.payee)
+          record.jobId = num(args.jobId)
+          record.token = addr(args.token)
+          record.provider = addr(args.provider)
+          record.amount = num(args.amount)
+          record.reclaimable = Boolean(args.reclaimable)
+          break
         default:
           return null
       }
@@ -107,17 +139,13 @@ export class EscrowEventProcessor extends BaseEventProcessor {
       const { escrow } = await this.getDatabase()
       if (!escrow) return null
       const result = await escrow.create(record)
-      INDEXER_LOGGER.logMessage(
+      INDEXER_LOGGER.debug(
         `[Escrow] ${eventName} indexed for tx ${event.transactionHash} on chain ${chainId}`
       )
       return result
     } catch (err) {
       this.rethrowIfProviderError(err)
-      INDEXER_LOGGER.log(
-        LOG_LEVELS_STR.LEVEL_ERROR,
-        `Error processing Escrow ${eventName} event: ${err.message}`,
-        true
-      )
+      INDEXER_LOGGER.error(`Error processing Escrow ${eventName} event: ${err.message}`)
       return null
     }
   }

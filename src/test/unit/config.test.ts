@@ -1,13 +1,20 @@
 import { expect } from 'chai'
+import { getAddress } from 'ethers'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { getConfiguration, loadConfigFromFile } from '../../utils/config.js'
 import {
   OverrideEnvConfig,
   TEST_ENV_CONFIG_PATH,
   buildEnvOverrideConfig,
-  setupEnvironment
+  setupEnvironment,
+  tearDownEnvironment
 } from '../utils/utils.js'
-import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
+import { ENVIRONMENT_VARIABLES, JobType } from '../../utils/constants.js'
+import {
+  DEFAULT_DB_INIT_MAX_ATTEMPTS,
+  DEFAULT_DB_INIT_MAX_RETRY_DELAY,
+  DEFAULT_DB_INIT_RETRY_DELAY
+} from '../../utils/config/constants.js'
 
 let config: OceanNodeConfig
 describe('Should validate configuration from JSON', () => {
@@ -45,6 +52,11 @@ describe('Should validate configuration from JSON', () => {
     expect(config.httpPort).to.be.equal(8001)
   })
 
+  it('should default trustProxy to false when unset', () => {
+    // Secure default: X-Forwarded-For is not trusted unless the operator opts in.
+    expect(config.trustProxy).to.be.equal(false)
+  })
+
   it('should have P2P', () => {
     expect(config.hasP2P).to.be.equal(true)
     expect(config.p2pConfig).to.not.be.equal(null)
@@ -55,6 +67,94 @@ describe('Should validate configuration from JSON', () => {
     expect(config.isBootstrap).to.be.equal(false)
     expect(config.validateUnsignedDDO).to.be.equal(true)
   })
+  after(() => {
+    delete process.env.CONFIG_PATH
+    delete process.env.PRIVATE_KEY
+  })
+})
+
+describe('Should validate database init retry configuration', () => {
+  const DB_ENV_VARS = [ENVIRONMENT_VARIABLES.DB_TYPE, ENVIRONMENT_VARIABLES.DB_URL]
+  const DB_ENV_VALUES = ['typesense', 'http://localhost:8108/?apiKey=xyz']
+
+  // returns the config built with the given DB_INIT_* values, or the thrown error
+  async function configWith(values: {
+    attempts?: string
+    delay?: string
+    maxDelay?: string
+  }): Promise<{ config?: OceanNodeConfig; error?: Error }> {
+    const envVars = [...DB_ENV_VARS]
+    const envValues = [...DB_ENV_VALUES]
+    if (values.attempts !== undefined) {
+      envVars.push(ENVIRONMENT_VARIABLES.DB_INIT_MAX_ATTEMPTS)
+      envValues.push(values.attempts)
+    }
+    if (values.delay !== undefined) {
+      envVars.push(ENVIRONMENT_VARIABLES.DB_INIT_RETRY_DELAY)
+      envValues.push(values.delay)
+    }
+    if (values.maxDelay !== undefined) {
+      envVars.push(ENVIRONMENT_VARIABLES.DB_INIT_MAX_RETRY_DELAY)
+      envValues.push(values.maxDelay)
+    }
+    // setupEnvironment() reloads the configuration itself, so an invalid value already throws
+    // there — it must be inside the try. The override array records the original values as it
+    // goes, so it is still usable for the teardown after a throw.
+    const overrides = buildEnvOverrideConfig(envVars, envValues)
+    try {
+      await setupEnvironment(TEST_ENV_CONFIG_PATH, overrides)
+      return { config: await getConfiguration(true) }
+    } catch (error) {
+      return { error }
+    } finally {
+      await tearDownEnvironment(overrides)
+    }
+  }
+
+  it('should apply the documented defaults when the variables are not set', async () => {
+    const { config: conf, error } = await configWith({})
+    expect(error).to.be.equal(undefined)
+    expect(conf.dbInitMaxAttempts).to.be.equal(DEFAULT_DB_INIT_MAX_ATTEMPTS)
+    expect(conf.dbInitRetryDelay).to.be.equal(DEFAULT_DB_INIT_RETRY_DELAY)
+    expect(conf.dbInitMaxRetryDelay).to.be.equal(DEFAULT_DB_INIT_MAX_RETRY_DELAY)
+  })
+
+  it('should coerce the environment variables to numbers', async () => {
+    const { config: conf, error } = await configWith({
+      attempts: '3',
+      delay: '500',
+      maxDelay: '5000'
+    })
+    expect(error).to.be.equal(undefined)
+    expect(conf.dbInitMaxAttempts).to.be.equal(3)
+    expect(conf.dbInitRetryDelay).to.be.equal(500)
+    expect(conf.dbInitMaxRetryDelay).to.be.equal(5000)
+  })
+
+  // 0 attempts would never enter the retry loop, so Database.init() would not be called at
+  // all and the node would silently boot without any database
+  it('should refuse to start when the number of attempts is zero or negative', async () => {
+    for (const attempts of ['0', '-1']) {
+      const { config: conf, error } = await configWith({ attempts })
+      expect(conf, `attempts=${attempts} should not produce a config`).to.be.equal(
+        undefined
+      )
+      expect(error?.message).to.be.equal('Configuration validation failed')
+    }
+  })
+
+  it('should refuse to start on a non-numeric value', async () => {
+    const { config: conf, error } = await configWith({ attempts: 'abc' })
+    expect(conf).to.be.equal(undefined)
+    expect(error?.message).to.be.equal('Configuration validation failed')
+  })
+
+  it('should refuse to start when a delay is zero', async () => {
+    const { config: conf, error } = await configWith({ delay: '0' })
+    expect(conf).to.be.equal(undefined)
+    expect(error?.message).to.be.equal('Configuration validation failed')
+  })
+
   after(() => {
     delete process.env.CONFIG_PATH
     delete process.env.PRIVATE_KEY
@@ -115,5 +215,404 @@ describe('Should validate P2P config from environment variables', () => {
     delete process.env[ENVIRONMENT_VARIABLES.P2P_ipV6BindAddress.name]
     delete process.env[ENVIRONMENT_VARIABLES.P2P_MIN_CONNECTIONS.name]
     delete process.env[ENVIRONMENT_VARIABLES.P2P_MAX_CONNECTIONS.name]
+  })
+})
+
+describe('JobType enum', () => {
+  // The numeric values are part of the on-chain claim ABI, so a silent renumbering here would
+  // change which subsidy path a job resolves to on-chain. Pin them.
+  it('has stable numeric values NONE=0, COMPUTE=1, SERVICE=2', () => {
+    expect(JobType.NONE).to.be.equal(0)
+    expect(JobType.COMPUTE).to.be.equal(1)
+    expect(JobType.SERVICE).to.be.equal(2)
+  })
+})
+
+describe('Should validate SUBSIDY_PROVIDERS configuration', () => {
+  const DB_ENV_VARS = [ENVIRONMENT_VARIABLES.DB_TYPE, ENVIRONMENT_VARIABLES.DB_URL]
+  const DB_ENV_VALUES = ['typesense', 'http://localhost:8108/?apiKey=xyz']
+
+  // Mixed/lower-case inputs — the schema must normalize these to EIP-55 checksummed form.
+  const ADDR_A_LOWER = '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238'
+  const ADDR_B_LOWER = '0x0000000000000000000000000000000000000abc'
+
+  // Build a config with a given SUBSIDY_PROVIDERS value (or without the var when undefined),
+  // returning the parsed config or the thrown error.
+  async function configWith(
+    subsidyProviders?: string
+  ): Promise<{ config?: OceanNodeConfig; error?: Error }> {
+    const envVars = [...DB_ENV_VARS]
+    const envValues = [...DB_ENV_VALUES]
+    if (subsidyProviders !== undefined) {
+      envVars.push(ENVIRONMENT_VARIABLES.SUBSIDY_PROVIDERS)
+      envValues.push(subsidyProviders)
+    }
+    const overrides = buildEnvOverrideConfig(envVars, envValues)
+    try {
+      await setupEnvironment(TEST_ENV_CONFIG_PATH, overrides)
+      return { config: await getConfiguration(true) }
+    } catch (error) {
+      return { error }
+    } finally {
+      await tearDownEnvironment(overrides)
+    }
+  }
+
+  it('parses a valid per-chain map into a checksummed list', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ '8996': [ADDR_A_LOWER, ADDR_B_LOWER] })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders).to.not.be.equal(null)
+    expect(conf.subsidyProviders['8996']).to.deep.equal([
+      getAddress(ADDR_A_LOWER),
+      getAddress(ADDR_B_LOWER)
+    ])
+    // normalized, not the raw lower-case input
+    expect(conf.subsidyProviders['8996'][0]).to.not.be.equal(ADDR_A_LOWER)
+  })
+
+  it('defaults to null when unset', async () => {
+    const { config: conf, error } = await configWith()
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders).to.be.equal(null)
+  })
+
+  it('collapses an invalid address to null rather than throwing', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ '8996': ['0xnot-an-address'] })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders).to.be.equal(null)
+  })
+
+  it('collapses malformed JSON to null rather than throwing', async () => {
+    const { config: conf, error } = await configWith('{ this is not json ]')
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders).to.be.equal(null)
+  })
+
+  it('collapses a non-canonical chain-id key to null rather than storing it', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ '0x2105': [ADDR_A_LOWER] })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders).to.be.equal(null)
+  })
+
+  it('applies the env var value (env overrides config.json)', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ '137': [ADDR_A_LOWER] })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders['137']).to.deep.equal([getAddress(ADDR_A_LOWER)])
+  })
+
+  it('de-duplicates a chain list (escrow counts unique sponsors)', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ '8996': [ADDR_A_LOWER, ADDR_A_LOWER, ADDR_B_LOWER] })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders['8996']).to.deep.equal([
+      getAddress(ADDR_A_LOWER),
+      getAddress(ADDR_B_LOWER)
+    ])
+  })
+
+  it('collapses to null when a chain exceeds the per-lock unique-sponsor cap', async () => {
+    // 11 unique valid addresses > MAX_SUBSIDY_PROVIDERS_PER_LOCK (10)
+    const many = Array.from(
+      { length: 11 },
+      (_, i) => '0x' + String(i + 1).padStart(40, '0')
+    )
+    const { config: conf, error } = await configWith(JSON.stringify({ '8996': many }))
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviders).to.be.equal(null)
+  })
+
+  after(() => {
+    delete process.env.CONFIG_PATH
+    delete process.env.PRIVATE_KEY
+    delete process.env[ENVIRONMENT_VARIABLES.SUBSIDY_PROVIDERS.name]
+  })
+})
+
+describe('Should validate SUBSIDY_PROVIDER_ALLOWED_IMAGES configuration', () => {
+  const DB_ENV_VARS = [ENVIRONMENT_VARIABLES.DB_TYPE, ENVIRONMENT_VARIABLES.DB_URL]
+  const DB_ENV_VALUES = ['typesense', 'http://localhost:8108/?apiKey=xyz']
+
+  const ADDR_LOWER = '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238'
+  const IMAGE_TAG = 'oceanprotocol/algo:1.0'
+  const IMAGE_DIGEST = 'oceanprotocol/algo@sha256:' + 'a'.repeat(64)
+
+  // Build a config with a given SUBSIDY_PROVIDER_ALLOWED_IMAGES value (or without the var when
+  // undefined), returning the parsed config or the thrown error.
+  async function configWith(
+    allowedImages?: string
+  ): Promise<{ config?: OceanNodeConfig; error?: Error }> {
+    const envVars = [...DB_ENV_VARS]
+    const envValues = [...DB_ENV_VALUES]
+    if (allowedImages !== undefined) {
+      envVars.push(ENVIRONMENT_VARIABLES.SUBSIDY_PROVIDER_ALLOWED_IMAGES)
+      envValues.push(allowedImages)
+    }
+    const overrides = buildEnvOverrideConfig(envVars, envValues)
+    try {
+      await setupEnvironment(TEST_ENV_CONFIG_PATH, overrides)
+      return { config: await getConfiguration(true) }
+    } catch (error) {
+      return { error }
+    } finally {
+      await tearDownEnvironment(overrides)
+    }
+  }
+
+  it('defaults to null when unset', async () => {
+    const { config: conf, error } = await configWith()
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderAllowedImages).to.be.equal(null)
+  })
+
+  it('parses {} (zero keys) as an empty map, not null (means "no restrictions")', async () => {
+    const { config: conf, error } = await configWith('{}')
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderAllowedImages).to.deep.equal({})
+  })
+
+  it('parses a populated map, checksumming the address keys and keeping image refs as-is', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ [ADDR_LOWER]: [IMAGE_TAG, IMAGE_DIGEST] })
+    )
+    expect(error).to.be.equal(undefined)
+    const map = conf.subsidyProviderAllowedImages
+    expect(map).to.not.be.equal(null)
+    expect(Object.keys(map)).to.deep.equal([getAddress(ADDR_LOWER)])
+    expect(map[getAddress(ADDR_LOWER)]).to.deep.equal([IMAGE_TAG, IMAGE_DIGEST])
+    // key normalized, not the raw lower-case input
+    expect(map[ADDR_LOWER]).to.be.equal(undefined)
+  })
+
+  it('collapses malformed JSON to null rather than throwing', async () => {
+    const { config: conf, error } = await configWith('{ not json ]')
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderAllowedImages).to.be.equal(null)
+  })
+
+  it('collapses an invalid address key to null', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ '0xnot-an-address': [IMAGE_TAG] })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderAllowedImages).to.be.equal(null)
+  })
+
+  it('collapses a malformed value (image list is not an array) to null', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ [ADDR_LOWER]: 'oceanprotocol/algo:1.0' })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderAllowedImages).to.be.equal(null)
+  })
+
+  it('trims image entries and drops empty strings', async () => {
+    const { config: conf, error } = await configWith(
+      JSON.stringify({ [ADDR_LOWER]: ['  ' + IMAGE_TAG + '  ', '', '   '] })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderAllowedImages[getAddress(ADDR_LOWER)]).to.deep.equal([
+      IMAGE_TAG
+    ])
+  })
+
+  after(() => {
+    delete process.env.CONFIG_PATH
+    delete process.env.PRIVATE_KEY
+    delete process.env[ENVIRONMENT_VARIABLES.SUBSIDY_PROVIDER_ALLOWED_IMAGES.name]
+  })
+})
+
+describe('Should validate SUBSIDY_PROVIDER_FILTER configuration', () => {
+  const DB_ENV_VARS = [ENVIRONMENT_VARIABLES.DB_TYPE, ENVIRONMENT_VARIABLES.DB_URL]
+  const DB_ENV_VALUES = ['typesense', 'http://localhost:8108/?apiKey=xyz']
+
+  async function configWith(
+    filter?: string
+  ): Promise<{ config?: OceanNodeConfig; error?: Error }> {
+    const envVars = [...DB_ENV_VARS]
+    const envValues = [...DB_ENV_VALUES]
+    if (filter !== undefined) {
+      envVars.push(ENVIRONMENT_VARIABLES.SUBSIDY_PROVIDER_FILTER)
+      envValues.push(filter)
+    }
+    const overrides = buildEnvOverrideConfig(envVars, envValues)
+    try {
+      await setupEnvironment(TEST_ENV_CONFIG_PATH, overrides)
+      return { config: await getConfiguration(true) }
+    } catch (error) {
+      return { error }
+    } finally {
+      await tearDownEnvironment(overrides)
+    }
+  }
+
+  it('defaults to false when unset', async () => {
+    const { config: conf, error } = await configWith()
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderFilter).to.be.equal(false)
+  })
+
+  it('parses "true" as true', async () => {
+    const { config: conf, error } = await configWith('true')
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderFilter).to.be.equal(true)
+  })
+
+  it('parses "1" as true', async () => {
+    const { config: conf, error } = await configWith('1')
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderFilter).to.be.equal(true)
+  })
+
+  it('parses an unrelated value as false', async () => {
+    const { config: conf, error } = await configWith('off')
+    expect(error).to.be.equal(undefined)
+    expect(conf.subsidyProviderFilter).to.be.equal(false)
+  })
+
+  after(() => {
+    delete process.env.CONFIG_PATH
+    delete process.env.PRIVATE_KEY
+    delete process.env[ENVIRONMENT_VARIABLES.SUBSIDY_PROVIDER_FILTER.name]
+  })
+})
+
+describe('Should validate persistent storage bucket sharing configuration', () => {
+  const PERSISTENT_STORAGE_JSON = JSON.stringify({
+    enabled: true,
+    type: 'localfs',
+    accessLists: [],
+    options: { folder: '/tmp/ocean-ps-config-test' }
+  })
+
+  async function configWith(allowSharing?: string): Promise<OceanNodeConfig> {
+    const envVars = [
+      ENVIRONMENT_VARIABLES.DB_TYPE,
+      ENVIRONMENT_VARIABLES.DB_URL,
+      ENVIRONMENT_VARIABLES.PERSISTENT_STORAGE
+    ]
+    const envValues = [
+      'typesense',
+      'http://localhost:8108/?apiKey=xyz',
+      PERSISTENT_STORAGE_JSON
+    ]
+    if (allowSharing !== undefined) {
+      envVars.push(ENVIRONMENT_VARIABLES.PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING)
+      envValues.push(allowSharing)
+    }
+    const overrides = buildEnvOverrideConfig(envVars, envValues)
+    try {
+      await setupEnvironment(TEST_ENV_CONFIG_PATH, overrides)
+      return await getConfiguration(true)
+    } finally {
+      await tearDownEnvironment(overrides)
+    }
+  }
+
+  it('should disable bucket sharing by default', async () => {
+    const conf = await configWith()
+    expect(conf.persistentStorage.allowBucketSharing).to.be.equal(false)
+  })
+
+  it('should disable bucket sharing from the environment variable', async () => {
+    const conf = await configWith('false')
+    expect(conf.persistentStorage.allowBucketSharing).to.be.equal(false)
+    expect((conf as any).PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING).to.be.equal(undefined)
+  })
+
+  it('should enable bucket sharing from the environment variable', async () => {
+    const conf = await configWith('true')
+    expect(conf.persistentStorage.allowBucketSharing).to.be.equal(true)
+  })
+
+  after(() => {
+    delete process.env.CONFIG_PATH
+    delete process.env.PRIVATE_KEY
+  })
+})
+
+// Guards the DOCKER_COMPUTE_ENVIRONMENTS *environment-variable* entrypoint. Unlike the
+// config.json path (which lands on the schema as an array and is validated directly), the
+// env var arrives as a JSON string; the config schema must still run C2DDockerConfigSchema
+// on the parsed value, otherwise an invalid compute config — e.g. a GPU missing its
+// mandatory `memoryTotal` (VRAM) — would slip through buildMergedConfig unvalidated.
+describe('Should validate DOCKER_COMPUTE_ENVIRONMENTS from the environment variable', () => {
+  const DB_ENV_VARS = [ENVIRONMENT_VARIABLES.DB_TYPE, ENVIRONMENT_VARIABLES.DB_URL]
+  const DB_ENV_VALUES = ['typesense', 'http://localhost:8108/?apiKey=xyz']
+
+  // Builds the config with DOCKER_COMPUTE_ENVIRONMENTS set to the given JSON string, and
+  // returns the built config or the thrown error. Mirrors the retry-config helper above.
+  async function configWithDockerEnv(
+    dockerEnvJson: string
+  ): Promise<{ config?: OceanNodeConfig; error?: Error }> {
+    const overrides = buildEnvOverrideConfig(
+      [...DB_ENV_VARS, ENVIRONMENT_VARIABLES.DOCKER_COMPUTE_ENVIRONMENTS],
+      [...DB_ENV_VALUES, dockerEnvJson]
+    )
+    try {
+      await setupEnvironment(TEST_ENV_CONFIG_PATH, overrides)
+      return { config: await getConfiguration(true) }
+    } catch (error) {
+      return { error }
+    } finally {
+      await tearDownEnvironment(overrides)
+    }
+  }
+
+  const dockerEnvWithGpu = (gpuExtra: Record<string, unknown>) =>
+    JSON.stringify([
+      {
+        socketPath: '/var/run/docker.sock',
+        resources: [{ id: 'gpu0', kind: 'discrete', type: 'gpu', total: 1, ...gpuExtra }],
+        environments: [
+          {
+            storageExpiry: 604800,
+            maxJobDuration: 3600,
+            minJobDuration: 60,
+            resources: [{ id: 'cpu' }, { id: 'ram' }, { id: 'disk' }, { id: 'gpu0' }],
+            fees: { '1': [{ feeToken: '0x123', prices: [{ id: 'gpu0', price: 5 }] }] }
+          }
+        ]
+      }
+    ])
+
+  it('rejects a GPU missing memoryTotal supplied via the env var', async () => {
+    const { config: conf, error } = await configWithDockerEnv(dockerEnvWithGpu({}))
+    expect(conf, 'a GPU without memoryTotal must not produce a config').to.be.equal(
+      undefined
+    )
+    expect(error?.message).to.be.equal('Configuration validation failed')
+  })
+
+  it('rejects a GPU with an unparseable memoryTotal supplied via the env var', async () => {
+    const { config: conf, error } = await configWithDockerEnv(
+      dockerEnvWithGpu({ memoryTotal: 'lots' })
+    )
+    expect(conf).to.be.equal(undefined)
+    expect(error?.message).to.be.equal('Configuration validation failed')
+  })
+
+  it('accepts a GPU with a valid memoryTotal supplied via the env var', async () => {
+    const { config: conf, error } = await configWithDockerEnv(
+      dockerEnvWithGpu({ memoryTotal: '16 GiB' })
+    )
+    expect(error).to.be.equal(undefined)
+    expect(conf.dockerComputeEnvironments[0].resources[0].memoryTotal).to.be.equal(
+      '16 GiB'
+    )
+  })
+
+  after(() => {
+    delete process.env.CONFIG_PATH
+    delete process.env.PRIVATE_KEY
   })
 })

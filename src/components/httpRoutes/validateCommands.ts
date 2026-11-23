@@ -2,7 +2,8 @@ import { PROTOCOL_COMMANDS, SUPPORTED_PROTOCOL_COMMANDS } from '../../utils/cons
 import { P2PCommandResponse } from '../../@types/OceanNode.js'
 import { Command } from '../../@types/commands.js'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
-import { isDefined } from '../../utils/util.js'
+import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
+import { redactSensitiveFields } from '../../utils/logging/redact.js'
 import { ReadableString } from '../P2P/handlers.js'
 
 export type ValidateParams = {
@@ -11,45 +12,27 @@ export type ValidateParams = {
   status?: number
 }
 
-// credentials present on (almost) any command. these must never reach the logs, on any
-// command, since they are what authorizes the request in the first place
-const SENSITIVE_COMMAND_FIELDS = [
-  'authorization', // auth token (JWT), usually taken from the Authorization header
-  'signature', // consumer signature authorizing this command
-  'aes_encrypted_key', // download: encrypted key material
-  'encryptedDockerRegistryAuth' // compute: encrypted docker registry credentials
-]
-
 // "token" is an ERC20 address on most commands (escrow, compute payment) and only a
-// credential on the auth-token commands, so it is redacted per-command instead
+// credential on the auth-token commands and the policy-server passthrough (whose free-form
+// blob can carry a policy-server auth token), so it is redacted per-command instead
 const SENSITIVE_TOKEN_COMMANDS: string[] = [
   PROTOCOL_COMMANDS.INVALIDATE_AUTH_TOKEN,
-  PROTOCOL_COMMANDS.VALIDATE_AUTH_TOKEN
+  PROTOCOL_COMMANDS.VALIDATE_AUTH_TOKEN,
+  PROTOCOL_COMMANDS.POLICY_SERVER_PASSTHROUGH
 ]
 
 const REDACTED = '[REDACTED]'
 
-// add others when we add suppor
-
-// request level validation, just check if we have a "command" field and its a supported one
-// each command handler is responsible for the reamining validatio of the command fields
-export function validateCommandParameters(
-  commandData: any,
-  requiredFields: string[]
-): ValidateParams {
-  if (!commandData) {
-    return buildInvalidRequestMessage('Missing request body/data')
-  }
-
-  const commandStr: string = commandData.command as string
-
-  if (!commandStr) {
-    return buildInvalidRequestMessage('Invalid Request: "command" is mandatory!')
-  }
-  // direct commands
-  else if (!SUPPORTED_PROTOCOL_COMMANDS.includes(commandStr)) {
-    return buildInvalidRequestMessage(`Invalid or unrecognized command: "${commandStr}"`)
-  }
+/**
+ * Returns a copy of a command that is safe to log: non-cloneable fields (streams, buffers)
+ * are summarized and every credential field is redacted, at any depth (see
+ * utils/logging/redact.ts: sensitive keys are matched case-insensitively and URLs in any
+ * string are reduced to their origin). Use this anywhere a command payload is about to be
+ * logged, so that credentials never reach the logs through a path that skips
+ * validateCommandParameters.
+ */
+export function redactCommandForLogging(commandData: any): any {
+  const commandStr: string = commandData?.command as string
 
   // deep copy for logging (must not throw for non-cloneable payloads like streams)
   let logCommandData: any
@@ -71,27 +54,50 @@ export function validateCommandParameters(
 
   if (commandStr === PROTOCOL_COMMANDS.ENCRYPT) {
     logCommandData.files = [] // hide files data (sensitive) + rawData (long buffer) from logging
+    if (logCommandData.blob !== undefined && logCommandData.blob !== null) {
+      logCommandData.blob = REDACTED // the plaintext the caller wants encrypted
+    }
   } else if (commandStr === PROTOCOL_COMMANDS.ENCRYPT_FILE && commandData.rawData) {
     logCommandData.rawData = []
   }
 
-  // never log the caller's credentials, whatever the command is
-  for (const field of SENSITIVE_COMMAND_FIELDS) {
-    if (isDefined(logCommandData[field])) {
-      logCommandData[field] = REDACTED
-    }
-  }
-  if (SENSITIVE_TOKEN_COMMANDS.includes(commandStr) && isDefined(logCommandData.token)) {
-    logCommandData.token = REDACTED
+  // never log the caller's credentials, whatever the command is. credentials also show up
+  // nested (the free-form "policyServer" / "policyServerPassthrough" blobs, dataset file
+  // objects), so this walks the whole payload
+  return redactSensitiveFields(logCommandData, {
+    redactToken: SENSITIVE_TOKEN_COMMANDS.includes(commandStr)
+  })
+}
+
+// request level validation, just check if we have a "command" field and its a supported one
+// each command handler is responsible for the reamining validatio of the command fields
+export function validateCommandParameters(
+  commandData: any,
+  requiredFields: string[]
+): ValidateParams {
+  if (!commandData) {
+    return buildInvalidRequestMessage('Missing request body/data')
   }
 
-  CORE_LOGGER.info(
-    `Checking received command data for Command "${commandStr}": ${JSON.stringify(
-      logCommandData,
-      null,
-      4
-    )}`
-  )
+  const commandStr: string = commandData.command as string
+
+  if (!commandStr) {
+    return buildInvalidRequestMessage('Invalid Request: "command" is mandatory!')
+  }
+  // direct commands
+  else if (!SUPPORTED_PROTOCOL_COMMANDS.includes(commandStr)) {
+    return buildInvalidRequestMessage(`Invalid or unrecognized command: "${commandStr}"`)
+  }
+
+  // the dump is only built when some transport takes debug lines: cloning and redacting
+  // every command (rawData buffers included) is not free
+  if (CORE_LOGGER.isLevelEnabled(LOG_LEVELS_STR.LEVEL_DEBUG)) {
+    CORE_LOGGER.debug(
+      `Checking received command data for Command "${commandStr}": ${JSON.stringify(
+        redactCommandForLogging(commandData)
+      )}`
+    )
+  }
 
   for (const field of requiredFields) {
     if (

@@ -2,7 +2,8 @@ import { OceanNodeDBConfig } from '../../@types/OceanNode.js'
 import { convertTypesenseConfig, Typesense, TypesenseError } from './typesense.js'
 import { TypesenseSchema } from './TypesenseSchemas.js'
 import { TypesenseSearchParams } from '../../@types/index.js'
-import { LOG_LEVELS_STR, GENERIC_EMOJIS } from '../../utils/logging/Logger.js'
+import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
+import { safeStringify } from '../../utils/logging/redact.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
 
 import { ENVIRONMENT_VARIABLES, TYPESENSE_HITS_CAP } from '../../utils/constants.js'
@@ -17,8 +18,12 @@ import {
 } from './BaseDatabase.js'
 import { AccessListUser } from '../../@types/AccessList.js'
 import { EscrowEvent } from '../../@types/Escrow.js'
+import { buildTypesenseFilterBy } from './escrowSearch.js'
 import { validateDDO } from '../../utils/asset.js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
+
+const LOG_INSERT_FAILED_KEY = 'typesense-log-insert-failed'
+let logInsertFailing = false
 
 export class TypesenseOrderDatabase extends AbstractOrderDatabase {
   private provider: Typesense
@@ -35,6 +40,10 @@ export class TypesenseOrderDatabase extends AbstractOrderDatabase {
       } catch (error) {
         if (error instanceof TypesenseError && error.httpStatus === 404) {
           await this.provider.collections().create(this.getSchema())
+        } else {
+          DATABASE_LOGGER.error(
+            `Typesense collection '${this.getSchema().name}' check failed: ${error.message}`
+          )
         }
       }
       return this
@@ -84,15 +93,8 @@ export class TypesenseOrderDatabase extends AbstractOrderDatabase {
       // Instead of pushing the entire result, only include the documents
       return result.hits.map((hit) => hit.document)
     } catch (error) {
-      const errorMsg =
-        `Error when searching order entry by query ${JSON.stringify(query)}: ` +
-        error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      const errorMsg = `Error when searching order entries: ` + error.message
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -124,12 +126,7 @@ export class TypesenseOrderDatabase extends AbstractOrderDatabase {
       const errorMsg =
         `Error when creating order entry ${orderId} at timestamp ${timestamp} by payer ${payer} for consumer ${consumer}: ` +
         error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -142,12 +139,7 @@ export class TypesenseOrderDatabase extends AbstractOrderDatabase {
         .retrieve(orderId)
     } catch (error) {
       const errorMsg = `Error when retrieving order ${orderId}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -183,12 +175,7 @@ export class TypesenseOrderDatabase extends AbstractOrderDatabase {
       const errorMsg =
         `Error when updating order entry ${orderId} at timestamp ${timestamp} by payer ${payer} for consumer ${consumer}: ` +
         error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -201,12 +188,7 @@ export class TypesenseOrderDatabase extends AbstractOrderDatabase {
         .delete(orderId)
     } catch (error) {
       const errorMsg = `Error when deleting order ${orderId}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -227,6 +209,10 @@ export class TypesenseEscrowDatabase extends AbstractEscrowDatabase {
       } catch (error) {
         if (error instanceof TypesenseError && error.httpStatus === 404) {
           await this.provider.collections().create(this.getSchema())
+        } else {
+          DATABASE_LOGGER.error(
+            `Typesense collection '${this.getSchema().name}' check failed: ${error.message}`
+          )
         }
       }
       return this
@@ -248,12 +234,7 @@ export class TypesenseEscrowDatabase extends AbstractEscrowDatabase {
         return { ...event }
       }
       const errorMsg = `Error when creating escrow event ${event.id}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -266,28 +247,15 @@ export class TypesenseEscrowDatabase extends AbstractEscrowDatabase {
         .retrieve(id)
     } catch (error) {
       const errorMsg = `Error when retrieving escrow event ${id}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
 
   async search(filters: Record<string, any>, offset?: number, size?: number) {
     try {
-      const filterBy = Object.entries(filters || {})
-        .filter(([, value]) => value !== undefined && value !== null && value !== '')
-        // Backtick string values so spaces/special chars can't break the syntax;
-        // strip backticks from the value so it can't escape the quoted literal.
-        .map(([field, value]) =>
-          typeof value === 'string'
-            ? `${field}:=\`${value.replace(/`/g, '')}\``
-            : `${field}:=${value}`
-        )
-        .join(' && ')
+      // Values may be equality scalars or RangeFilter objects (range on numeric fields).
+      const filterBy = buildTypesenseFilterBy(filters)
 
       // clamp the page size so a single request can't return an unbounded set
       const limit = Math.min(size && size > 0 ? size : 100, TYPESENSE_HITS_CAP)
@@ -311,14 +279,9 @@ export class TypesenseEscrowDatabase extends AbstractEscrowDatabase {
       return result.hits.map((hit) => hit.document)
     } catch (error) {
       const errorMsg =
-        `Error when searching escrow events by ${JSON.stringify(filters)}: ` +
+        `Error when searching escrow events (filters ${safeStringify(filters, { maxLength: 200 })}): ` +
         error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -328,12 +291,7 @@ export class TypesenseEscrowDatabase extends AbstractEscrowDatabase {
       return await this.provider.collections(this.getSchema().name).documents().delete(id)
     } catch (error) {
       const errorMsg = `Error when deleting escrow event ${id}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -354,6 +312,10 @@ export class TypesenseDdoStateDatabase extends AbstractDdoStateDatabase {
       } catch (error) {
         if (error instanceof TypesenseError && error.httpStatus === 404) {
           await this.provider.collections().create(this.schema)
+        } else {
+          DATABASE_LOGGER.error(
+            `Typesense collection '${this.schema.name}' check failed: ${error.message}`
+          )
         }
       }
       return this
@@ -375,12 +337,7 @@ export class TypesenseDdoStateDatabase extends AbstractDdoStateDatabase {
         .create({ id: did, chainId, did, nft: nftAddress, txId, valid, error: errorMsg })
     } catch (error) {
       const errorMsg = `Error when saving ddo state for: ${did} Error: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -391,12 +348,7 @@ export class TypesenseDdoStateDatabase extends AbstractDdoStateDatabase {
     } catch (error) {
       const errorMsg =
         `Error when retrieving the state of the ddo with id: ${did}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -409,13 +361,10 @@ export class TypesenseDdoStateDatabase extends AbstractDdoStateDatabase {
         .search(query as TypesenseSearchParams)
       return result
     } catch (error) {
-      const errorMsg = `Error when searching by query ${query}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      const errorMsg =
+        `Error when searching ddo state (query ${safeStringify(query, { maxLength: 200 })}): ` +
+        error.message
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -447,12 +396,7 @@ export class TypesenseDdoStateDatabase extends AbstractDdoStateDatabase {
       }
       const errorMessage =
         `Error when saving ddo state for: ${did} Error: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMessage,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMessage)
       return null
     }
   }
@@ -462,12 +406,7 @@ export class TypesenseDdoStateDatabase extends AbstractDdoStateDatabase {
       return await this.provider.collections(this.schema.name).documents().delete(did)
     } catch (error) {
       const errorMsg = `Error when deleting ddo state ${did}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -489,6 +428,10 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
         } catch (error) {
           if (error instanceof TypesenseError && error.httpStatus === 404) {
             await this.provider.collections().create(ddoSchema)
+          } else {
+            DATABASE_LOGGER.error(
+              `Typesense collection '${ddoSchema.name}' check failed: ${error.message}`
+            )
           }
         }
       }
@@ -512,12 +455,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       schemaName = `op_ddo_v${ddo.version}`
     }
     const schema = this.getSchemas().find((s) => s.name === schemaName)
-    DATABASE_LOGGER.logMessageWithEmoji(
-      `Returning schema: ${schemaName}`,
-      true,
-      GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
-      LOG_LEVELS_STR.LEVEL_INFO
-    )
+    DATABASE_LOGGER.debug(`Returning schema: ${schemaName}`)
     return schema
   }
 
@@ -534,12 +472,9 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
         await this.provider.collections(schema.name).documents().delete(did)
       } catch (error) {
         if (!(error instanceof TypesenseError && error.httpStatus === 404)) {
-          DATABASE_LOGGER.logMessageWithEmoji(
+          DATABASE_LOGGER.error(
             `Error when deleting stale DDO entry ${did} from schema ${schema.name}: ` +
-              error.message,
-            true,
-            GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-            LOG_LEVELS_STR.LEVEL_ERROR
+              error.message
           )
         }
       }
@@ -583,13 +518,9 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       return results
     } catch (error) {
       const errorMsg =
-        `Error when searching by query ${JSON.stringify(query)}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+        `Error when searching by query (query ${safeStringify(query, { maxLength: 200 })}): ` +
+        error.message
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -614,12 +545,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       }
     } catch (error) {
       const errorMsg = `Error when creating DDO entry ${ddo.id}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -635,24 +561,16 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       } catch (error) {
         if (!(error instanceof TypesenseError && error.httpStatus === 404)) {
           // Log error other than not found
-          DATABASE_LOGGER.logMessageWithEmoji(
+          DATABASE_LOGGER.error(
             `Error when retrieving DDO entry ${id} from schema ${schema.name}: ` +
-              error.message,
-            true,
-            GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-            LOG_LEVELS_STR.LEVEL_ERROR
+              error.message
           )
         }
       }
     }
 
     if (!ddo) {
-      DATABASE_LOGGER.logMessageWithEmoji(
-        `DDO entry with ID ${id} not found in any schema.`,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.debug(`DDO entry with ID ${id} not found in any schema.`)
     }
 
     return ddo
@@ -688,12 +606,7 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
         return await this.create(ddo)
       }
       const errorMsg = `Error when updating DDO entry ${ddo.id}: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -716,23 +629,17 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
       } catch (error) {
         if (!(error instanceof TypesenseError && error.httpStatus === 404)) {
           // Log error other than not found
-          DATABASE_LOGGER.logMessageWithEmoji(
+          DATABASE_LOGGER.error(
             `Error when deleting DDO entry ${did} from schema ${schema.name}: ` +
-              error.message,
-            true,
-            GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-            LOG_LEVELS_STR.LEVEL_ERROR
+              error.message
           )
         }
       }
     }
 
     if (!isDeleted) {
-      DATABASE_LOGGER.logMessageWithEmoji(
-        `DDO entry with ID ${did} not found in any schema or could not be deleted.`,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
+      DATABASE_LOGGER.debug(
+        `DDO entry with ID ${did} not found in any schema or could not be deleted.`
       )
     }
   }
@@ -747,18 +654,15 @@ export class TypesenseDdoDatabase extends AbstractDdoDatabase {
           .deleteByChainId(`chainId:${chainId}`, batchSize)
 
         DATABASE_LOGGER.debug(
-          `Number of deleted ddos on schema ${schema} : ${response.num_deleted}`
+          `Number of deleted ddos on schema ${schema.name} : ${response.num_deleted}`
         )
 
         numDeleted += response.num_deleted
       } catch (error) {
         if (!(error instanceof TypesenseError && error.httpStatus === 404)) {
           // Log error other than not found
-          DATABASE_LOGGER.logMessageWithEmoji(
-            `Error when deleting DDOs from schema ${schema.name}: ` + error.message,
-            true,
-            GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-            LOG_LEVELS_STR.LEVEL_ERROR
+          DATABASE_LOGGER.error(
+            `Error when deleting DDOs from schema ${schema.name}: ` + error.message
           )
         }
       }
@@ -785,6 +689,10 @@ export class TypesenseIndexerDatabase extends AbstractIndexerDatabase {
       } catch (error) {
         if (error instanceof TypesenseError && error.httpStatus === 404) {
           await this.provider.collections().create(this.schema)
+        } else {
+          DATABASE_LOGGER.error(
+            `Typesense collection '${this.schema.name}' check failed: ${error.message}`
+          )
         }
       }
       return this
@@ -801,12 +709,7 @@ export class TypesenseIndexerDatabase extends AbstractIndexerDatabase {
       const errorMsg =
         `Error when creating indexer entry on network ${network.toString()} with last indexed block ${lastIndexedBlock}: ` +
         error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -821,12 +724,7 @@ export class TypesenseIndexerDatabase extends AbstractIndexerDatabase {
       const errorMsg =
         `Error when retrieving indexer entry on network ${network.toString()}: ` +
         error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -847,12 +745,7 @@ export class TypesenseIndexerDatabase extends AbstractIndexerDatabase {
       const errorMsg =
         `Error when updating indexer entry on network ${network.toString()} with last indexed block ${lastIndexedBlock}: ` +
         error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -867,12 +760,7 @@ export class TypesenseIndexerDatabase extends AbstractIndexerDatabase {
       const errorMsg =
         `Error when deleting indexer entry on network ${network.toString()}: ` +
         error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -895,11 +783,14 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
           try {
             await this.provider.collections().create(this.schema)
           } catch (creationError) {
-            // logger.log(
-            // 'info',
-            // `Error creating schema for '${this.schema.name}' collection: '${creationError}'`
-            // )
+            DATABASE_LOGGER.error(
+              `Failed to create Typesense collection '${this.schema.name}': ${creationError.message}`
+            )
           }
+        } else {
+          DATABASE_LOGGER.error(
+            `Typesense collection '${this.schema.name}' check failed: ${error.message}`
+          )
         }
       }
       return this
@@ -908,17 +799,24 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
 
   async insertLog(logEntry: Record<string, any>) {
     try {
-      return await this.provider
+      const result = await this.provider
         .collections(this.schema.name)
         .documents()
         .create(logEntry)
+      if (logInsertFailing) {
+        logInsertFailing = false
+        DATABASE_LOGGER.resetThrottle(LOG_INSERT_FAILED_KEY)
+        DATABASE_LOGGER.info('Log DB writes resumed')
+      }
+      return result
     } catch (error) {
       const errorMsg = `Error when inserting log entry: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
+      logInsertFailing = true
+      // one line per failed write would double the output during a log DB outage
+      DATABASE_LOGGER.throttled(
+        LOG_INSERT_FAILED_KEY,
+        LOG_LEVELS_STR.LEVEL_ERROR,
+        errorMsg
       )
       return null
     }
@@ -929,12 +827,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
       return await this.provider.collections(this.schema.name).documents().retrieve(id)
     } catch (error) {
       const errorMsg = `Error when retrieving log entry: ` + error.message
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return null
     }
   }
@@ -994,12 +887,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
       return allLogs.slice(0, maxLogs)
     } catch (error) {
       const errorMsg = `Error when retrieving multiple log entries: ${error.message}`
-      DATABASE_LOGGER.logMessageWithEmoji(
-        errorMsg,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(errorMsg)
       return []
     }
   }
@@ -1030,19 +918,9 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
     }
     try {
       await this.provider.collections(this.schema.name).documents().delete(logId)
-      DATABASE_LOGGER.logMessageWithEmoji(
-        `Deleted log with ID: ${logId}`,
-        true,
-        GENERIC_EMOJIS.EMOJI_CHECK_MARK,
-        LOG_LEVELS_STR.LEVEL_INFO
-      )
+      DATABASE_LOGGER.debug(`Deleted log with ID: ${logId}`)
     } catch (error) {
-      DATABASE_LOGGER.logMessageWithEmoji(
-        `Error when deleting log entry: ${error.message}`,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(`Error when deleting log entry: ${error.message}`)
       throw error
     }
   }
@@ -1073,12 +951,7 @@ export class TypesenseLogDatabase extends AbstractLogDatabase {
       }
       return oldLogs.length
     } catch (error) {
-      DATABASE_LOGGER.logMessageWithEmoji(
-        `Error when deleting old log entries: ${error.message}`,
-        true,
-        GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-        LOG_LEVELS_STR.LEVEL_ERROR
-      )
+      DATABASE_LOGGER.error(`Error when deleting old log entries: ${error.message}`)
     }
   }
 
@@ -1108,6 +981,10 @@ export class TypesenseAccessListDatabase extends AbstractAccessListDatabase {
       } catch (error) {
         if (error instanceof TypesenseError && error.httpStatus === 404) {
           await this.provider.collections().create(this.schema)
+        } else {
+          DATABASE_LOGGER.error(
+            `Typesense collection '${this.schema.name}' check failed: ${error.message}`
+          )
         }
       }
       return this
@@ -1250,12 +1127,7 @@ export class TypesenseAccessListDatabase extends AbstractAccessListDatabase {
   }
 
   private logError(action: string, error: any) {
-    DATABASE_LOGGER.logMessageWithEmoji(
-      `Error when ${action}: ${error?.message ?? error}`,
-      true,
-      GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-      LOG_LEVELS_STR.LEVEL_ERROR
-    )
+    DATABASE_LOGGER.error(`Error when ${action}: ${error?.message ?? error}`)
   }
 }
 

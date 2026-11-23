@@ -1,8 +1,9 @@
 import { assert, expect } from 'chai'
 import { Readable } from 'stream'
 import sinon from 'sinon'
+import { getAddress } from 'ethers'
 import { streamToObject } from '../../../utils/util.js'
-import { PROTOCOL_COMMANDS } from '../../../utils/constants.js'
+import { PROTOCOL_COMMANDS, JobType } from '../../../utils/constants.js'
 import { ServiceStatusNumber, ServiceJob } from '../../../@types/C2D/ServiceOnDemand.js'
 import { ServiceGetTemplatesHandler } from '../../../components/core/service/getTemplates.js'
 import { ServiceGetStatusHandler } from '../../../components/core/service/getStatus.js'
@@ -12,6 +13,8 @@ import { ServiceStopHandler } from '../../../components/core/service/stopService
 import { ServiceExtendHandler } from '../../../components/core/service/extendService.js'
 import { ServiceRestartHandler } from '../../../components/core/service/restartService.js'
 import { ServiceGetStreamableLogsHandler } from '../../../components/core/service/getStreamableLogs.js'
+import { SubsidyGateError } from '../../../components/core/utils/subsidyProviders.js'
+import { PersistentStorageAccessDeniedError } from '../../../components/persistentStorage/PersistentStorageFactory.js'
 
 // Checksummed (EIP-55): commands are canonicalized on ingress, so this is the form handlers
 // see and forward, whatever casing the caller sent (see the lowercase-address test below).
@@ -193,6 +196,7 @@ function buildFakes(opts: FakeOpts = {}) {
   }
 
   const node: any = {
+    isInMaintenance: () => false,
     getRequestMap: () => new Map(),
     getConfig: (): any => ({
       rateLimit: undefined as number | undefined,
@@ -517,6 +521,94 @@ describe('Service handlers', () => {
       const callArgs = engine.restartService.firstCall.args
       expect(callArgs[5]).to.equal('FROM nginx') // dockerfile
     })
+
+    // Image gate must look at CLAIMED extension sponsors too: a service can start UNSUBSIDIZED
+    // and later be extended WITH subsidy, so a restart runs on that extended (subsidized) window.
+    const SUBSIDY = getAddress('0x1111111111111111111111111111111111111111')
+    const extendedSubsidizedJob = () =>
+      makeJob({
+        image: 'allowed/app',
+        tag: '1.0',
+        payment: {
+          chainId: 8996,
+          token: '0xtoken',
+          lockTx: '0xl',
+          claimTx: '0xc',
+          cancelTx: '',
+          cost: 5
+          // NOTE: no subsidyProviders on the start payment — the service started unsubsidized.
+        },
+        extendPayments: [
+          {
+            chainId: 8996,
+            token: '0xtoken',
+            lockTx: '0xel',
+            claimTx: '0xec', // claimed → the subsidy was actually applied
+            cancelTx: '',
+            cost: 5,
+            subsidyProviders: [SUBSIDY]
+          }
+        ]
+      } as any)
+
+    it('403 RESPEC into a non-allowed image when only a CLAIMED extension was subsidized', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: extendedSubsidizedJob() })
+      node.getConfig = () => ({
+        subsidyProviderAllowedImages: { [SUBSIDY]: ['allowed/app:1.0'] }
+      })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'miner/xmrig',
+        tag: 'v1'
+      } as any)
+      expect(res.status.httpStatus).to.equal(403)
+      expect(engine.restartService.called).to.equal(false)
+    })
+
+    it('200 RESPEC into the allowed image with a CLAIMED subsidized extension', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: extendedSubsidizedJob() })
+      node.getConfig = () => ({
+        subsidyProviderAllowedImages: { [SUBSIDY]: ['allowed/app:1.0'] }
+      })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'allowed/app',
+        tag: '1.0'
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      expect(engine.restartService.calledOnce).to.equal(true)
+    })
+
+    it('200 RESPEC into a non-allowed image when the extension subsidy was CANCELLED (not applied)', async () => {
+      const job = extendedSubsidizedJob()
+      job.extendPayments[0].claimTx = ''
+      job.extendPayments[0].cancelTx = '0xcancel' // refunded → no subsidy applied
+      const { node, engine } = buildFakes({ serviceJobInDb: job })
+      node.getConfig = () => ({
+        subsidyProviderAllowedImages: { [SUBSIDY]: ['allowed/app:1.0'] }
+      })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'miner/xmrig',
+        tag: 'v1'
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      expect(engine.restartService.calledOnce).to.equal(true)
+    })
+
+    it('maps the engine backstop SubsidyGateError to 403 (not 500)', async () => {
+      // The engine re-runs the subsidy gate on the fresh row under the lock and throws
+      // SubsidyGateError on a disallowed RESPEC (the concurrent-extend race). The handler must
+      // surface that as 403, like the pre-lock fast-fail, not a generic 500.
+      const { node, engine } = buildFakes({ serviceJobInDb: makeJob() })
+      engine.restartService.rejects(new SubsidyGateError('nope'))
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'allowed/app',
+        tag: '1.0'
+      } as any)
+      expect(res.status.httpStatus).to.equal(403)
+    })
   })
 
   describe('ServiceExtendHandler', () => {
@@ -589,7 +681,11 @@ describe('Service handlers', () => {
     it('400 when expiresAt has already passed, whatever the status says', async () => {
       // the expiry sweep is a cron job, so a de-facto expired service can still carry a
       // live status for a while — extend must reject it on expiresAt alone
-      for (const status of [ServiceStatusNumber.Running, ServiceStatusNumber.Stopped]) {
+      for (const status of [
+        ServiceStatusNumber.Running,
+        ServiceStatusNumber.Stopped,
+        ServiceStatusNumber.DiskQuotaExceeded
+      ]) {
         const { node, escrow } = buildFakes({
           serviceJobInDb: makeJob({ status, expiresAt: Date.now() - 1000 })
         })
@@ -612,6 +708,7 @@ describe('Service handlers', () => {
         ServiceStatusNumber.Restarting,
         ServiceStatusNumber.Stopping,
         ServiceStatusNumber.Stopped,
+        ServiceStatusNumber.DiskQuotaExceeded,
         ServiceStatusNumber.Error
       ]) {
         const job = makeJob({ status })
@@ -694,6 +791,34 @@ describe('Service handlers', () => {
       expect(escrow.cancelExpiredLock.calledOnce).to.equal(true)
     })
 
+    it('403 without touching escrow when the owner lost access to the output bucket', async () => {
+      // e.g. bucket sharing was turned off after the start, and the bucket is someone else's
+      const { node, escrow, persistentStorage } = buildFakes({
+        serviceJobInDb: makeJob({ outputBucketId: 'bucket-42' })
+      })
+      persistentStorage.assertConsumerAllowedForBucket.rejects(
+        new PersistentStorageAccessDeniedError()
+      )
+      const res = await new ServiceExtendHandler(node).handle({ ...baseTask } as any)
+      expect(res.status.httpStatus).to.equal(403)
+      expect(
+        persistentStorage.assertConsumerAllowedForBucket.calledOnceWith(
+          OWNER,
+          'bucket-42'
+        )
+      ).to.equal(true)
+      expect(escrow.createLock.called, 'no payment for a refused extension').to.equal(
+        false
+      )
+    })
+
+    it('skips the bucket check for a service without an output bucket', async () => {
+      const { node, persistentStorage } = buildFakes({ serviceJobInDb: makeJob() })
+      const res = await new ServiceExtendHandler(node).handle({ ...baseTask } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      expect(persistentStorage.assertConsumerAllowedForBucket.called).to.equal(false)
+    })
+
     it('200, advances expiresAt and records an extendPayment', async () => {
       const job = makeJob()
       const before = job.expiresAt
@@ -702,6 +827,14 @@ describe('Service handlers', () => {
       expect(res.status.httpStatus).to.equal(200)
       expect(escrow.createLock.calledOnce).to.equal(true)
       expect(escrow.claimLock.calledOnce).to.equal(true)
+      // service-extend settles as a SERVICE job; jobType is the 7th positional arg
+      expect(escrow.claimLock.firstCall.args[6]).to.equal(JobType.SERVICE)
+      // createLock must carry the same jobType and the SAME subsidy-provider list as the claim
+      // (lock & claim must agree so a sponsored lock settles from the same providers).
+      expect(escrow.createLock.firstCall.args[6]).to.equal(JobType.SERVICE)
+      expect(escrow.createLock.firstCall.args[7]).to.deep.equal(
+        escrow.claimLock.firstCall.args[7]
+      )
       // two writes: the durable intent (before claim) + the finalized extension
       expect(engine.db.updateServiceJob.calledTwice).to.equal(true)
       const out = await body(res)
@@ -1009,6 +1142,19 @@ describe('Service handlers', () => {
       expect(engine.createServiceJob.called).to.equal(false)
     })
 
+    it('skips the escrow funds pre-check for a sponsored request (zero-deposit SoD)', async () => {
+      const { node, engine } = buildFakes()
+      engine.escrow.getUserAvailableFunds.resolves(0n) // payer has nothing available…
+      // …but the request names a subsidy provider → sponsored → the funds pre-check is skipped,
+      // so the start is NOT refused for insufficient funds (parity with the compute createLock
+      // stopgap; the contract settles the real payer portion authoritatively).
+      const res = await new ServiceStartHandler(node).handle({
+        ...baseTask,
+        subsidyProviders: ['0x1111111111111111111111111111111111111111']
+      } as any)
+      expect(String(res.status.error || '')).to.not.contain('Insufficient escrow funds')
+    })
+
     it('the funds pre-check is best-effort: an RPC failure does not block the start', async () => {
       const { node, engine } = buildFakes()
       engine.escrow.getUserAvailableFunds.rejects(new Error('rpc down'))
@@ -1021,6 +1167,51 @@ describe('Service handlers', () => {
       const { node } = buildFakes({ serviceEnabled: false })
       const res = await new ServiceStartHandler(node).handle({ ...baseTask } as any)
       expect(res.status.httpStatus).to.equal(403)
+    })
+
+    describe('disk amount', () => {
+      const withDiskEnv = () => {
+        const fakes = buildFakes()
+        fakes.env.resources.push({ id: 'disk', kind: 'fungible', total: 100, min: 0 })
+        return fakes
+      }
+
+      it('400 when the env has disk and the service omits it (fills to min 0)', async () => {
+        const { node, engine } = withDiskEnv()
+        const res = await new ServiceStartHandler(node).handle({
+          ...baseTask,
+          resources: [{ id: 'cpu', amount: 2 }]
+        } as any)
+        expect(res.status.httpStatus).to.equal(400)
+        expect(String(res.status.error)).to.contain('disk amount greater than 0')
+        expect(engine.createServiceJob.called).to.equal(false)
+      })
+
+      it('400 when the service asks for disk 0', async () => {
+        const { node, engine } = withDiskEnv()
+        const res = await new ServiceStartHandler(node).handle({
+          ...baseTask,
+          resources: [
+            { id: 'cpu', amount: 2 },
+            { id: 'disk', amount: 0 }
+          ]
+        } as any)
+        expect(res.status.httpStatus).to.equal(400)
+        expect(engine.createServiceJob.called).to.equal(false)
+      })
+
+      it('200 with a positive disk amount', async () => {
+        const { node, engine } = withDiskEnv()
+        const res = await new ServiceStartHandler(node).handle({
+          ...baseTask,
+          resources: [
+            { id: 'cpu', amount: 2 },
+            { id: 'disk', amount: 10 }
+          ]
+        } as any)
+        expect(res.status.httpStatus).to.equal(200)
+        expect(engine.createServiceJob.calledOnce).to.equal(true)
+      })
     })
 
     it('400 when image is missing', async () => {
@@ -1311,6 +1502,174 @@ describe('Service handlers', () => {
       expect(res.status.httpStatus).to.equal(200)
       const since = engine.getServiceStreamableLogs.firstCall.args[2]
       expect(since).to.be.within(before, after)
+    })
+  })
+})
+
+// The SUBSIDY_PROVIDER_ALLOWED_IMAGES gate, exercised through the real service handlers: the
+// filtered (kept) list must be what reaches createLock/claimLock, and a RESPEC restart into a
+// non-allowed image on a subsidized service must be rejected (403).
+describe('Service handlers — SUBSIDY_PROVIDER_ALLOWED_IMAGES gate', () => {
+  afterEach(() => sinon.restore())
+
+  // makeJob's image/tag is img:latest. P is a subsidy provider address (checksummed on ingress).
+  const P = getAddress('0x1111111111111111111111111111111111111111')
+  const JOB_IMAGE_REF = 'img:latest'
+  const OTHER_IMAGE_REF = 'other/image:9'
+
+  // Replace node.getConfig with one that also carries the image allowlist map.
+  function withAllowedImages(node: any, map: Record<string, string[]> | null) {
+    node.getConfig = (): any => ({
+      rateLimit: undefined,
+      serviceTemplatesPath: undefined,
+      subsidyProviderAllowedImages: map
+    })
+  }
+
+  describe('ServiceExtendHandler forwarding', () => {
+    const baseTask = {
+      command: PROTOCOL_COMMANDS.SERVICE_EXTEND,
+      consumerAddress: OWNER,
+      nonce: '1',
+      signature: '0xsig',
+      serviceId: 'svc-1',
+      additionalDuration: 3600,
+      payment: { chainId: 8996, token: '0xtoken' },
+      // user-supplied subsidy provider; survives resolveUserSubsidyProviders (filter off)
+      subsidyProviders: [P]
+    }
+
+    it('keeps a provider whose allowed image matches the running service → createLock/claimLock get [P]', async () => {
+      const { node, escrow } = buildFakes({ serviceJobInDb: makeJob() })
+      withAllowedImages(node, { [P]: [JOB_IMAGE_REF] })
+      const res = await new ServiceExtendHandler(node).handle({ ...baseTask } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      // 8th positional arg (index 7) is the subsidy-provider list on both calls
+      expect(escrow.createLock.firstCall.args[7]).to.deep.equal([P])
+      expect(escrow.claimLock.firstCall.args[7]).to.deep.equal([P])
+    })
+
+    it('drops a provider whose allowed image does NOT match → createLock/claimLock get []', async () => {
+      const { node, escrow } = buildFakes({ serviceJobInDb: makeJob() })
+      withAllowedImages(node, { [P]: [OTHER_IMAGE_REF] })
+      const res = await new ServiceExtendHandler(node).handle({ ...baseTask } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      expect(escrow.createLock.firstCall.args[7]).to.deep.equal([])
+      expect(escrow.claimLock.firstCall.args[7]).to.deep.equal([])
+    })
+
+    it('records the dropped provider on the extend payment (observability)', async () => {
+      const { node } = buildFakes({ serviceJobInDb: makeJob() })
+      withAllowedImages(node, { [P]: [OTHER_IMAGE_REF] })
+      const res = await new ServiceExtendHandler(node).handle({ ...baseTask } as any)
+      const out = await body(res)
+      expect(out[0].extendPayments).to.have.length(1)
+      expect(out[0].extendPayments[0].droppedSubsidies).to.deep.equal([P])
+    })
+  })
+
+  describe('ServiceRestartHandler reject-only gate', () => {
+    const baseTask = {
+      command: PROTOCOL_COMMANDS.SERVICE_RESTART,
+      consumerAddress: OWNER,
+      nonce: '1',
+      signature: '0xsig',
+      serviceId: 'svc-1'
+    }
+
+    // A subsidized service job (its start payment names provider P).
+    const subsidizedJob = () =>
+      makeJob({
+        payment: {
+          chainId: 8996,
+          token: '0xtoken',
+          lockTx: '0xl',
+          claimTx: '0xc',
+          cancelTx: '',
+          cost: 5,
+          subsidyProviders: [P]
+        }
+      })
+
+    it('403 RESPEC into a non-allowed image on a subsidized service', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: subsidizedJob() })
+      withAllowedImages(node, { [P]: [JOB_IMAGE_REF] }) // only img:latest allowed
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'evil/miner',
+        tag: 'latest'
+      } as any)
+      expect(res.status.httpStatus).to.equal(403)
+      expect(String(res.status.error)).to.contain('start a new service')
+      expect(engine.restartService.called).to.equal(false)
+    })
+
+    it('403 RESPEC into the allowed image but with a custom entrypoint', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: subsidizedJob() })
+      withAllowedImages(node, { [P]: [JOB_IMAGE_REF] })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'img',
+        // tag omitted → resolves to img:latest (allowed), but the entrypoint override disqualifies
+        dockerEntrypoint: ['/bin/sh', '-c', 'miner']
+      } as any)
+      expect(res.status.httpStatus).to.equal(403)
+      expect(engine.restartService.called).to.equal(false)
+    })
+
+    it('200 RESPEC into the allowed image with no custom entrypoint/cmd', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: subsidizedJob() })
+      withAllowedImages(node, { [P]: [JOB_IMAGE_REF] })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'img' // → img:latest, allowed
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      expect(engine.restartService.calledOnce).to.equal(true)
+    })
+
+    it('200 REUSE restart (no image) on a subsidized service is unaffected', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: subsidizedJob() })
+      withAllowedImages(node, { [P]: [OTHER_IMAGE_REF] }) // would drop P on RESPEC, but this is REUSE
+      const res = await new ServiceRestartHandler(node).handle({ ...baseTask } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      expect(engine.restartService.calledOnce).to.equal(true)
+    })
+
+    it('200 RESPEC into a non-allowed image on an UNSUBSIDIZED service (gate does not apply)', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: makeJob() }) // no subsidyProviders
+      withAllowedImages(node, { [P]: [JOB_IMAGE_REF] })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'evil/miner',
+        tag: 'latest'
+      } as any)
+      expect(res.status.httpStatus).to.equal(200)
+      expect(engine.restartService.calledOnce).to.equal(true)
+    })
+
+    it('403 RESPEC into the allowed image with ONLY a dockerCmd override (no entrypoint)', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: subsidizedJob() })
+      withAllowedImages(node, { [P]: [JOB_IMAGE_REF] })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'img',
+        dockerCmd: ['miner']
+      } as any)
+      expect(res.status.httpStatus).to.equal(403)
+      expect(engine.restartService.called).to.equal(false)
+    })
+
+    it('403 RESPEC via a user dockerfile on a subsidized service (C1: never a trusted image)', async () => {
+      const { node, engine } = buildFakes({ serviceJobInDb: subsidizedJob() })
+      withAllowedImages(node, { [P]: [JOB_IMAGE_REF] })
+      const res = await new ServiceRestartHandler(node).handle({
+        ...baseTask,
+        image: 'img',
+        dockerfile: 'FROM img\nRUN miner'
+      } as any)
+      expect(res.status.httpStatus).to.equal(403)
+      expect(engine.restartService.called).to.equal(false)
     })
   })
 })

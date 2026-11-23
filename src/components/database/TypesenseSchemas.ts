@@ -3,7 +3,6 @@ import fs from 'fs'
 import path, { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
-import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
 
 export function readJsonSchemas(): TypesenseCollectionCreateSchema[] {
   const jsonDocuments: TypesenseCollectionCreateSchema[] = []
@@ -18,10 +17,8 @@ export function readJsonSchemas(): TypesenseCollectionCreateSchema[] {
       .filter((file) => path.extname(file) === '.json')
 
     if (jsonFiles.length === 0) {
-      DATABASE_LOGGER.log(
-        LOG_LEVELS_STR.LEVEL_ERROR,
-        `No JSON files found in the schemas directory ${schemaFilePath}.`,
-        true
+      DATABASE_LOGGER.error(
+        `No JSON files found in the schemas directory ${schemaFilePath}.`
       )
       return []
     } else {
@@ -34,12 +31,7 @@ export function readJsonSchemas(): TypesenseCollectionCreateSchema[] {
       return jsonDocuments
     }
   } catch (error) {
-    DATABASE_LOGGER.log(
-      LOG_LEVELS_STR.LEVEL_ERROR,
-      `JSON mappings could not be loaded in database.
-      Error: ${error}`,
-      true
-    )
+    DATABASE_LOGGER.error(`Failed to load JSON schemas from ${pathToSchemaDir}: ${error}`)
   }
   return []
 }
@@ -170,7 +162,13 @@ export const typesenseSchemas: TypesenseSchemas = {
       // ReLock event fields (uint256 kept as raw strings)
       { name: 'oldAmount', type: 'string', optional: true },
       { name: 'newAmount', type: 'string', optional: true },
-      { name: 'newExpiry', type: 'string', optional: true }
+      { name: 'newExpiry', type: 'string', optional: true },
+      // Subsidy events (Subsidized / LockSponsored / SponsorRefunded) + Auth v2 expiry
+      { name: 'provider', type: 'string', optional: true },
+      { name: 'subsidyAmount', type: 'string', optional: true },
+      { name: 'bonusAmount', type: 'string', optional: true },
+      { name: 'expiryTimestamp', type: 'string', optional: true },
+      { name: 'reclaimable', type: 'bool', optional: true }
     ]
   }
 }

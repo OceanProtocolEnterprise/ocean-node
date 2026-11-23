@@ -31,6 +31,11 @@ import { BASE_CHAIN_ID, USDC_TOKEN_ADDRESS_BASE } from '../../utils/config.js'
 import { C2DEngine, parseJobTimestamp } from './compute_engine_base.js'
 import { C2DDatabase } from '../database/C2DDatabase.js'
 import { Escrow } from '../core/utils/escrow.js'
+import {
+  restartSubsidyDropped,
+  isNonEmpty,
+  SubsidyGateError
+} from '../core/utils/subsidyProviders.js'
 import { create256Hash } from '../../utils/crypt.js'
 import { Storage } from '../storage/index.js'
 import Dockerode from 'dockerode'
@@ -47,12 +52,15 @@ import {
   appendFileSync,
   statSync,
   statfsSync,
-  createReadStream
+  createReadStream,
+  renameSync
 } from 'fs'
 import { pipeline } from 'node:stream/promises'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
-import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
-import { AssetUtils } from '../../utils/asset.js'
+import { checkUrlHost, getSafeDispatcher } from '../../utils/safeUrl.js'
+import { fetchHeadersTimeout } from '../../utils/http.js'
+import { errorSummary, safeStringify } from '../../utils/logging/redact.js'
+import { ENVIRONMENT_VARIABLES, JobType } from '../../utils/constants.js'
 import { FindDdoHandler } from '../core/handler/ddoHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { KeyManager } from '../KeyManager/index.js'
@@ -62,7 +70,7 @@ import {
   validateJobMetadataSize
 } from './index.js'
 import { ValidateParams } from '../httpRoutes/validateCommands.js'
-import { Service } from '@oceanprotocol/ddo-js'
+import { DDOManager, Service } from '@oceanprotocol/ddo-js'
 import { getOceanTokenAddressForChain } from '../../utils/address.js'
 import { includesAddress, sameAddress } from '../../utils/evmAddress.js'
 import { dockerRegistryAuth, OceanNodeConfig } from '../../@types/OceanNode.js'
@@ -75,11 +83,56 @@ import { getAddress, ZeroAddress } from 'ethers'
 import {
   ServiceStatusNumber,
   ServiceStatusText,
-  SERVICE_START_PENDING_STATUSES
+  SERVICE_START_PENDING_STATUSES,
+  isStoppedLike,
+  DEFAULT_BUILD_TIMEOUT_SECONDS
 } from '../../@types/C2D/ServiceOnDemand.js'
-import type { ServiceJob } from '../../@types/C2D/ServiceOnDemand.js'
+import type {
+  ServiceJob,
+  ServiceImagePullProgress,
+  ServiceModelDownload,
+  ServiceReadiness
+} from '../../@types/C2D/ServiceOnDemand.js'
+import {
+  ImagePullTracker,
+  probeCandidates,
+  runReadinessProbe,
+  PROBE_INITIAL_DELAY_SECONDS,
+  PROBE_PERIOD_SECONDS,
+  READY_PROBE_PERIOD_SECONDS,
+  READINESS_WARN_AFTER_SECONDS
+} from './serviceReadiness.js'
+import { resolveServiceEngine, type ServiceEngineProfile } from './serviceEngines.js'
+import {
+  buildModelDownload,
+  fetchModelTotalBytes,
+  isModelDownloadComplete,
+  ModelDownloadSampler,
+  withReceivedBytes
+} from './modelDownload.js'
+import {
+  MANIFEST_DISCOVERY_MS,
+  MANIFEST_SAMPLING_MS,
+  sampleDownloadManifest
+} from './downloadManifest.js'
 import type { DockerMountObject } from '../../@types/PersistentStorage.js'
 import { resolveServiceImage } from './serviceResourceMatching.js'
+import {
+  SERVICE_OUTPUTS_PATH,
+  ServiceResultError,
+  emptyOutputsDirTar,
+  tarToZip,
+  type ServiceResult
+} from './serviceOutputsZip.js'
+import {
+  buildServiceHfPlan,
+  getServiceHfMirrorSettings,
+  hfPatchArchive,
+  injectHfPatch,
+  ServiceHfContainerSpec,
+  ServiceHfPlan
+} from './serviceHfMirror.js'
+import { buildAlgoContainerEnv, mergeOwnerEnvs } from './containerEnvs.js'
 import {
   buildSnapshot,
   describeSnapshot,
@@ -87,6 +140,7 @@ import {
   getMetricsIntervalSeconds,
   isMetricsCollectionEnabled,
   isSnapshotStale,
+  readContainerRxBytes,
   sampleContainerMetrics
 } from './containerMetrics.js'
 import { GpuMetricsService } from './gpu/index.js'
@@ -104,6 +158,20 @@ import type {
   EnvResourceSnapshot
 } from '../../telemetry/computeTypes.js'
 import { cJobsFinished } from '../../telemetry/metrics.js'
+import {
+  addServiceVolumeUsage,
+  createVolumeSizeCache,
+  measureServiceLocalDiskUsage,
+  SERVICE_DISK_CHECK_INTERVAL_MS,
+  SERVICE_DISK_NEAR_RATIO,
+  scheduleServiceDiskMeasurement,
+  serviceDiskBackoffIntervalMs,
+  serviceDiskCheckIntervalMs,
+  serviceDiskTimeToQuotaMs,
+  type ServiceDiskSample,
+  type ServiceDiskUsage,
+  type VolumeSizes
+} from './serviceDiskUsage.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -117,6 +185,11 @@ const trivyImage = 'aquasec/trivy:0.69.3' // Use pinned versions for safety
 // doesn't get a live operation's resources torn down under it.
 const SERVICE_LOCK_HEARTBEAT_MS = 30_000
 const SERVICE_LOCK_STALE_MS = 120_000
+// `du` on a manifest folder runs in a user-controlled container, so it must not hold the probe.
+const MANIFEST_DU_TIMEOUT_MS = 15_000
+const MANIFEST_DIR_MEASURE_MS = 15_000
+// A folder not there yet, or a `du` that failed or timed out, is retried less often.
+const MANIFEST_DIR_RETRY_MS = 60_000
 
 // Identifies one engine instance as a service-lock holder across processes. pid alone is
 // not enough: pids are reused, and one process can host several engine instances.
@@ -126,6 +199,11 @@ const makeServiceLockHolderId = () =>
 // "Already gone" Docker errors (404 missing, 304 already stopped) are the desired end
 // state of a teardown, so treat them as success.
 const isBenignDockerError = (e: any) => e?.statusCode === 404 || e?.statusCode === 304
+
+// Cleanup runs more than once and races the container's own exit, so "already stopped" /
+// "already gone" is logged at debug and only a real failure at error.
+const logDockerCleanupError = (e: any, msg: string) =>
+  isBenignDockerError(e) ? CORE_LOGGER.debug(msg) : CORE_LOGGER.error(msg)
 
 // Cap on processes/threads a service container may spawn, to stop a runaway workload from
 // exhausting the host's pid space. Overridable per resource via init.advanced.PidsLimit,
@@ -181,10 +259,35 @@ export class C2DEngineDocker extends C2DEngine {
   // process; the service_locks DB lease (acquired alongside it) extends the guarantee
   // across processes sharing the same DB file + Docker daemon.
   private serviceOpsInFlight: Set<string> = new Set()
+  private serviceDiskCheckedAt: Map<string, number> = new Map()
+  private serviceDiskChecksInFlight: Map<string, Promise<void>> = new Map()
+  // serviceId -> the mounts last reported as unmeasurable, so the warning is logged once
+  private serviceDiskUnmeasured: Map<string, string> = new Map()
+  private serviceDiskSamples: Map<string, ServiceDiskSample> = new Map()
+  private serviceVolumeSizes?: VolumeSizes
+  // serviceId -> the address the readiness probe last reached the container on. Which address
+  // works depends on how this node is deployed (on the host, or itself in Docker), so the probe
+  // discovers it once and reuses it instead of walking the candidate list every few seconds.
+  private serviceProbeUrls: Map<string, string> = new Map()
+  // Per-service model-download sampling state (which cache files to stat, when to re-list them).
+  private modelDownloadSampler = new ModelDownloadSampler()
+  // serviceId -> last manifest check, for services the node cannot probe.
+  private manifestCheckedAt: Map<string, number> = new Map()
+  // serviceId -> containerId the "still not ready" warning was logged for.
+  private readinessWarned: Map<string, string> = new Map()
+  // serviceId -> manifest folder path -> last `du`.
+  private manifestDirSizes: Map<
+    string,
+    Map<string, { containerId: string; bytes: number | null; at: number }>
+  > = new Map()
+  // serviceId -> its readiness probe (+ model-download sample) still running in the background.
+  // The probe is launched fire-and-forget so a slow engine, Docker daemon or Hub never holds up
+  // InternalLoop; this keeps one probe per service at a time and lets stop() drain them.
+  private serviceProbesInFlight: Map<string, Promise<void>> = new Map()
   private readonly serviceLockHolderId: string = makeServiceLockHolderId()
   private serviceLockHeartbeatTimer: NodeJS.Timeout | null = null
-  // The in-flight service lifecycle promises — processServiceStart() launched
-  // fire-and-forget by InternalLoop, plus handler-driven stopService()/restartService()
+  // The in-flight service lifecycle promises — processServiceStart() and expireService()
+  // launched fire-and-forget by InternalLoop, plus handler-driven stopService()/restartService()
   // calls — so stop() can drain them before returning. Otherwise an op could outlive
   // stop() and race a restarted engine on the same shared DB.
   private serviceOpPromises: Set<Promise<unknown>> = new Set()
@@ -219,7 +322,9 @@ export class C2DEngineDocker extends C2DEngine {
       try {
         this.docker = new Dockerode({ socketPath: clusterConfig.connection.socketPath })
       } catch (e) {
-        CORE_LOGGER.error('Could not create Docker container: ' + e.message)
+        CORE_LOGGER.error(
+          `C2D Engine ${clusterConfig.hash}: could not create Docker client (${clusterConfig.connection.socketPath}): ${e.message}`
+        )
       }
     }
     this.retentionDays = clusterConfig.connection.imageRetentionDays || 7
@@ -240,7 +345,9 @@ export class C2DEngineDocker extends C2DEngine {
           port: clusterConfig.connection.port
         })
       } catch (e) {
-        CORE_LOGGER.error('Could not create Docker container: ' + e.message)
+        CORE_LOGGER.error(
+          `C2D Engine ${clusterConfig.hash}: could not create Docker client (${clusterConfig.connection.host}:${clusterConfig.connection.port}): ${e.message}`
+        )
       }
     }
     // trivy cache is the same for all engines
@@ -274,10 +381,12 @@ export class C2DEngineDocker extends C2DEngine {
       if (fees === null) fees = {}
       if (!(feeChain in fees)) fees[feeChain] = []
       const tmpFees: ComputeEnvFees[] = []
-      for (const feeEntry of rawFees[feeChain]) {
+      for (const [idx, feeEntry] of rawFees[feeChain].entries()) {
         if (!feeEntry.prices || feeEntry.prices.length === 0) {
-          CORE_LOGGER.error(
-            `Unable to find prices for fee ${JSON.stringify(feeEntry)} on chain ${feeChain}`
+          CORE_LOGGER.warn(
+            `Unable to find prices for fee entry #${idx} (token ${
+              feeEntry.feeToken ?? 'default'
+            }) on chain ${feeChain}`
           )
           continue
         }
@@ -287,7 +396,7 @@ export class C2DEngineDocker extends C2DEngine {
             feeEntry.feeToken = tokenAddress
             tmpFees.push(feeEntry)
           } else {
-            CORE_LOGGER.error(
+            CORE_LOGGER.warn(
               `Unable to find Ocean token address for chain ${feeChain} and no custom token provided`
             )
           }
@@ -489,13 +598,23 @@ export class C2DEngineDocker extends C2DEngine {
     this.physicalLimits.set('cpu', sysinfo.NCPU)
     this.physicalLimits.set('ram', Math.floor(sysinfo.MemTotal / 1024 / 1024 / 1024))
 
+    // Build the HF client patch archive for services up front, so a broken image shows up
+    // at boot (a failed build is retried on every service start).
+    if (getServiceHfMirrorSettings(config).patch) {
+      await hfPatchArchive().catch((e) =>
+        CORE_LOGGER.error(
+          `HF client patch unavailable (${e?.message}) — services start without it`
+        )
+      )
+    }
+
     this.resolveConfiguredCpuList(envConfig, sysinfo.NCPU)
     try {
       const diskStats = statfsSync(this.getC2DConfig().tempFolder)
       const diskGB = Math.floor((diskStats.bsize * diskStats.blocks) / 1024 / 1024 / 1024)
       this.physicalLimits.set('disk', diskGB)
     } catch (e) {
-      CORE_LOGGER.warn('Could not detect physical disk size: ' + e.message)
+      CORE_LOGGER.error('Could not detect physical disk size: ' + e.message)
     }
 
     // Determine supported chains
@@ -623,6 +742,8 @@ export class C2DEngineDocker extends C2DEngine {
       if (envDef.minJobDuration !== undefined) env.minJobDuration = envDef.minJobDuration
       if (envDef.maxJobDuration !== undefined) env.maxJobDuration = envDef.maxJobDuration
       if (envDef.maxJobs !== undefined) env.maxJobs = envDef.maxJobs
+      if (envDef.buildTimeoutSeconds !== undefined)
+        env.buildTimeoutSeconds = envDef.buildTimeoutSeconds
       if (envDef.description !== undefined) env.description = envDef.description
 
       // Free tier config for this environment
@@ -639,6 +760,8 @@ export class C2DEngineDocker extends C2DEngine {
         if (envDef.free.maxJobs !== undefined) env.free.maxJobs = envDef.free.maxJobs
         if (envDef.free.allowImageBuild !== undefined)
           env.free.allowImageBuild = envDef.free.allowImageBuild
+        if (envDef.free.buildTimeoutSeconds !== undefined)
+          env.free.buildTimeoutSeconds = envDef.free.buildTimeoutSeconds
         // Resolve free resource refs → full ComputeResource[] using the same connection pool.
         if (envDef.free.resources) {
           env.free.resources = this.resolveEnvironmentResources(
@@ -673,7 +796,7 @@ export class C2DEngineDocker extends C2DEngine {
         // this.configuredCpuList (or another env's pool), so a mutation of one can't
         // corrupt the others.
         this.envCpuCoresMap.set(env.id, [...allCores])
-        CORE_LOGGER.info(
+        CORE_LOGGER.debug(
           `CPU affinity: environment ${env.id} shares pool of ${allCores.length} cores${
             this.configuredCpuList
               ? ` (restricted by cpuList to [${allCores.join(',')}])`
@@ -689,7 +812,7 @@ export class C2DEngineDocker extends C2DEngine {
 
     // Re-seed the in-memory allocated-host-port set from running service jobs (handles node restart)
     await seedAllocatedPorts(this.db, this.getC2DConfig().hash).catch((e) => {
-      CORE_LOGGER.warn(`Could not seed allocated service ports: ${e.message}`)
+      CORE_LOGGER.error(`Could not seed allocated service ports: ${e.message}`)
     })
 
     // (re)starting: clear the stopped flag so the loop can schedule again
@@ -714,7 +837,7 @@ export class C2DEngineDocker extends C2DEngine {
       this.serviceLockHeartbeatTimer = setInterval(() => {
         if (this.serviceOpsInFlight.size === 0) return
         this.db.refreshServiceLocks(this.serviceLockHolderId).catch((e) => {
-          CORE_LOGGER.warn(`service lock heartbeat failed: ${e.message}`)
+          CORE_LOGGER.error(`service lock heartbeat failed: ${e.message}`)
         })
       }, SERVICE_LOCK_HEARTBEAT_MS)
     }
@@ -809,12 +932,22 @@ export class C2DEngineDocker extends C2DEngine {
       await this.internalLoopPromise.catch(() => {})
       this.internalLoopPromise = null
     }
+    if (this.serviceDiskChecksInFlight?.size > 0) {
+      await Promise.allSettled([...this.serviceDiskChecksInFlight.values()])
+      this.serviceDiskChecksInFlight.clear()
+    }
     // Drain any in-flight service lifecycle ops — start pipelines launched by the loop
     // AND handler-driven stopService/restartService calls — so none continue (and touch
     // escrow/Docker on the shared DB) after the engine is considered stopped.
     if (this.serviceOpPromises.size > 0) {
       await Promise.allSettled([...this.serviceOpPromises])
       this.serviceOpPromises.clear()
+    }
+    // Background readiness probes write to the same DB; let them settle too. The optional chain
+    // covers engines built without the constructor (e.g. test doubles).
+    if (this.serviceProbesInFlight?.size > 0) {
+      await Promise.allSettled([...this.serviceProbesInFlight.values()])
+      this.serviceProbesInFlight.clear()
     }
     this.isInternalLoopRunning = false
     // Release any GPU metrics backends (e.g. nvmlShutdown). Best-effort, never throws; the
@@ -873,7 +1006,7 @@ export class C2DEngineDocker extends C2DEngine {
       C2DStatusNumber.ResultsUploadFailed,
       C2DStatusNumber.JobSettle
     ])
-    CORE_LOGGER.info(`ClaimPayments:  Got ${jobs.length} jobs to check`)
+    CORE_LOGGER.debug(`ClaimPayments: got ${jobs.length} jobs to check`)
     if (jobs.length > 0) {
       const providerAddress = this.getKeyManager().getEthAddress()
       const chains: Set<number> = new Set()
@@ -1004,6 +1137,10 @@ export class C2DEngineDocker extends C2DEngine {
           const payers = jobs.map((j) => j.owner)
           const amounts = claims.map((c) => c.cost)
           const proofs = claims.map((c) => c.proof)
+          // Per-job subsidy overrides. An explicit user list ([] or non-empty) was frozen onto the
+          // job at request time and is passed through unchanged; `undefined`/null here means the
+          // user opted out, so the escrow falls back to the node config read live at claim time.
+          const subsidyOverrides = jobs.map((j) => j.payment!.subsidyProviders ?? null)
 
           const txId = await this.escrow.claimLocks(
             chainId,
@@ -1011,7 +1148,9 @@ export class C2DEngineDocker extends C2DEngine {
             tokens,
             payers,
             amounts,
-            proofs
+            proofs,
+            JobType.COMPUTE,
+            subsidyOverrides
           )
           if (txId) {
             // Update all jobs with the transaction ID
@@ -1025,12 +1164,12 @@ export class C2DEngineDocker extends C2DEngine {
               await this.db.updateJob(claim.job)
             }
             CORE_LOGGER.info(
-              `Successfully claimed ${claims.length} locks in batch transaction ${txId}`
+              `Claimed ${claims.length} locks on chain ${chainId} (tx ${txId})`
             )
           }
         } catch (e) {
           CORE_LOGGER.error(
-            `Failed to batch claim locks for chain ${chainId}: ${e.message}`
+            `Failed to batch claim locks for chain ${chainId}: ${e.message}, falling back to one by one`
           )
           // Fallback to individual processing on batch failure
           for (const claim of claims) {
@@ -1041,7 +1180,9 @@ export class C2DEngineDocker extends C2DEngine {
                 claim.job.payment!.token,
                 claim.job.owner,
                 claim.cost,
-                claim.proof
+                claim.proof,
+                JobType.COMPUTE,
+                claim.job.payment!.subsidyProviders ?? null
               )
               if (txId) {
                 if (claim.job.payment) {
@@ -1096,12 +1237,12 @@ export class C2DEngineDocker extends C2DEngine {
               await this.db.updateJob(job)
             }
             CORE_LOGGER.info(
-              `Successfully cancelled ${jobsToCancelBatch.length} expired locks in batch transaction ${txId}`
+              `Cancelled ${jobsToCancelBatch.length} expired locks on chain ${chainId} (tx ${txId})`
             )
           }
         } catch (e) {
           CORE_LOGGER.error(
-            `Failed to batch cancel locks for chain ${chainId}: ${e.message}`
+            `Failed to batch cancel locks for chain ${chainId}: ${e.message}, falling back to one by one`
           )
           // Fallback to individual processing on batch failure
           for (const job of jobsToCancelBatch) {
@@ -1160,7 +1301,12 @@ export class C2DEngineDocker extends C2DEngine {
         nodeAddress
       )
       if (!balocks || balocks.length === 0) {
-        CORE_LOGGER.warn(`Could not find any locks for chain ${chain}, skipping cleanup`)
+        // null: the lock query failed (escrow already logged it); []: nothing to clean up
+        CORE_LOGGER.debug(
+          balocks
+            ? `No locks found on chain ${chain}, skipping orphan-lock cleanup`
+            : `Skipping orphan-lock cleanup on chain ${chain} (lock query failed)`
+        )
         return
       }
       for (const lock of balocks) {
@@ -1180,14 +1326,18 @@ export class C2DEngineDocker extends C2DEngine {
             payer,
             false
           )
-          CORE_LOGGER.warn(` Canceled locks on chain ${chain}, tx:${tx}`)
+          CORE_LOGGER.info(
+            `Cancelled ${jobIds.length} expired orphan locks on chain ${chain} (tx ${tx})`
+          )
         } catch (e) {
           // not critical, since we will try to cancel them at next run
-          CORE_LOGGER.warn(`Tried to cancel some locks, errored: ${e.message}`)
+          CORE_LOGGER.error(`Tried to cancel some locks, errored: ${e.message}`)
         }
       }
     } catch (e) {
-      CORE_LOGGER.error(`Error during cleanup of unknown locks: ${e.message}`)
+      CORE_LOGGER.error(
+        `Error during cleanup of unknown locks on chain ${chain}: ${e.message}`
+      )
     }
   }
 
@@ -1201,7 +1351,7 @@ export class C2DEngineDocker extends C2DEngine {
         return
       }
 
-      CORE_LOGGER.info(`Starting cleanup of ${oldImages.length} old Docker images`)
+      CORE_LOGGER.debug(`Starting cleanup of ${oldImages.length} old Docker images`)
       let cleaned = 0
       let failed = 0
 
@@ -1211,11 +1361,13 @@ export class C2DEngineDocker extends C2DEngine {
           await dockerImage.remove({ force: true })
           await this.db.deleteImage(image)
           cleaned++
-          CORE_LOGGER.info(`Successfully removed old image: ${image}`)
+          CORE_LOGGER.debug(`Successfully removed old image: ${image}`)
         } catch (e) {
           failed++
-          // Image might be in use or already deleted - log but don't throw
-          CORE_LOGGER.debug(`Could not remove image ${image}: ${e.message}`)
+          // Image might be in use (409) or already deleted (404) - log but don't throw
+          const msg = `Could not remove image ${image}: ${e.message}`
+          if (e?.statusCode === 404 || e?.statusCode === 409) CORE_LOGGER.debug(msg)
+          else CORE_LOGGER.warn(msg)
         }
       }
 
@@ -1311,7 +1463,9 @@ export class C2DEngineDocker extends C2DEngine {
             resourceSnapshot[`${computeEnv.id}:free`] = perFreeEnv
           }
         } catch (e) {
-          CORE_LOGGER.debug(
+          CORE_LOGGER.throttled(
+            `metrics:env-snapshot:${computeEnv?.id}`,
+            'warn',
             `[metrics] env resource snapshot failed for ${computeEnv?.id}: ${e?.message}`
           )
         }
@@ -1356,10 +1510,22 @@ export class C2DEngineDocker extends C2DEngine {
     const firstSlash = name.indexOf('/')
     if (firstSlash !== -1) {
       const potential = name.slice(0, firstSlash)
-      if (potential.includes('.') || potential.includes(':')) {
-        registry = potential.includes('localhost')
-          ? `http://${potential}`
-          : `https://${potential}`
+      // Docker's own domain detection (distribution/reference `splitDockerDomain`): the first
+      // path segment is a REGISTRY host (not part of a Docker Hub repo name) when it contains a
+      // '.' or ':', OR it equals 'localhost', OR it carries an uppercase letter. Matching this
+      // exactly is a security requirement, not a nicety: `checkRegistryAllowList` must classify
+      // the image the same way `docker.pull` will resolve it. If we only looked for '.'/':' then
+      // `localhost/x` or `MyReg/x` would be treated as Docker Hub and sail past a Hub-only
+      // allow-list, yet Docker would pull them from the local/`MyReg` registry instead.
+      const isRegistryHost =
+        potential.includes('.') ||
+        potential.includes(':') ||
+        potential === 'localhost' ||
+        potential !== potential.toLowerCase()
+      if (isRegistryHost) {
+        const isLocalhost =
+          potential === 'localhost' || potential.startsWith('localhost:')
+        registry = isLocalhost ? `http://${potential}` : `https://${potential}`
         name = name.slice(firstSlash + 1)
       }
     }
@@ -1369,6 +1535,60 @@ export class C2DEngineDocker extends C2DEngine {
     }
 
     return { registry, name, ref }
+  }
+
+  // ON-18: well-known registries serve their bearer-token endpoint on a DIFFERENT host than the
+  // registry itself, so a private pull from them needs the operator's credentials sent to that
+  // separate realm host. This fixed built-in list maps a registry host to the token-realm
+  // host(s) trusted to receive those credentials, so authenticated Docker Hub / GitLab pulls keep
+  // working without the operator having to configure anything. Operators add their own via
+  // ALLOWED_DOCKER_REGISTRY_REALMS, which is kept SEPARATE from ALLOWED_DOCKER_REGISTRIES so that
+  // trusting a token realm never turns on registry allow-list mode.
+  private static readonly KNOWN_REGISTRY_REALM_HOSTS: Record<string, string[]> = {
+    'registry-1.docker.io': ['auth.docker.io'],
+    'index.docker.io': ['auth.docker.io'],
+    'docker.io': ['auth.docker.io'],
+    'registry.gitlab.com': ['gitlab.com']
+  }
+
+  // ON-18: extract the host portion of a parsed registry URL (e.g. "ghcr.io" from
+  // "https://ghcr.io"). Falls back to the raw string if it is not a parseable URL.
+  // Normalize a host for comparison: lowercase and strip a trailing dot. `URL.host`
+  // already lowercases the hostname and drops the scheme's default port (:443/:80), so
+  // operator allow-list entries are run through the same normalization.
+  private normalizeRegistryHost(host: string): string {
+    return (host || '').trim().toLowerCase().replace(/\.$/, '')
+  }
+
+  private getRegistryHost(registry: string): string {
+    try {
+      return this.normalizeRegistryHost(new URL(registry).host)
+    } catch {
+      return this.normalizeRegistryHost(registry)
+    }
+  }
+
+  // ON-18: when ALLOWED_DOCKER_REGISTRIES is set (non-empty), reject images whose parsed
+  // registry host is not listed, BEFORE any outbound request. Returns a rejection
+  // ValidateParams when the registry is not allowed, or null when it is allowed / the
+  // allow-list is disabled (empty = current behaviour, non-breaking).
+  private checkRegistryAllowList(registry: string): ValidateParams | null {
+    const allowedRegistries = (this.getConfig()?.allowedDockerRegistries || []).map(
+      (entry) => this.normalizeRegistryHost(entry)
+    )
+    if (allowedRegistries.length === 0) return null
+    const host = this.getRegistryHost(registry)
+    if (!allowedRegistries.includes(host)) {
+      CORE_LOGGER.warn(
+        `Rejecting image from registry host "${host}": not in ALLOWED_DOCKER_REGISTRIES`
+      )
+      return {
+        valid: false,
+        status: 400,
+        reason: 'Image registry is not in the allowed registries list'
+      }
+    }
+    return null
   }
 
   public async getDockerManifest(
@@ -1409,36 +1629,100 @@ export class C2DEngineDocker extends C2DEngine {
       )
     }
 
-    let response = await fetch(url, { headers })
+    // Synchronous guard: reject IP literals and localhost names in the registry URL
+    // up front before any connection is attempted.
+    const registryUrlSsrfErr = checkUrlHost(url, this.config)
+    if (registryUrlSsrfErr) {
+      throw new Error(`Registry URL is not reachable: ${registryUrlSsrfErr}`)
+    }
+    const safeDispatcher = getSafeDispatcher(this.config)
+    let response = await fetchHeadersTimeout(
+      url,
+      { headers, dispatcher: safeDispatcher },
+      30000
+    )
 
     if (response.status === 401) {
       const match = (response.headers.get('www-authenticate') || '').match(
         /Bearer realm="([^"]+)",service="([^"]+)"/
       )
       if (match) {
+        // Guard against a malicious registry directing us to fetch an internal URL
+        // via the www-authenticate realm field.
+        const realmSsrfErr = checkUrlHost(match[1], this.config)
+        if (realmSsrfErr) {
+          CORE_LOGGER.warn(
+            `getDockerManifest: rejecting www-authenticate realm ${match[1]} for ${image}: ${realmSsrfErr}`
+          )
+          throw new Error(`Registry token endpoint is not reachable: ${realmSsrfErr}`)
+        }
         const tokenUrl = new URL(match[1])
+
+        // ON-18: never forward the operator's Basic registry credentials to a token-endpoint
+        // (`www-authenticate` realm) host the registry does not own. A malicious/misconfigured
+        // registry can point `realm` at an arbitrary host to harvest those credentials.
+        // Standard registries legitimately serve the token endpoint on a DIFFERENT host than
+        // the registry (Docker Hub: registry-1.docker.io -> auth.docker.io; GitLab:
+        // registry.gitlab.com -> gitlab.com). Those well-known realm hosts are trusted via the
+        // built-in KNOWN_REGISTRY_REALM_HOSTS map (so authenticated pulls from them work), and an
+        // operator can trust additional realm hosts via ALLOWED_DOCKER_REGISTRY_REALMS — kept
+        // SEPARATE from ALLOWED_DOCKER_REGISTRIES so trusting a realm does not enable allow-list
+        // mode. When the realm host is not trusted the token is fetched ANONYMOUSLY (public pulls
+        // keep working, credentials are never leaked). Credentials are sent only over https.
+        const registryHost = this.getRegistryHost(registry)
+        const realmHost = this.normalizeRegistryHost(tokenUrl.host)
+        const allowedRegistries = (this.getConfig()?.allowedDockerRegistries || []).map(
+          (entry) => this.normalizeRegistryHost(entry)
+        )
+        const knownRealmHosts =
+          C2DEngineDocker.KNOWN_REGISTRY_REALM_HOSTS[registryHost] || []
+        const extraRealmHosts = (this.getConfig()?.allowedDockerRegistryRealms || []).map(
+          (entry) => this.normalizeRegistryHost(entry)
+        )
+        const realmTrusted =
+          realmHost === registryHost ||
+          knownRealmHosts.includes(realmHost) ||
+          extraRealmHosts.includes(realmHost) ||
+          allowedRegistries.includes(realmHost)
+
         tokenUrl.searchParams.set('service', match[2])
         tokenUrl.searchParams.set('scope', `repository:${name}:pull`)
 
-        // Add Basic auth to token request if we have credentials
+        // Attach Basic auth to the token request only when the realm host is trusted and the
+        // realm is https. `redirect: 'error'` prevents the credential header from following a
+        // redirect off the vetted host.
         const tokenHeaders: Record<string, string> = {}
+        let tokenRedirect: 'follow' | 'error' = 'follow'
         if (dockerRegistryAuth) {
-          // Use auth string if available, otherwise encode username:password
-          const authString = dockerRegistryAuth.auth
-            ? dockerRegistryAuth.auth
-            : Buffer.from(
-                `${dockerRegistryAuth.username}:${dockerRegistryAuth.password}`
-              ).toString('base64')
-          tokenHeaders.Authorization = `Basic ${authString}`
+          if (realmTrusted && tokenUrl.protocol === 'https:') {
+            const authString = dockerRegistryAuth.auth
+              ? dockerRegistryAuth.auth
+              : Buffer.from(
+                  `${dockerRegistryAuth.username}:${dockerRegistryAuth.password}`
+                ).toString('base64')
+            tokenHeaders.Authorization = `Basic ${authString}`
+            tokenRedirect = 'error'
+          } else {
+            CORE_LOGGER.warn(
+              `Not forwarding registry credentials to token realm host "${realmHost}" (registry host "${registryHost}", scheme "${tokenUrl.protocol}"); fetching token anonymously`
+            )
+          }
         }
 
-        const { token } = (await fetch(tokenUrl.toString(), {
-          headers: tokenHeaders
-        }).then((r) => r.json())) as {
+        const tokenResp = await fetchHeadersTimeout(
+          tokenUrl.toString(),
+          { headers: tokenHeaders, redirect: tokenRedirect, dispatcher: safeDispatcher },
+          20000
+        )
+        const { token } = (await tokenResp.json()) as {
           token: string
         }
         headers = { ...headers, Authorization: `Bearer ${token}` }
-        response = await fetch(url, { headers })
+        response = await fetchHeadersTimeout(
+          url,
+          { headers, dispatcher: safeDispatcher },
+          30000
+        )
       }
     }
 
@@ -1463,6 +1747,14 @@ export class C2DEngineDocker extends C2DEngine {
     encryptedDockerRegistryAuth?: string,
     platform?: RunningPlatform
   ): Promise<ValidateParams> {
+    // ON-18: enforce the opt-in registry allow-list BEFORE any local or remote lookup, so a
+    // non-listed registry is rejected without issuing an outbound request.
+    const { registry } = this.parseImage(image)
+    const allowListError = this.checkRegistryAllowList(registry)
+    if (allowListError) {
+      return allowListError
+    }
+
     // Step 1: Try to check local image first
     if (this.docker) {
       try {
@@ -1489,7 +1781,7 @@ export class C2DEngineDocker extends C2DEngine {
           CORE_LOGGER.debug(`Image ${image} found locally and platform is valid`)
           return { valid: true }
         } else {
-          CORE_LOGGER.warn(
+          CORE_LOGGER.debug(
             `Image ${image} found locally but platform mismatch: ` +
               `local=${localPlatform.architecture}/${localPlatform.os}, ` +
               `required=${platform.architecture}/${platform.os}`
@@ -1524,13 +1816,19 @@ export class C2DEngineDocker extends C2DEngine {
 
       return { valid: isValidPlatform }
     } catch (err: any) {
-      CORE_LOGGER.error(`Unable to get Manifest for image ${image}: ${err.message}`)
-      if (err.errors?.length) CORE_LOGGER.error(JSON.stringify(err.errors))
+      // ON-18: keep the detailed upstream registry error (err.errors / err.message) in the
+      // server log ONLY — never reflect it to the caller. initializeCompute is unauthenticated,
+      // so an echoed upstream body would leak registry internals / act as an SSRF oracle.
+      CORE_LOGGER.error(
+        `Manifest for ${image} unavailable: ${errorSummary(err)}${
+          err.errors?.length ? ' ' + safeStringify(err.errors, { maxLength: 500 }) : ''
+        }`
+      )
 
       return {
         valid: false,
         status: 404,
-        reason: err.errors?.length ? JSON.stringify(err.errors) : err.message
+        reason: 'Image manifest could not be retrieved'
       }
     }
   }
@@ -1571,10 +1869,9 @@ export class C2DEngineDocker extends C2DEngine {
     // ex: node@sha256:1155995dda741e93afe4b1c6ced2d01734a6ec69865cc0997daf1f4db7259a36
     if (!image) {
       // send a 500 with the error message
+      // the algorithm object carries file URLs, envs and custom data: never echo it
       throw new Error(
-        `Unable to extract docker image ${image} from algoritm: ${JSON.stringify(
-          algorithm
-        )}`
+        `Unable to extract docker image from algorithm (documentId: ${algorithm?.documentId}, serviceId: ${algorithm?.serviceId})`
       )
     }
     let additionalDockerFiles: { [key: string]: any } = null
@@ -1761,20 +2058,18 @@ export class C2DEngineDocker extends C2DEngine {
       }
     } catch (e) {}
     try {
-      // check if we have an output request.
+      // Buckets have no local archive. Remote storage without upload support can
+      // fall back locally, so discover its archive from disk as well.
       const jobDb = await this.db.getJob(jobId)
-      if (jobDb.length < 1 || (!jobDb[0].output && !jobDb[0].outputBucketId)) {
-        const outputStat = statSync(
-          this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar'
-        )
-        if (outputStat) {
-          res.push({
-            filename: 'outputs.tar',
-            filesize: outputStat.size,
-            type: 'output',
-            index
-          })
+      if (jobDb.length < 1 || !jobDb[0].outputBucketId) {
+        // Prefer new ZIP outputs, while keeping pre-upgrade jobs downloadable.
+        for (const filename of ['outputs.zip', 'outputs.tar']) {
+          const file = path.join(this.getStoragePath(), jobId, 'data/outputs', filename)
+          if (!existsSync(file)) continue
+          const outputStat = statSync(file)
+          res.push({ filename, filesize: outputStat.size, type: 'output', index })
           index = index + 1
+          break
         }
       }
     } catch (e) {}
@@ -1887,13 +2182,21 @@ export class C2DEngineDocker extends C2DEngine {
           }
         }
         if (i.type === 'output') {
+          const file = path.join(this.getStoragePath(), jobId, 'data/outputs', i.filename)
+          const { size } = statSync(file)
+          if (!Number.isSafeInteger(offset) || offset < 0 || offset > size) {
+            throw new Error(
+              `Invalid result offset ${offset} for ${i.filename} (${size} bytes)`
+            )
+          }
           return {
-            stream: createReadStream(
-              this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar',
-              offset > 0 ? { start: offset } : undefined
-            ),
+            stream: createReadStream(file, offset > 0 ? { start: offset } : undefined),
             headers: {
-              'Content-Type': 'application/octet-stream'
+              'Content-Type': i.filename.endsWith('.zip')
+                ? 'application/zip'
+                : 'application/x-tar',
+              'Content-Disposition': `attachment; filename="${jobId}-${i.filename}"`,
+              'Content-Length': String(size - offset)
             }
           }
         }
@@ -1985,17 +2288,24 @@ export class C2DEngineDocker extends C2DEngine {
       }
 
       if (jobs.length > 0) {
-        const promises: any = []
-        for (const job of jobs) {
-          promises.push(this.processJob(job))
-        }
-        // wait for all promises, there is no return
-        await Promise.all(promises)
+        // allSettled, not all: one throwing job used to abort the rest of this tick —
+        // service health check, expiry sweep and GPU snapshot below all stopped running.
+        const results = await Promise.allSettled(jobs.map((job) => this.processJob(job)))
+        results.forEach((result, i) => {
+          if (result.status === 'rejected') {
+            CORE_LOGGER.error(
+              `processJob ${jobs[i].jobId} failed: ${
+                result.reason?.message ?? result.reason
+              }`
+            )
+          }
+        })
       }
 
       // Service-on-Demand health check: catch Running services whose container died on its
       // own (crash, OOM, or Docker daemon down) instead of only noticing at expiresAt.
       const runningServices = await this.checkRunningServices()
+      for (const svc of runningServices ?? []) this.launchServiceDiskCheck(svc)
 
       // Roll this tick's snapshots into one engine-wide line (+ pressure lines) so an admin
       // sees the whole live picture without correlating per-container samples by hand.
@@ -2032,69 +2342,46 @@ export class C2DEngineDocker extends C2DEngine {
       }
 
       // Service-on-Demand expiry: stop services whose paid window has elapsed.
+      // Fire-and-forget like the starts above: the teardown zips a bucket-less service's
+      // /data/outputs (archiveServiceOutputs), which takes as long as the folder is big, and
+      // must not hold up compute jobs, starts, health checks or the other expiries. The
+      // lifecycle lock is held for the whole teardown, so an overlapping tick skips the
+      // service instead of expiring it twice.
       const expiredServices = await this.db.getExpiredServiceJobs(
         this.getC2DConfig().hash
       )
       for (const svc of expiredServices) {
-        CORE_LOGGER.info(`Service ${svc.serviceId} expired — stopping`)
-        let stopped: ServiceJob | null
-        try {
-          // onlyIfExpired: doStopService re-checks expiresAt on the FRESH row under the
-          // lifecycle lock — a SERVICE_EXTEND that landed after our expiredServices
-          // snapshot must not have its service torn down.
-          stopped = await this.stopService(svc.serviceId, svc.owner, true)
-        } catch (e: any) {
-          // Typically the lifecycle lock (a restart/stop already in flight). Marking
-          // Expired without teardown would leak the container/ports, so defer the whole
-          // sweep for this service to the next tick.
-          CORE_LOGGER.error(
-            `Failed to stop expired service ${svc.serviceId}: ${e.message} — retrying next tick`
-          )
-          continue
-        }
-        // Extended mid-sweep (expiresAt is in the future again on the fresh row) — not
-        // expired anymore, regardless of status. Leave it alone.
-        if (stopped && Date.now() < stopped.expiresAt) {
+        // Typically a restart/stop already in flight. Marking Expired without teardown
+        // would leak the container/ports, so defer this service to the next tick.
+        if (!(await this.tryAcquireServiceLifecycleLock(svc.serviceId))) {
           CORE_LOGGER.debug(
-            `Service ${svc.serviceId} was extended after the expiry snapshot — skipping expiry`
+            `Service ${svc.serviceId} expired but has an operation in progress — retrying next tick`
           )
           continue
         }
-        // Flip to Expired ONLY once teardown actually completed. Expired is terminal —
-        // it is never swept again — so marking it while the stop failed mid-way (the
-        // job comes back as Error "stop failed: …" with its container possibly still
-        // running and its ports still reserved) would leak those resources forever.
-        // Left as Error, the job stays in the expirable set and is retried next tick.
-        if (
-          !stopped ||
-          (stopped.status !== ServiceStatusNumber.Stopped &&
-            stopped.status !== ServiceStatusNumber.Expired)
-        ) {
+        // Track the promise so stop() can drain it; clean both trackers when it settles.
+        const expiryPromise = this.expireService(svc).finally(() => {
+          this.serviceOpPromises.delete(expiryPromise)
+          return this.releaseServiceLifecycleLock(svc.serviceId)
+        })
+        this.serviceOpPromises.add(expiryPromise)
+        // expireService logs every expected failure and leaves it to the next tick; only a
+        // DB error can reject it — consume that so it can't surface as unhandled.
+        expiryPromise.catch((e) =>
           CORE_LOGGER.error(
-            `Expired service ${svc.serviceId} teardown did not complete ` +
-              `(status "${stopped?.statusText ?? 'gone'}") — retrying next tick`
+            `expireService ${svc.serviceId} failed unexpectedly: ${e.message} — retrying next tick`
           )
-          continue
-        }
-        // mark the (now stopped) record as Expired so it is not picked up again
-        const [stoppedJob] = await this.db.getServiceJob(svc.serviceId, svc.owner)
-        if (stoppedJob) {
-          stoppedJob.status = ServiceStatusNumber.Expired
-          stoppedJob.statusText = ServiceStatusText[ServiceStatusNumber.Expired]
-          await this.db.updateServiceJob(stoppedJob)
-          // Expired is the ONLY transition that releases the reservation: amounts stop
-          // counting (Expired is not an active status) and the host ports are freed
-          // here. Everywhere else — including an explicit user stop — the paid-for
-          // reservation survives so the service can be restarted on the same endpoints.
-          for (const ep of stoppedJob.endpoints ?? []) releaseHostPort(ep.hostPort)
-          CORE_LOGGER.debug(
-            `Service ${svc.serviceId} marked Expired — all resources released ` +
-              `(ports [${(stoppedJob.endpoints ?? []).map((ep) => ep.hostPort).join(',')}])`
-          )
-        }
+        )
       }
+      CORE_LOGGER.resetThrottle(`c2d-internal-loop-${this.getC2DConfig().hash}`)
     } catch (e) {
-      CORE_LOGGER.error(`Error in C2D InternalLoop: ${e.message}`)
+      // runs every tick: log the first failure, then at most once per interval
+      CORE_LOGGER.throttled(
+        `c2d-internal-loop-${this.getC2DConfig().hash}`,
+        'error',
+        `Error in C2D InternalLoop: ${e.message}`,
+        600_000
+      )
     } finally {
       // Reset the flag before setting the timer
       this.isInternalLoopRunning = false
@@ -2111,15 +2398,21 @@ export class C2DEngineDocker extends C2DEngine {
       const container = await this.docker.createContainer(containerInfo)
       return container
     } catch (e) {
-      CORE_LOGGER.error(`Unable to create docker container: ${e.message}`)
-      if (
+      const retryable =
         e.message
           .toLowerCase()
-          .includes('--storage-opt is supported only for overlay over xfs') &&
-        retry
-      ) {
+          .includes('--storage-opt is supported only for overlay over xfs') && retry
+      if (retryable) {
+        CORE_LOGGER.error(
+          `Container ${containerInfo.name}: disk limit not supported by storage driver (${e.message}), retrying without HostConfig.StorageOpt`
+        )
+      } else {
+        CORE_LOGGER.error(
+          `Unable to create docker container ${containerInfo.name}: ${e.message}`
+        )
+      }
+      if (retryable) {
         delete containerInfo.HostConfig.StorageOpt
-        CORE_LOGGER.info('Retrying again without HostConfig.StorageOpt options...')
         // Retry without that option because it does not work
         return this.createDockerContainer(containerInfo)
       }
@@ -2132,7 +2425,9 @@ export class C2DEngineDocker extends C2DEngine {
       const data = await container.inspect()
       return data.State
     } catch (e) {
-      CORE_LOGGER.error(`Unable to inspect docker container: ${e.message}`)
+      CORE_LOGGER.error(
+        `Unable to inspect docker container ${container?.id ?? ''}: ${e.message}`
+      )
       return null
     }
   }
@@ -2145,13 +2440,18 @@ export class C2DEngineDocker extends C2DEngine {
       await this.docker.createVolume(volume)
       return true
     } catch (e) {
-      CORE_LOGGER.error(`Unable to create docker volume: ${e.message}`)
-      if (
+      const retryable =
         e.message.toLowerCase().includes('quota size requested but no quota support') &&
         retry
-      ) {
+      if (retryable) {
+        CORE_LOGGER.error(
+          `Volume ${volume.Name}: quota not supported by host (${e.message}), retrying without DriverOpts`
+        )
+      } else {
+        CORE_LOGGER.error(`Unable to create docker volume ${volume.Name}: ${e.message}`)
+      }
+      if (retryable) {
         delete volume.DriverOpts
-        CORE_LOGGER.info('Retrying again without DriverOpts options...')
         try {
           return this.createDockerVolume(volume)
         } catch (e) {
@@ -2175,9 +2475,25 @@ export class C2DEngineDocker extends C2DEngine {
   }
 
   private async processJob(job: DBComputeJob) {
-    CORE_LOGGER.info(
+    CORE_LOGGER.debug(
       `Process job ${job.jobId} started: [STATUS: ${job.status}: ${job.statusText}]`
     )
+
+    // An env id is a hash of its fees, so editing fees renames the env and strands every
+    // job already pointing at the old id. Such a job can never run — fail it once here
+    // rather than let each stage below retry or throw on the undefined env.
+    const env = this.envs.find((e) => e.id === job.environment)
+    if (!env) {
+      job.status = C2DStatusNumber.ContainerCreationFailed
+      job.statusText = `Environment ${job.environment} no longer exists`
+      job.isRunning = false
+      job.dateFinished = String(Date.now() / 1000)
+      CORE_LOGGER.error(`Job ${job.jobId} failed: ${job.statusText}`)
+      this.recordJobFinished(job)
+      await this.db.updateJob(job)
+      await this.cleanupJob(job)
+      return
+    }
 
     // has to :
     //  - monitor running containers and stop them if over limits
@@ -2248,6 +2564,7 @@ export class C2DEngineDocker extends C2DEngine {
       try {
         const chainId = job.payment && job.payment.chainId ? job.payment.chainId : null
         const allEnvs = await this.getComputeEnvironments(chainId)
+        // chain-filtered view of the same env (fees narrowed to job.payment.chainId)
         const env = allEnvs.find((e) => e.id === job.environment)
         if (!env) throw new Error(`Environment ${job.environment} not found`)
         await this.checkIfResourcesAreAvailable(job.resources, env, job.isFree, allEnvs)
@@ -2308,8 +2625,7 @@ export class C2DEngineDocker extends C2DEngine {
       // create the volume & create container
       // TO DO C2D:  Choose driver & size
       // get environment-specific resources for Docker device/hardware configuration
-      const env = this.envs.find((e) => e.id === job.environment)
-      const envResource = env?.resources || []
+      const envResource = env.resources || []
       const volume: VolumeCreateOptions = {
         Name: job.jobId + '-volume'
       }
@@ -2421,11 +2737,24 @@ export class C2DEngineDocker extends C2DEngine {
         )
         containerInfo.Entrypoint = newEntrypoint.split(' ')
       }
-      if (job.algorithm.envs) {
-        const envVars: string[] = []
-        for (const key of Object.keys(job.algorithm.envs)) {
-          envVars.push(`${key}=${job.algorithm.envs[key]}`)
-        }
+      // Environment variables for the algorithm container. buildAlgoContainerEnv layers:
+      // algorithm-provided envs, then the node owner's PASS_CONTAINER_ENVS on top (the owner
+      // controls the infrastructure — e.g. HF_ENDPOINT for a local mirror), and finally the
+      // authoritative pod-configuration contract (DIDS + TRANSFORMATION_DID) so the algorithm can
+      // map each /data/inputs/<index> folder back to its input DID. The contract vars are
+      // reserved, so neither the algorithm nor the owner can shadow them.
+      // inputDids: one entry per asset, in /data/inputs/<index> order; raw fileObject inputs
+      // (free compute) have no DID, so their slot is null.
+      const inputDids = (job.assets || []).map((asset) => asset.documentId ?? null)
+      const envVars = buildAlgoContainerEnv(
+        {
+          algoEnvs: job.algorithm.envs,
+          inputDids,
+          transformationDid: job.algorithm.documentId
+        },
+        this.getConfig()?.passContainerEnvs ?? {}
+      )
+      if (envVars.length > 0) {
         containerInfo.Env = envVars
       }
       // persistent Storage: bind-mount bucket files into the job container (localfs backend)
@@ -2442,7 +2771,7 @@ export class C2DEngineDocker extends C2DEngine {
         // DDO-derived persistent-storage assets and skips them.
         const fo = resolved as unknown as { bucketId?: string; fileName?: string }
         if (!fo.bucketId || !fo.fileName) {
-          CORE_LOGGER.error(
+          CORE_LOGGER.info(
             `Job ${job.jobId} asset ${i}: nodePersistentStorage requires bucketId and fileName`
           )
           await this.failJobDataProvisioning(job)
@@ -2450,7 +2779,7 @@ export class C2DEngineDocker extends C2DEngine {
         }
         const ps = OceanNode.getInstance().getPersistentStorage()
         if (!ps) {
-          CORE_LOGGER.error(
+          CORE_LOGGER.info(
             `Job ${job.jobId} asset ${i}: persistent storage is not configured on this node`
           )
           await this.failJobDataProvisioning(job)
@@ -2541,10 +2870,8 @@ export class C2DEngineDocker extends C2DEngine {
         container = this.docker.getContainer(job.jobId + '-algoritm')
         details = await container.inspect()
       } catch (e) {
-        console.error(
-          'Could not retrieve container: ' +
-            e.message +
-            '\nBack to configuring volumes to create the container...'
+        CORE_LOGGER.error(
+          `Job ${job.jobId}: could not retrieve container: ${e.message}, back to configuring volumes to create the container`
         )
         job.isStarted = false
         job.status = C2DStatusNumber.ConfiguringVolumes
@@ -2575,9 +2902,11 @@ export class C2DEngineDocker extends C2DEngine {
                 this.getStoragePath() + '/' + job.jobId + '/data/logs/algorithm.log'
               writeFileSync(algoLogFile, String(e.message))
             } catch (e) {
-              CORE_LOGGER.error('Failed to write algorithm log file: ' + e.message)
+              CORE_LOGGER.error(
+                `Job ${job.jobId}: failed to write algorithm log file: ${e.message}`
+              )
             }
-            CORE_LOGGER.error('Could not start container: ' + e.message)
+            CORE_LOGGER.error(`Job ${job.jobId}: could not start container: ${e.message}`)
             job.status = C2DStatusNumber.AlgorithmFailed
             job.statusText = C2DStatusText.AlgorithmFailed
 
@@ -2625,7 +2954,10 @@ export class C2DEngineDocker extends C2DEngine {
               await container.stop()
             } catch (e) {
               // we should never reach this, unless the container is already stopped or deleted by someone else
-              CORE_LOGGER.debug('Could not stop container: ' + e.message)
+              logDockerCleanupError(
+                e,
+                `Job ${job.jobId}: could not stop container: ${e.message}`
+              )
             }
           }
           job.isStarted = false
@@ -2665,7 +2997,7 @@ export class C2DEngineDocker extends C2DEngine {
       try {
         container = this.docker.getContainer(job.jobId + '-algoritm')
       } catch (e) {
-        CORE_LOGGER.debug('Could not retrieve container: ' + e.message)
+        CORE_LOGGER.error(`Job ${job.jobId}: could not retrieve container: ${e.message}`)
         job.isRunning = false
         job.dateFinished = String(Date.now() / 1000)
         this.recordJobFinished(job)
@@ -2674,7 +3006,9 @@ export class C2DEngineDocker extends C2DEngine {
             this.getStoragePath() + '/' + job.jobId + '/data/logs/algorithm.log'
           writeFileSync(algoLogFile, String(e.message))
         } catch (e) {
-          CORE_LOGGER.error('Failed to write algorithm log file: ' + e.message)
+          CORE_LOGGER.error(
+            `Job ${job.jobId}: failed to write algorithm log file: ${e.message}`
+          )
         }
         await this.db.updateJob(job)
         await this.cleanupJob(job)
@@ -2693,13 +3027,10 @@ export class C2DEngineDocker extends C2DEngine {
       // Reuse the last du(/)-measured disk usage (jobs don't inspect size:true, so buildSnapshot
       // would otherwise fall back to an unset SizeRw and report 0).
       await this.collectJobMetrics(job, job.runtimeMetrics?.disk?.usedBytes, true)
-      const outputsArchivePath =
-        this.getStoragePath() + '/' + job.jobId + '/data/outputs/outputs.tar'
-
       try {
         if (container) {
           if (job.outputBucketId) {
-            CORE_LOGGER.info(
+            CORE_LOGGER.debug(
               `Job ${job.jobId}: results stored in bucket ${job.outputBucketId}`
             )
           } else if (job.output) {
@@ -2718,9 +3049,9 @@ export class C2DEngineDocker extends C2DEngine {
               'upload' in storage &&
               typeof storage.upload === 'function'
             ) {
-              let uploadStream = (await container.getArchive({
-                path: '/data/outputs'
-              })) as unknown as Readable
+              let uploadStream = tarToZip(
+                await container.getArchive({ path: '/data/outputs' })
+              )
               if (output.encryption && output.encryption?.key) {
                 const enc = output.encryption
                 const key = Uint8Array.from(Buffer.from(enc.key, 'hex'))
@@ -2731,27 +3062,23 @@ export class C2DEngineDocker extends C2DEngine {
                 )
               }
               const fname =
-                'outputs-' + this.getC2DConfig().hash + '-' + job.jobId + '.tar'
+                'outputs-' + this.getC2DConfig().hash + '-' + job.jobId + '.zip'
               await (
                 storage as unknown as {
                   upload: (name: string, stream: Readable) => Promise<unknown>
                 }
               ).upload(fname, uploadStream)
             } else {
-              await pipeline(
-                await container.getArchive({ path: '/data/outputs' }),
-                createWriteStream(outputsArchivePath)
-              )
+              await this.archiveComputeOutputs(container, job.jobId)
             }
           } else {
-            await pipeline(
-              await container.getArchive({ path: '/data/outputs' }),
-              createWriteStream(outputsArchivePath)
-            )
+            await this.archiveComputeOutputs(container, job.jobId)
           }
         }
       } catch (e) {
-        CORE_LOGGER.error('Failed to get outputs archive: ' + e.message)
+        CORE_LOGGER.error(
+          `Job ${job.jobId}: failed to get outputs archive: ${errorSummary(e)}`
+        )
         job.status = C2DStatusNumber.ResultsUploadFailed
         job.statusText = C2DStatusText.ResultsUploadFailed
       }
@@ -2760,6 +3087,24 @@ export class C2DEngineDocker extends C2DEngine {
       this.recordJobFinished(job)
       await this.db.updateJob(job)
       await this.cleanupJob(job)
+    }
+  }
+
+  private async archiveComputeOutputs(
+    container: Dockerode.Container,
+    jobId: string
+  ): Promise<void> {
+    const folder = path.join(this.getStoragePath(), jobId, 'data/outputs')
+    const file = path.join(folder, 'outputs.zip')
+    const partial = file + '.partial'
+    try {
+      const tar = await container.getArchive({ path: '/data/outputs' })
+      mkdirSync(folder, { recursive: true })
+      await pipeline(tarToZip(tar), createWriteStream(partial))
+      renameSync(partial, file)
+    } catch (e) {
+      rmSync(partial, { force: true })
+      throw e
     }
   }
 
@@ -2819,7 +3164,7 @@ export class C2DEngineDocker extends C2DEngine {
     const existing = this.cpuAllocations.get(jobId)
     if (existing && existing.length > 0) {
       const cpusetStr = existing.join(',')
-      CORE_LOGGER.info(
+      CORE_LOGGER.debug(
         `CPU affinity: reusing existing cores [${cpusetStr}] for job ${jobId}`
       )
       return cpusetStr
@@ -2849,14 +3194,14 @@ export class C2DEngineDocker extends C2DEngine {
 
     this.cpuAllocations.set(jobId, freeCores)
     const cpusetStr = freeCores.join(',')
-    CORE_LOGGER.info(`CPU affinity: allocated cores [${cpusetStr}] to job ${jobId}`)
+    CORE_LOGGER.debug(`CPU affinity: allocated cores [${cpusetStr}] to job ${jobId}`)
     return cpusetStr
   }
 
   private releaseCpus(jobId: string): void {
     const cores = this.cpuAllocations.get(jobId)
     if (cores) {
-      CORE_LOGGER.info(
+      CORE_LOGGER.debug(
         `CPU affinity: released cores [${cores.join(',')}] from job ${jobId}`
       )
       this.cpuAllocations.delete(jobId)
@@ -2879,7 +3224,7 @@ export class C2DEngineDocker extends C2DEngine {
             const cores = this.parseCpusetString(cpuset)
             if (cores.length > 0) {
               this.cpuAllocations.set(job.jobId, cores)
-              CORE_LOGGER.info(
+              CORE_LOGGER.debug(
                 `CPU affinity: recovered allocation [${cpuset}] for running job ${job.jobId}`
               )
             }
@@ -2914,7 +3259,7 @@ export class C2DEngineDocker extends C2DEngine {
             const cores = this.parseCpusetString(cpuset)
             if (cores.length > 0) {
               this.cpuAllocations.set(job.serviceId, cores)
-              CORE_LOGGER.info(
+              CORE_LOGGER.debug(
                 `CPU affinity: recovered allocation [${cpuset}] for running service ${job.serviceId}`
               )
             }
@@ -2956,7 +3301,11 @@ export class C2DEngineDocker extends C2DEngine {
         await container.remove()
       }
     } catch (e) {
-      // console.error('Container not found! ' + e.message)
+      if (!isBenignDockerError(e)) {
+        CORE_LOGGER.error(
+          `Job ${job.jobId}: failed to remove container ${job.jobId}-algoritm: ${e.message}`
+        )
+      }
     }
     try {
       const volume = this.docker.getVolume(job.jobId + '-volume')
@@ -2964,11 +3313,15 @@ export class C2DEngineDocker extends C2DEngine {
         try {
           await volume.remove()
         } catch (e) {
-          CORE_LOGGER.error('Failed to remove volume: ' + e.message)
+          // 404: already removed by an earlier cleanup pass
+          logDockerCleanupError(
+            e,
+            `Job ${job.jobId}: failed to remove volume ${job.jobId}-volume: ${e.message}`
+          )
         }
       }
     } catch (e) {
-      CORE_LOGGER.error('Container volume not found! ' + e.message)
+      CORE_LOGGER.error(`Job ${job.jobId}: container volume not found: ${e.message}`)
     }
     try {
       // remove folders
@@ -2977,10 +3330,8 @@ export class C2DEngineDocker extends C2DEngine {
         force: true
       })
     } catch (e) {
-      console.error(
-        `Could not delete inputs from path ${this.getStoragePath()} for job ID ${
-          job.jobId
-        }! ` + e.message
+      CORE_LOGGER.error(
+        `Job ${job.jobId}: could not delete inputs from ${this.getStoragePath()}: ${e.message}`
       )
     }
     try {
@@ -2989,9 +3340,8 @@ export class C2DEngineDocker extends C2DEngine {
         force: true
       })
     } catch (e) {
-      console.error(
-        `Could not delete algorithms from path ${this.getStoragePath()} for job ID ${job.jobId}! ` +
-          e.message
+      CORE_LOGGER.error(
+        `Job ${job.jobId}: could not delete algorithms from ${this.getStoragePath()}: ${e.message}`
       )
     }
   }
@@ -3028,7 +3378,7 @@ export class C2DEngineDocker extends C2DEngine {
       const actualBaseSize = (await this.getContainerDiskUsage(container.id, '/')) ?? 0
       this.jobImageSizes.set(job.jobId, actualBaseSize)
 
-      CORE_LOGGER.info(
+      CORE_LOGGER.debug(
         `Base container ${job.containerImage} runtime size: ${(
           actualBaseSize /
           1024 /
@@ -3037,7 +3387,9 @@ export class C2DEngineDocker extends C2DEngine {
         ).toFixed(2)}GB`
       )
     } catch (error) {
-      CORE_LOGGER.error(`Failed to measure base container size: ${error.message}`)
+      CORE_LOGGER.error(
+        `Job ${job.jobId}: failed to measure base container size: ${error.message}`
+      )
       this.jobImageSizes.set(job.jobId, 0)
     }
   }
@@ -3047,7 +3399,8 @@ export class C2DEngineDocker extends C2DEngine {
   // never report an unmeasurable container as "0 bytes used".
   private async getContainerDiskUsage(
     containerName: string,
-    path: string = '/data'
+    path: string = '/data',
+    timeoutMs?: number
   ): Promise<number | null> {
     try {
       const container = this.docker.getContainer(containerName)
@@ -3059,22 +3412,47 @@ export class C2DEngineDocker extends C2DEngine {
         return null
       }
 
+      // Without a TTY, Docker's 8-byte stream headers can read as digits prepended to the size.
       const exec = await container.exec({
         Cmd: ['du', '-sb', path],
         AttachStdout: true,
-        AttachStderr: true
+        AttachStderr: true,
+        Tty: true
       })
 
-      const stream = await exec.start({ Detach: false, Tty: false })
+      const stream = await exec.start({ Detach: false, Tty: true })
 
+      let timedOut = false
+      const timer =
+        timeoutMs !== undefined
+          ? setTimeout(() => {
+              timedOut = true
+              stream.destroy()
+            }, timeoutMs)
+          : undefined
       const chunks: Buffer[] = []
-      for await (const chunk of stream) {
-        chunks.push(chunk as Buffer)
+      try {
+        for await (const chunk of stream) {
+          chunks.push(chunk as Buffer)
+        }
+      } catch (error) {
+        if (!timedOut) {
+          throw error
+        }
+      } finally {
+        clearTimeout(timer)
+      }
+      if (timedOut) {
+        CORE_LOGGER.warn(
+          `du ${path} in ${containerName} did not finish within ${timeoutMs / 1000}s`
+        )
+        return null
       }
 
       const output = Buffer.concat(chunks).toString()
 
-      const match = output.match(/(\d+)\s/)
+      // The size line follows any "du: cannot access" lines, which the TTY merges in.
+      const match = output.match(/^(\d+)\t/m)
       return match ? parseInt(match[1], 10) : null
     } catch (error) {
       CORE_LOGGER.error(
@@ -3114,21 +3492,24 @@ export class C2DEngineDocker extends C2DEngine {
       100
     ).toFixed(1)
 
-    CORE_LOGGER.info(
+    CORE_LOGGER.debug(
       `Job ${job.jobId.slice(-8)} disk: ${usageGB}GB / ${quotaGB}GB (${usagePercent}%)`
     )
 
     if (algorithmUsage / 1024 / 1024 / 1024 > diskQuota) {
-      CORE_LOGGER.warn(
-        `DISK QUOTA EXCEEDED - Stopping job ${job.jobId}: ${usageGB}GB used, ${quotaGB}GB allowed`
+      CORE_LOGGER.info(
+        `Job ${job.jobId} stopped: disk quota exceeded (${usageGB}GB / ${quotaGB}GB)`
       )
 
       try {
         const container = this.docker.getContainer(containerName)
         await container.stop()
-        CORE_LOGGER.info(`Container stopped for job ${job.jobId}`)
+        CORE_LOGGER.debug(`Container stopped for job ${job.jobId}`)
       } catch (e) {
-        CORE_LOGGER.warn(`Could not stop container: ${e.message}`)
+        logDockerCleanupError(
+          e,
+          `Job ${job.jobId}: could not stop container after disk quota exceeded: ${e.message}`
+        )
       }
 
       job.status = C2DStatusNumber.DiskQuotaExceeded
@@ -3144,7 +3525,6 @@ export class C2DEngineDocker extends C2DEngine {
       this.recordJobFinished(job)
       await this.db.updateJob(job)
       await this.cleanupJob(job)
-      CORE_LOGGER.info(`Job ${job.jobId} terminated - DISK QUOTA EXCEEDED`)
 
       return { canContinue: false, usedBytes: algorithmUsage }
     }
@@ -3174,12 +3554,23 @@ export class C2DEngineDocker extends C2DEngine {
   // turn a successful finalization into a failed one.
   private recordJobFinished(job: DBComputeJob): void {
     try {
+      // disk quota and image build failures already log their cause at info
+      if (
+        job.status !== C2DStatusNumber.DiskQuotaExceeded &&
+        job.status !== C2DStatusNumber.BuildImageFailed
+      ) {
+        CORE_LOGGER.info(`Job ${job.jobId} finished: ${job.statusText}`)
+      }
       cJobsFinished.add(1, {
         engine: this.getC2DConfig().hash,
         status: C2DStatusNumber[job.status] ?? String(job.status)
       })
     } catch (e: any) {
-      CORE_LOGGER.debug(`[metrics] jobs.finished counter failed: ${e?.message}`)
+      CORE_LOGGER.throttled(
+        'metrics:jobs-finished',
+        'warn',
+        `[metrics] jobs.finished counter failed: ${e?.message}`
+      )
     }
   }
 
@@ -3214,7 +3605,11 @@ export class C2DEngineDocker extends C2DEngine {
         powerWatts: g.powerWatts
       }))
     } catch (e: any) {
-      CORE_LOGGER.debug(`[metrics] host gpu sample failed: ${e?.message}`)
+      CORE_LOGGER.throttled(
+        'metrics:host-gpu',
+        'warn',
+        `[metrics] host gpu sample failed: ${e?.message}`
+      )
     }
   }
 
@@ -3401,7 +3796,11 @@ export class C2DEngineDocker extends C2DEngine {
         gpus: Array.from(gpuByResourceId.values())
       }
     } catch (e: any) {
-      CORE_LOGGER.debug(`[metrics] summary failed: ${e?.message}`)
+      CORE_LOGGER.throttled(
+        'metrics:summary',
+        'warn',
+        `[metrics] summary failed: ${e?.message}`
+      )
     }
   }
 
@@ -3450,12 +3849,16 @@ export class C2DEngineDocker extends C2DEngine {
           Number.isFinite(runtimeSeconds) &&
           runtimeSeconds > getMetricsIntervalSeconds() * 2
         ) {
-          CORE_LOGGER.warn(
+          // repeats every metrics interval while the condition holds: warn once per job
+          CORE_LOGGER.throttled(
+            `metrics-no-snapshot-${job.jobId}`,
+            'warn',
             `[metrics] job ${job.jobId}: no previous snapshot after ${runtimeSeconds.toFixed(
               0
             )}s of runtime — the snapshot is not being persisted, so cpu usagePercent stays 0 ` +
               'and the owner status response carries no runtimeMetrics. Check that this node runs ' +
-              'a build where runtimeMetrics is part of the c2djobs body blob.'
+              'a build where runtimeMetrics is part of the c2djobs body blob.',
+            24 * 3_600_000
           )
         } else {
           CORE_LOGGER.debug(
@@ -3466,7 +3869,11 @@ export class C2DEngineDocker extends C2DEngine {
       }
       return true
     } catch (e: any) {
-      CORE_LOGGER.debug(`[metrics] job ${job.jobId}: collection failed: ${e?.message}`)
+      CORE_LOGGER.throttled(
+        'metrics:job-collection',
+        'warn',
+        `[metrics] job ${job.jobId}: collection failed: ${e?.message}`
+      )
       return false
     }
   }
@@ -3524,7 +3931,6 @@ export class C2DEngineDocker extends C2DEngine {
       pullOptions.abortSignal = controller.signal
       const pullStream = await this.docker.pull(job.containerImage, pullOptions)
       await new Promise((resolve, reject) => {
-        let wroteStatusBanner = false
         this.docker.modem.followProgress(
           pullStream,
           (err: any, res: any) => {
@@ -3538,17 +3944,12 @@ export class C2DEngineDocker extends C2DEngine {
             appendFileSync(imageLogFile, logText + '\n')
             // Track image usage
             this.updateImageUsage(job.containerImage).catch((e) => {
-              CORE_LOGGER.debug(`Failed to track image usage: ${e.message}`)
+              CORE_LOGGER.error(`Failed to track image usage: ${e.message}`)
             })
             resolve(res)
           },
           (progress: any) => {
             // onProgress
-            if (!wroteStatusBanner) {
-              wroteStatusBanner = true
-              CORE_LOGGER.debug('############# Pull docker image status: ##############')
-            }
-            // only write the status banner once, its cleaner
             let logText = ''
             if (progress.id) logText += progress.id + ' : ' + progress.status
             else logText = progress.status
@@ -3562,7 +3963,7 @@ export class C2DEngineDocker extends C2DEngine {
       this.db.updateJob(job)
     } catch (err) {
       const logText = `Unable to pull docker image: ${job.containerImage}: ${err.message}`
-      CORE_LOGGER.error(logText)
+      CORE_LOGGER.error(`Job ${job.jobId}: ${logText}`)
       appendFileSync(imageLogFile, logText)
       job.status = C2DStatusNumber.PullImageFailed
       job.statusText = C2DStatusText.PullImageFailed
@@ -3577,6 +3978,125 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
+  // Validates a user-supplied additionalDockerFiles entry name before it is written into the
+  // build-context tar. An untrusted name could otherwise escape the build context (absolute
+  // path, `..` traversal, backslash separators, Windows drive), overwrite the Dockerfile /
+  // .dockerignore we control, or smuggle control characters. Throws on anything suspicious so
+  // the whole build fails rather than silently dropping the file. Returns the normalised,
+  // build-context-relative name.
+  private sanitizeDockerfileEntryName(name: string): string {
+    if (typeof name !== 'string')
+      throw new Error('additionalDockerFiles: entry name must be a string')
+    const trimmed = name.trim()
+    if (!trimmed)
+      throw new Error('additionalDockerFiles: empty entry name is not allowed')
+    // Reject NUL and other control characters (charCode < 32).
+    for (let i = 0; i < trimmed.length; i++) {
+      if (trimmed.charCodeAt(i) < 32)
+        throw new Error(
+          `additionalDockerFiles: control character in entry name "${name}" is not allowed`
+        )
+    }
+    if (trimmed.includes('\\'))
+      throw new Error(
+        `additionalDockerFiles: backslash in entry name "${name}" is not allowed`
+      )
+    // Normalise posix-style, then strip a single leading "./".
+    let norm = path.posix.normalize(trimmed)
+    if (norm.startsWith('./')) norm = norm.slice(2)
+    // After normalising/stripping, a bare "." or an empty string names no file (it refers to
+    // the build-context root itself), so reject it rather than returning a useless tar entry.
+    if (norm === '' || norm === '.')
+      throw new Error(
+        `additionalDockerFiles: entry name "${name}" does not name a file in the build context`
+      )
+    if (norm.startsWith('/'))
+      throw new Error(
+        `additionalDockerFiles: absolute path "${name}" is not allowed in the build context`
+      )
+    if (norm === '..' || norm.startsWith('../'))
+      throw new Error(
+        `additionalDockerFiles: path traversal ("..") in entry name "${name}" is not allowed`
+      )
+    if (/^[A-Za-z]:/.test(norm))
+      throw new Error(
+        `additionalDockerFiles: Windows drive path "${name}" is not allowed`
+      )
+    if (norm.endsWith('/'))
+      throw new Error(`additionalDockerFiles: directory entry "${name}" is not allowed`)
+    const lower = norm.toLowerCase()
+    if (lower === 'dockerfile' || lower === '.dockerignore')
+      throw new Error(
+        `additionalDockerFiles: entry name "${name}" would overwrite a reserved build file`
+      )
+    return norm
+  }
+
+  // Resolves the image-build abort budget: the configured value (or the shared default), never
+  // exceeding the job/service runtime duration. Guards against a non-finite OR non-positive
+  // duration (NaN, Infinity, 0, negative) so the AbortController timer can never be fed NaN or a
+  // value that would abort the build instantly.
+  private resolveBuildTimeoutSeconds(
+    configured: number | undefined,
+    jobDurationSeconds: number
+  ): number {
+    const base = configured ?? DEFAULT_BUILD_TIMEOUT_SECONDS
+    if (!Number.isFinite(jobDurationSeconds) || jobDurationSeconds <= 0) return base
+    return Math.min(base, jobDurationSeconds)
+  }
+
+  // Rejects as soon as `signal` aborts, so an await that does not itself observe the signal
+  // (docker inspect, the Trivy scan) cannot hang a job past its build budget or ignore a stop
+  // request. The underlying docker/Trivy call is not truly cancelled and keeps running in the
+  // background, but the job settles (→ BuildImageFailed) and cleanup proceeds.
+  private withAbortSignal<T>(signal: AbortSignal, promise: Promise<T>): Promise<T> {
+    const abortError = () => {
+      const err = new Error('Image build aborted') as NodeJS.ErrnoException
+      err.code = 'ABORT_ERR'
+      err.name = 'AbortError'
+      return err
+    }
+    if (signal.aborted) {
+      // Attach a no-op handler so a later rejection of the already-running promise does not
+      // surface as an unhandled rejection (which can crash the process). The underlying
+      // docker/Trivy call keeps running in the background; we just stop observing it.
+      promise.catch(() => {})
+      return Promise.reject(abortError())
+    }
+    let onAbort: () => void
+    const abortPromise = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(abortError())
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    return Promise.race([promise, abortPromise]).finally(() => {
+      signal.removeEventListener('abort', onAbort)
+    }) as Promise<T>
+  }
+
+  // Shared Trivy gate for freshly-built images. When image scanning is on, scan the image and,
+  // if vulnerable, remove it (swallowing removal errors) and throw so the build fails. A no-op
+  // when scanning is disabled. An optional abort signal bounds the scan so a hung Trivy run
+  // cannot stall the job past its build budget or a stop request.
+  private async scanAndRemoveIfVulnerable(
+    imageRef: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!this.scanImages) return
+    const scan = this.checkImageVulnerability(imageRef)
+    const scanResult = signal ? await this.withAbortSignal(signal, scan) : await scan
+    if (scanResult.vulnerable) {
+      await this.docker
+        .getImage(imageRef)
+        .remove({ force: true })
+        .catch(() => {})
+      // Drop any usage record so cleanupOldImages does not later chase a now-removed image.
+      await this.db.deleteImage(imageRef).catch(() => {})
+      throw new Error(
+        `Image "${imageRef}" failed security scan: ${JSON.stringify(scanResult.summary)}`
+      )
+    }
+  }
+
   private async buildImage(
     originaljob: DBComputeJob,
     additionalDockerFiles: { [key: string]: any }
@@ -3584,7 +4104,21 @@ export class C2DEngineDocker extends C2DEngine {
     const job = JSON.parse(JSON.stringify(originaljob)) as DBComputeJob
     const imageLogFile = this.getStoragePath() + '/' + job.jobId + '/data/logs/image.log'
     const controller = new AbortController()
-    const timeoutMs = job.maxJobDuration * 1000
+    // Image build gets its own short budget, SEPARATE from the job's full runtime duration: a
+    // build should take minutes, so a short cap limits how long an untrusted Dockerfile can keep
+    // the daemon busy. Free and paid jobs read DIFFERENT per-env knobs (a free-tier setting must
+    // not govern paid builds): free → env.free.buildTimeoutSeconds, paid → env.buildTimeoutSeconds.
+    // Both fall back to the daemon-wide serviceOnDemand value, then the default, and neither may
+    // exceed the job's own maxJobDuration.
+    const env = this.envs.find((e) => e.id === job.environment)
+    const configuredBuildTimeout =
+      (job.isFree ? env?.free?.buildTimeoutSeconds : env?.buildTimeoutSeconds) ??
+      this.getC2DConfig().connection?.serviceOnDemand?.buildTimeoutSeconds
+    const buildTimeoutSeconds = this.resolveBuildTimeoutSeconds(
+      configuredBuildTimeout,
+      job.maxJobDuration
+    )
+    const timeoutMs = buildTimeoutSeconds * 1000
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     this.activeBuildAborts.set(job.jobId, controller)
     try {
@@ -3594,8 +4128,15 @@ export class C2DEngineDocker extends C2DEngine {
       pack.entry({ name: 'Dockerfile' }, job.algorithm.meta.container.dockerfile)
       // Append any additional files to the tar archive
       if (additionalDockerFiles) {
+        const seenNames = new Set<string>()
         for (const filePath of Object.keys(additionalDockerFiles)) {
-          pack.entry({ name: filePath }, additionalDockerFiles[filePath])
+          const safeName = this.sanitizeDockerfileEntryName(filePath)
+          if (seenNames.has(safeName))
+            throw new Error(
+              `additionalDockerFiles: duplicate entry name "${safeName}" in build context`
+            )
+          seenNames.add(safeName)
+          pack.entry({ name: safeName }, additionalDockerFiles[filePath])
         }
       }
       pack.finalize()
@@ -3660,27 +4201,9 @@ export class C2DEngineDocker extends C2DEngine {
         }
         controller.signal.addEventListener('abort', onAbort, { once: true })
         const onSuccess = () => {
-          finish(async () => {
+          finish(() => {
             detachBuildLog()
             controller.signal.removeEventListener('abort', onAbort)
-
-            // Build stream completed, but does the image actually exist?
-            try {
-              await this.docker.getImage(job.containerImage).inspect()
-            } catch (e) {
-              return reject(
-                new Error(
-                  `Cannot find image '${job.containerImage}' after building. Most likely it failed: ${
-                    (e as Error)?.message || String(e)
-                  }`
-                )
-              )
-            }
-
-            CORE_LOGGER.debug(`Image '${job.containerImage}' built successfully.`)
-            this.updateImageUsage(job.containerImage).catch((e) => {
-              CORE_LOGGER.debug(`Failed to track image usage: ${e.message}`)
-            })
             resolve()
           })
         }
@@ -3697,6 +4220,43 @@ export class C2DEngineDocker extends C2DEngine {
           })
         })
       })
+
+      // The build stream completed. Run the existence check and the vulnerability scan OUTSIDE
+      // the stream callback. Neither call observes the abort signal on its own, so wrap them in
+      // controller.signal: without this a hung inspect/scan would NOT be bounded by the outer
+      // try/catch (which only catches a *throwing* scan, not a hung one) and the job would stall,
+      // unresponsive to the build timer and to stop requests. On abort/timeout they reject →
+      // outer catch → BuildImageFailed → cleanup.
+      try {
+        await this.withAbortSignal(
+          controller.signal,
+          this.docker.getImage(job.containerImage).inspect()
+        )
+      } catch (e) {
+        // Preserve the abort classification so the outer catch reports a timeout, not a missing image.
+        if ((e as NodeJS.ErrnoException)?.code === 'ABORT_ERR') throw e
+        throw new Error(
+          `Cannot find image '${job.containerImage}' after building. Most likely it failed: ${
+            (e as Error)?.message || String(e)
+          }`
+        )
+      }
+
+      // Record image usage as soon as the build is confirmed on disk (inspect succeeded),
+      // BEFORE the vulnerability scan. A scan that throws for any reason other than "vulnerable"
+      // (Trivy error, abort/timeout) must not leave the built image on disk untracked —
+      // otherwise cleanupOldImages never reclaims it and it lingers indefinitely. Awaited so
+      // the record is persisted before a vulnerable image can be removed (and un-recorded) below.
+      // updateImageUsage swallows its own errors, so this never throws.
+      await this.updateImageUsage(job.containerImage)
+
+      // Image scanning — same Trivy gate used by the service build path, bounded by the same
+      // abort signal. On a vulnerable image this removes it (and its usage record) and throws,
+      // so the job fails like any other build failure.
+      await this.scanAndRemoveIfVulnerable(job.containerImage, controller.signal)
+
+      CORE_LOGGER.debug(`Image '${job.containerImage}' built successfully.`)
+
       job.status = C2DStatusNumber.ConfiguringVolumes
       job.statusText = C2DStatusText.ConfiguringVolumes
       job.buildStopTimestamp = String(Date.now() / 1000)
@@ -3708,12 +4268,12 @@ export class C2DEngineDocker extends C2DEngine {
       if (aborted) {
         // timeout-specific handling
         const msg = `Image build timed out after ${timeoutMs / 1000}s`
-        CORE_LOGGER.error(`Unable to build docker image: ${job.containerImage}: ${msg}`)
+        CORE_LOGGER.error(
+          `Job ${job.jobId}: image build timed out after ${timeoutMs / 1000}s`
+        )
         appendFileSync(imageLogFile, msg)
       } else {
-        CORE_LOGGER.error(
-          `Unable to build docker image: ${job.containerImage}: ${err.message}`
-        )
+        CORE_LOGGER.error(`Job ${job.jobId}: image build failed: ${err.message}`)
         appendFileSync(imageLogFile, String(err.message))
       }
       job.status = C2DStatusNumber.BuildImageFailed
@@ -3737,12 +4297,20 @@ export class C2DEngineDocker extends C2DEngine {
   private async pullImageRef(
     imageRef: string,
     encryptedDockerRegistryAuth?: string,
-    logFile?: string
+    logFile?: string,
+    onProgress?: (progress: ServiceImagePullProgress) => void
   ): Promise<void> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.getImagePullTimeoutMs())
     try {
       const { registry } = this.parseImage(imageRef)
+      // ON-18: enforce ALLOWED_DOCKER_REGISTRIES on the service-on-demand pull path too
+      // (the image ref here is caller-supplied via SERVICE_START). Without this the allow-list
+      // would only constrain compute-algorithm images, leaving service pulls unconstrained.
+      const allowListError = this.checkRegistryAllowList(registry)
+      if (allowListError) {
+        throw new Error(allowListError.reason)
+      }
       let dockerRegistryAuthForPull: any
       if (encryptedDockerRegistryAuth) {
         const decryptedDockerRegistryAuth = await this.keyManager.decrypt(
@@ -3776,6 +4344,10 @@ export class C2DEngineDocker extends C2DEngine {
       }
 
       const pullStream = await this.docker.pull(imageRef, pullOptions)
+      // Per-layer byte accounting, aggregated from the daemon's own progress events. Only built
+      // when someone is listening (service starts) — the compute path passes no callback and so
+      // keeps its previous, allocation-free behaviour.
+      const tracker = onProgress ? new ImagePullTracker(onProgress) : null
       await new Promise<void>((resolve, reject) => {
         this.docker.modem.followProgress(
           pullStream,
@@ -3784,15 +4356,17 @@ export class C2DEngineDocker extends C2DEngine {
               if (logFile) appendFileSync(logFile, String(err.message))
               return reject(err)
             }
+            tracker?.finish()
             resolve()
           },
           (progress: any) => {
             if (logFile) appendFileSync(logFile, (progress.status ?? '') + '\n')
+            tracker?.onEvent(progress)
           }
         )
       })
       this.updateImageUsage(imageRef).catch((e) => {
-        CORE_LOGGER.debug(`Failed to track image usage: ${e.message}`)
+        CORE_LOGGER.error(`Failed to track image usage: ${e.message}`)
       })
 
       // Image scanning — same Trivy check used by the compute path.
@@ -3828,8 +4402,16 @@ export class C2DEngineDocker extends C2DEngine {
     try {
       const pack = tarStream.pack()
       pack.entry({ name: 'Dockerfile' }, dockerfile)
-      for (const [name, content] of Object.entries(additionalDockerFiles))
-        pack.entry({ name }, content)
+      const seenNames = new Set<string>()
+      for (const [name, content] of Object.entries(additionalDockerFiles)) {
+        const safeName = this.sanitizeDockerfileEntryName(name)
+        if (seenNames.has(safeName))
+          throw new Error(
+            `additionalDockerFiles: duplicate entry name "${safeName}" in build context`
+          )
+        seenNames.add(safeName)
+        pack.entry({ name: safeName }, content)
+      }
       pack.finalize()
 
       const buildOptions: Dockerode.ImageBuildOptions = {
@@ -3852,23 +4434,16 @@ export class C2DEngineDocker extends C2DEngine {
           err ? reject(err) : resolve()
         )
       })
-      // Verify image exists after build
-      await this.docker.getImage(imageRef).inspect()
+      // Verify image exists after build. Bound by the same abort signal so a hung inspect/scan
+      // cannot stall the service build past its timeout (the plain awaits do not observe it).
+      await this.withAbortSignal(
+        controller.signal,
+        this.docker.getImage(imageRef).inspect()
+      )
 
       // Image scanning — same Trivy gate used by pullImageRef(). A built image must clear
-      // it too; on failure remove the built image so it cannot be used to start a service.
-      if (this.scanImages) {
-        const scanResult = await this.checkImageVulnerability(imageRef)
-        if (scanResult.vulnerable) {
-          await this.docker
-            .getImage(imageRef)
-            .remove({ force: true })
-            .catch(() => {})
-          throw new Error(
-            `Image "${imageRef}" failed security scan: ${JSON.stringify(scanResult.summary)}`
-          )
-        }
-      }
+      // it too; on failure the built image is removed so it cannot be used to start a service.
+      await this.scanAndRemoveIfVulnerable(imageRef, controller.signal)
     } finally {
       clearTimeout(timer)
     }
@@ -3930,6 +4505,184 @@ export class C2DEngineDocker extends C2DEngine {
     return [await ps.getDockerOutputMountObject(job.outputBucketId, job.owner)]
   }
 
+  private getServiceOutputsFolder(serviceId: string): string {
+    return path.join(this.getStoragePath(), 'services', serviceId)
+  }
+
+  // Makes sure a service without an output bucket has a writable /data/outputs to write its
+  // results to (and that the archive step can read), without touching an existing /data.
+  // Runs on the created, not yet started container. Best-effort: a service that doesn't
+  // write results must not fail to start over it.
+  private async ensureServiceOutputsFolder(
+    job: ServiceJob,
+    container: Dockerode.Container
+  ): Promise<void> {
+    if (job.outputBucketId) return
+    const exists = async (p: string): Promise<boolean> => {
+      try {
+        await container.infoArchive({ path: p })
+        return true
+      } catch (e: any) {
+        if (e?.statusCode === 404) return false
+        throw e
+      }
+    }
+    try {
+      if (await exists(SERVICE_OUTPUTS_PATH)) return
+      const root = (await exists('/data')) ? '/data' : '/'
+      await container.putArchive(await emptyOutputsDirTar(root), { path: root })
+    } catch (e: any) {
+      CORE_LOGGER.error(
+        `service ${job.serviceId}: could not create ${SERVICE_OUTPUTS_PATH}: ${e?.message ?? e}`
+      )
+    }
+  }
+
+  // Zips the container's /data/outputs into <storage>/services/<serviceId>/outputs-<n>.zip and
+  // records it on job.outputArchives, like a compute job's outputs.zip. Must run right before
+  // the container is removed (after it was stopped, so the service flushed its files): the
+  // folder lives in the container's writable layer and is gone with it. Skipped for services
+  // with an output bucket (their results are already in the bucket). Best-effort — never
+  // throws, a failure is only logged; the caller persists the job.
+  private async archiveServiceOutputs(
+    job: ServiceJob,
+    container: Dockerode.Container
+  ): Promise<void> {
+    if (job.outputBucketId) return
+    const archives = job.outputArchives ?? []
+    // A teardown that failed after archiving is retried (e.g. by the expiry sweep every
+    // tick) — the same container must not be archived again.
+    if (archives.some((a) => a.containerId === container.id)) return
+    const index = archives.reduce((next, a) => Math.max(next, a.index + 1), 0)
+    const filename = `outputs-${index}.zip`
+    let partialPath: string | undefined
+    try {
+      const folder = this.getServiceOutputsFolder(job.serviceId)
+      const finalPath = path.join(folder, filename)
+      partialPath = finalPath + '.partial'
+      let tar: NodeJS.ReadableStream
+      try {
+        tar = await container.getArchive({ path: SERVICE_OUTPUTS_PATH })
+      } catch (e: any) {
+        // no /data/outputs in the container, or the container is already gone
+        if (e?.statusCode === 404) {
+          CORE_LOGGER.debug(`service ${job.serviceId}: nothing to archive: ${e.message}`)
+          return
+        }
+        throw e
+      }
+      mkdirSync(folder, { recursive: true })
+      let skipped = 0
+      let empty = false
+      await pipeline(
+        tarToZip(tar, ({ skipped: skippedEntries, files, directories }) => {
+          skipped = skippedEntries
+          empty = files === 0 && directories === 0
+        }),
+        createWriteStream(partialPath)
+      )
+      // Nothing written: an entry that downloads as an empty zip would only be noise.
+      if (empty) {
+        rmSync(partialPath, { force: true })
+        CORE_LOGGER.debug(`service ${job.serviceId}: ${SERVICE_OUTPUTS_PATH} empty`)
+        return
+      }
+      renameSync(partialPath, finalPath)
+      const { size } = statSync(finalPath)
+      job.outputArchives = [
+        ...archives,
+        {
+          index,
+          filename,
+          filesize: size,
+          createdAt: Date.now(),
+          containerId: container.id
+        }
+      ]
+      CORE_LOGGER.info(
+        `service ${job.serviceId}: archived ${SERVICE_OUTPUTS_PATH} to ${filename}, ` +
+          `${size} bytes` +
+          (skipped ? `, ${skipped} symlink/special/unsafe entries skipped` : '')
+      )
+    } catch (e: any) {
+      if (partialPath) rmSync(partialPath, { force: true })
+      CORE_LOGGER.error(
+        `service ${job.serviceId}: failed to archive ${SERVICE_OUTPUTS_PATH}: ${
+          e?.message ?? e
+        }`
+      )
+    }
+  }
+
+  // Streams a container's /data/outputs into another one — created, not yet started — as a
+  // tar straight between the two, so a restart keeps what the service wrote. The source may be
+  // stopped and off its (already removed) network: Docker reads a stopped container's
+  // filesystem all the same. The target's /data must exist (ensureServiceOutputsFolder).
+  // Returns false when the source has no /data/outputs.
+  private async copyServiceOutputs(
+    from: Dockerode.Container,
+    to: Dockerode.Container
+  ): Promise<boolean> {
+    let tar: NodeJS.ReadableStream
+    try {
+      tar = await from.getArchive({ path: SERVICE_OUTPUTS_PATH })
+    } catch (e: any) {
+      if (e?.statusCode === 404) return false
+      throw e
+    }
+    await to.putArchive(tar, { path: path.posix.dirname(SERVICE_OUTPUTS_PATH) })
+    return true
+  }
+
+  // HF mirror env + client-patch archive for a service container (serviceHfMirror.ts). A
+  // no-op plan when the node has no HF mirror config.
+  private serviceHfPlan(
+    image: string,
+    env: Record<string, string>,
+    serviceId: string
+  ): Promise<ServiceHfPlan> {
+    return buildServiceHfPlan(
+      getServiceHfMirrorSettings(this.getConfig()),
+      env,
+      async () => (await this.docker.getImage(image).inspect())?.Config?.Env,
+      serviceId
+    )
+  }
+
+  // Creates a service container from `build(spec)`, not yet started, with the HF client
+  // patch copied in. When the copy fails (read-only rootfs, a file at /ocean in the image,
+  // …) the never-started container is replaced by one created without the patch, before
+  // anything else is copied into it.
+  private async createServiceContainer(
+    serviceId: string,
+    plan: ServiceHfPlan,
+    build: (spec: ServiceHfContainerSpec) => ContainerCreateOptions
+  ): Promise<Dockerode.Container> {
+    const container = await this.docker.createContainer(build(plan))
+    if (!plan.patch) return container
+    try {
+      await injectHfPatch(container, plan.patch)
+      return container
+    } catch (e) {
+      CORE_LOGGER.error(
+        `service ${serviceId}: cannot copy the HF client patch in (${e?.message}) — ` +
+          `creating the container without it`
+      )
+    }
+    try {
+      await container.remove({ force: true, v: true })
+    } catch (e) {
+      // Keep it rather than leak it: its only extra is a PYTHONPATH entry for a dir that
+      // does not exist, which Python ignores.
+      CORE_LOGGER.error(
+        `service ${serviceId}: cannot remove container ${container.id} (${e?.message}) — ` +
+          `starting it without the patch file`
+      )
+      return container
+    }
+    return this.docker.createContainer(build(plan.withoutPatch))
+  }
+
   // Handler-facing: persist the initial Starting record and return immediately so the HTTP
   // response carries the serviceId without waiting for escrow/image/container. The background
   // loop then calls processServiceStart() to advance it. Persisting Starting also reserves the
@@ -3989,6 +4742,12 @@ export class C2DEngineDocker extends C2DEngine {
       resources: resources.map((r) => ({ id: r.id, amount: r.amount })),
       payment
     }
+    // Stated up front, so a client polling a service that has not reached Running yet can already
+    // tell "this node will report readiness for this workload" from "it never will".
+    const engine = resolveServiceEngine(job)
+    if (engine) {
+      job.readiness = { state: 'waiting', engine: engine.id }
+    }
     await this.db.newServiceJob(job)
     return job
   }
@@ -4027,7 +4786,7 @@ export class C2DEngineDocker extends C2DEngine {
     // restartable on the same endpoints until expiresAt (the expiry sweep releases them,
     // and seedAllocatedPorts re-seeds them at boot). An unpaid one frees them.
     if (job.status !== ServiceStatusNumber.Starting) {
-      CORE_LOGGER.error(
+      CORE_LOGGER.warn(
         `processServiceStart: orphaned service ${serviceId} in state "${job.statusText}" — cleaning up`
       )
       await this.logServiceDockerState(
@@ -4042,14 +4801,31 @@ export class C2DEngineDocker extends C2DEngine {
           job.owner
         )
       }
-      if (job.containerId)
-        await this.cleanupServiceDocker(
-          this.docker.getContainer(job.containerId),
-          null,
-          serviceId
-        )
+      const { previousContainerId } = job
+      if (job.containerId || previousContainerId) {
+        // Only a claimed service ever ran — archive what it wrote before its containers go.
+        // A restart that died before switching to the new container (containerId still
+        // empty) left the results in the previous one it was carrying them over from.
+        if (job.payment.claimTx) {
+          const holder = this.docker.getContainer(job.containerId || previousContainerId)
+          await holder.stop({ t: 10 }).catch(() => {})
+          await this.archiveServiceOutputs(job, holder)
+        }
+        if (job.containerId)
+          await this.cleanupServiceDocker(
+            this.docker.getContainer(job.containerId),
+            null,
+            serviceId
+          )
+        if (previousContainerId)
+          await this.docker
+            .getContainer(previousContainerId)
+            .remove({ force: true, v: true })
+            .catch(() => {})
+        delete job.previousContainerId
+      }
       await this.removeServiceNetwork(serviceId, job.networkId).catch((e) => {
-        CORE_LOGGER.debug(`orphan recovery ${serviceId}: network removal: ${e.message}`)
+        CORE_LOGGER.error(`orphan recovery ${serviceId}: network removal: ${e.message}`)
       })
       if (!job.payment.claimTx) {
         for (const ep of job.endpoints) releaseHostPort(ep.hostPort)
@@ -4075,7 +4851,11 @@ export class C2DEngineDocker extends C2DEngine {
         token,
         job.owner,
         job.payment.cost,
-        this.escrow.getMinLockTime(job.duration)
+        this.escrow.getMinLockTime(job.duration),
+        JobType.SERVICE,
+        // Same subsidy-provider list the matching claimLock uses (see below) — lock & claim
+        // must agree, so the sponsored lock can be settled from the same providers.
+        job.payment.subsidyProviders ?? null
       )
       if (!lockTx) throw new Error('Escrow lock failed')
       await this.escrow.waitForTransaction(chainId, lockTx)
@@ -4095,11 +4875,17 @@ export class C2DEngineDocker extends C2DEngine {
           await this.db.updateServiceJob(job)
           const ram = job.resources.find((r) => r.id === 'ram')?.amount
           const cpu = job.resources.find((r) => r.id === 'cpu')?.amount
+          // Image build gets its own short budget, not the service's full runtime duration, and
+          // is capped so it can never exceed that duration.
+          const buildTimeoutSeconds = this.resolveBuildTimeoutSeconds(
+            sod?.buildTimeoutSeconds,
+            job.duration
+          )
           await this.buildImageFromSpec(
             job.containerImage,
             job.dockerfile,
             job.additionalDockerFiles ?? {},
-            sod?.maxDurationSeconds ?? job.duration,
+            buildTimeoutSeconds,
             ram,
             cpu
           )
@@ -4107,7 +4893,39 @@ export class C2DEngineDocker extends C2DEngine {
           job.status = ServiceStatusNumber.PullImage
           job.statusText = ServiceStatusText[ServiceStatusNumber.PullImage]
           await this.db.updateServiceJob(job)
-          await this.pullImageRef(job.containerImage)
+          // Persist the daemon's own byte counts as the pull runs, so a client polling status can
+          // show real progress on what is usually the longest visible wait (multi-GB engine
+          // images). Writes are chained rather than fired in parallel, and drained BEFORE the
+          // status moves on — an in-flight write still carrying status=PullImage must never land
+          // after the Claiming transition and resurrect the old status.
+          // At most one write waits behind the running one: each write persists the shared `job`,
+          // which already carries the latest progress, so queuing more would only replay it. A
+          // slow DB then drops intermediate updates instead of growing the chain.
+          let pullWrites: Promise<unknown> = Promise.resolve()
+          let pullWriteQueued = false
+          await this.pullImageRef(
+            job.containerImage,
+            undefined,
+            undefined,
+            (progress) => {
+              job.imagePull = progress
+              if (pullWriteQueued) {
+                return
+              }
+              pullWriteQueued = true
+              pullWrites = pullWrites
+                .then(() => {
+                  pullWriteQueued = false
+                  return this.db.updateServiceJob(job)
+                })
+                .catch((e: any) =>
+                  CORE_LOGGER.error(
+                    `service ${serviceId}: pull progress write failed: ${e.message}`
+                  )
+                )
+            }
+          )
+          await pullWrites
         }
       } catch (e: any) {
         imageError = e
@@ -4131,7 +4949,7 @@ export class C2DEngineDocker extends C2DEngine {
           : ServiceStatusNumber.PullImageFailed
         job.statusText = String(imageError.message)
         await this.db.updateServiceJob(job)
-        CORE_LOGGER.error(
+        CORE_LOGGER.warn(
           `startService ${serviceId} image step failed (lock refunded): ${imageError.message}`
         )
         return
@@ -4143,7 +4961,9 @@ export class C2DEngineDocker extends C2DEngine {
         token,
         job.owner,
         job.payment.cost,
-        `service-start:${serviceId}`
+        `service-start:${serviceId}`,
+        JobType.SERVICE,
+        job.payment.subsidyProviders ?? null
       )
       if (!claimTx) {
         job.payment.cancelTx = await this.safeCancelLock(
@@ -4181,8 +5001,13 @@ export class C2DEngineDocker extends C2DEngine {
       network = await this.createServiceNetwork(serviceId)
 
       // Container env from the decrypted (in-memory) userData; command/entrypoint from the request.
+      // Node-owner PASS_CONTAINER_ENVS is merged on top (owner wins) before the HF plan, so an
+      // owner-set HF_ENDPOINT also takes precedence over the HF mirror default.
       const decryptedUserData = await decryptUserData(job.userData, this.keyManager)
-      const env = userDataToEnv(decryptedUserData)
+      const env = mergeOwnerEnvs(
+        userDataToEnv(decryptedUserData),
+        this.getConfig()?.passContainerEnvs ?? {}
+      )
       const cmd = job.dockerCmd?.length ? job.dockerCmd : undefined
       const entrypoint = job.dockerEntrypoint?.length ? job.dockerEntrypoint : undefined
 
@@ -4207,11 +5032,13 @@ export class C2DEngineDocker extends C2DEngine {
         job.environment
       )
 
-      container = await this.docker.createContainer({
+      const outputMounts = await this.serviceOutputMounts(job)
+      const hfPlan = await this.serviceHfPlan(job.containerImage, env, serviceId)
+      const build = (spec: ServiceHfContainerSpec): ContainerCreateOptions => ({
         Image: job.containerImage,
         Cmd: cmd,
         Entrypoint: entrypoint,
-        Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
+        Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
         ExposedPorts,
         HostConfig: {
           Memory,
@@ -4228,12 +5055,14 @@ export class C2DEngineDocker extends C2DEngine {
           ...(IpcMode ? { IpcMode } : {}),
           ...(ShmSize ? { ShmSize } : {}),
           PidsLimit: PidsLimit ?? SERVICE_DEFAULT_PIDS_LIMIT,
-          Mounts: await this.serviceOutputMounts(job)
+          Mounts: outputMounts
         }
       })
+      container = await this.createServiceContainer(serviceId, hfPlan, build)
       CORE_LOGGER.debug(
         `start ${serviceId}: created container ${container.id} on network ${network.id} — starting`
       )
+      await this.ensureServiceOutputsFolder(job, container)
       await container.start()
 
       job.containerId = container.id
@@ -4242,9 +5071,11 @@ export class C2DEngineDocker extends C2DEngine {
       job.statusText = ServiceStatusText[ServiceStatusNumber.Running]
       await this.db.updateServiceJob(job)
       CORE_LOGGER.info(
-        `start ${serviceId}: completed — container ${container.id} Running on ` +
-          `ports [${job.endpoints.map((ep) => ep.hostPort).join(',')}]`
+        `Service ${serviceId} running on ports [${job.endpoints
+          .map((ep) => ep.hostPort)
+          .join(',')}]`
       )
+      CORE_LOGGER.debug(`start ${serviceId}: container ${container.id} running`)
     } catch (err: any) {
       await this.logServiceDockerState(
         `start ${serviceId}: FAILED (${err.message}) — docker state at failure`,
@@ -4317,7 +5148,7 @@ export class C2DEngineDocker extends C2DEngine {
           `containers=${JSON.stringify(cs)}`
       )
     } catch (e: any) {
-      CORE_LOGGER.debug(`[docker state] ${context}: unavailable (${e.message})`)
+      CORE_LOGGER.error(`[docker state] ${context}: unavailable (${e.message})`)
     }
   }
 
@@ -4334,7 +5165,7 @@ export class C2DEngineDocker extends C2DEngine {
     this.releaseCpus(serviceId)
     if (container) {
       await container.stop({ t: 5 }).catch(() => {})
-      await container.remove({ force: true }).catch(() => {})
+      await container.remove({ force: true, v: true }).catch(() => {})
     }
     await this.removeServiceNetwork(serviceId, network?.id).catch(() => {})
   }
@@ -4416,6 +5247,27 @@ export class C2DEngineDocker extends C2DEngine {
   // snapshots into the engine-wide metrics summary without re-querying.
   private async checkRunningServices(): Promise<ServiceJob[]> {
     const services = await this.db.getRunningServiceJobs(this.getC2DConfig().hash)
+    // Retry failed/interrupted disk teardown without shortening the paid window.
+    // The pending reason lives in the DB so a node restart cannot lose it.
+    for (const svc of services) {
+      if (!svc.terminationReason || Date.now() >= svc.expiresAt) continue
+      if (!(await this.tryAcquireServiceLifecycleLock(svc.serviceId))) continue
+      // Archiving can be slow. Match the expiry sweep: hold the lease in a tracked
+      // background operation so retries never block compute jobs or service health.
+      const retry = (async () => {
+        const [fresh] = await this.db.getServiceJob(svc.serviceId, svc.owner)
+        if (fresh?.terminationReason && Date.now() < fresh.expiresAt) {
+          await this.doStopService(fresh.serviceId, fresh.owner)
+        }
+      })().finally(() => {
+        this.serviceOpPromises.delete(retry)
+        return this.releaseServiceLifecycleLock(svc.serviceId)
+      })
+      this.serviceOpPromises.add(retry)
+      retry.catch((e: any) =>
+        CORE_LOGGER.error(`Disk stop retry ${svc.serviceId} failed: ${e.message}`)
+      )
+    }
     // Skip services with a lifecycle op in flight: a restart intentionally kills the
     // container mid-way, which must not be reported as an unexpected death.
     const runningOnly = services.filter(
@@ -4424,7 +5276,209 @@ export class C2DEngineDocker extends C2DEngine {
         !this.serviceOpsInFlight.has(svc.serviceId)
     )
     await Promise.all(runningOnly.map((svc) => this.checkServiceContainerHealth(svc)))
+    // Forget per-service probe state for services that are no longer running (stopped, failed,
+    // expired), whichever path ended them.
+    const running = new Set(services.map((svc) => svc.serviceId))
+    this.modelDownloadSampler.retain(running)
+    for (const state of [
+      this.serviceProbeUrls,
+      this.serviceDiskCheckedAt,
+      this.serviceDiskSamples,
+      this.serviceDiskUnmeasured,
+      this.manifestCheckedAt,
+      this.readinessWarned,
+      this.manifestDirSizes
+    ]) {
+      for (const serviceId of state?.keys() ?? []) {
+        if (!running.has(serviceId)) {
+          state.delete(serviceId)
+        }
+      }
+    }
     return runningOnly
+  }
+
+  // Fire-and-forget, independently of optional runtime metrics. Reserves the check slot
+  // synchronously; checkServiceDiskUsage takes the lifecycle lease only to stop.
+  private launchServiceDiskCheck(snapshot: ServiceJob): void {
+    const { serviceId } = snapshot
+    const quota = snapshot.resources.find((resource) => resource.id === 'disk')?.amount
+    this.serviceDiskSamples ??= new Map()
+    const previous = this.serviceDiskSamples.get(serviceId)
+    if (previous && previous.containerId !== snapshot.containerId) {
+      this.serviceDiskSamples.delete(serviceId)
+      this.serviceDiskCheckedAt.delete(serviceId)
+    }
+    const interval =
+      this.serviceDiskSamples.get(serviceId)?.intervalMs ?? SERVICE_DISK_CHECK_INTERVAL_MS
+    // Negative after the wall clock stepped back: check now rather than wait it out.
+    const sinceChecked =
+      Date.now() - (this.serviceDiskCheckedAt.get(serviceId) ?? -Infinity)
+    if (
+      this.stopped ||
+      snapshot.status !== ServiceStatusNumber.Running ||
+      !snapshot.containerId ||
+      !Number.isFinite(quota) ||
+      !(quota > 0) ||
+      this.serviceOpsInFlight.has(serviceId) ||
+      this.serviceDiskChecksInFlight.has(serviceId) ||
+      (sinceChecked >= 0 && sinceChecked < interval)
+    )
+      return
+    const check = this.checkServiceDiskUsage(snapshot, quota)
+      .catch((e: any) =>
+        CORE_LOGGER.warn(`service ${serviceId}: disk check unmeasurable: ${e?.message}`)
+      )
+      .finally(() => this.serviceDiskChecksInFlight.delete(serviceId))
+    this.serviceDiskChecksInFlight.set(serviceId, check)
+  }
+
+  // Measures OUTSIDE the lifecycle lease: sizing a big writable layer or volume can take
+  // seconds, and holding the lease that long would reject the owner's STOP / RESTART /
+  // EXTEND with "retry shortly" once a minute. The lease is taken only to stop, and the
+  // row is re-read under it, so a sample of a container a restart has since replaced (or
+  // a service stopped meanwhile) never stops anything.
+  private async checkServiceDiskUsage(
+    snapshot: ServiceJob,
+    quota: number
+  ): Promise<void> {
+    const { serviceId } = snapshot
+    const quotaBytes = quota * 1024 ** 3
+    const previous = this.serviceDiskSamples.get(serviceId)
+    // Any df requested after this check fell due is fresh enough for it, so services
+    // checked in the same tick share one daemon scan instead of one each.
+    const dueAt = Date.now()
+    let at: number | undefined
+    let usage: ServiceDiskUsage
+    try {
+      const local = await scheduleServiceDiskMeasurement(
+        previous ? previous.usedBytes / quotaBytes : 0,
+        async () => {
+          // Queued work can outlive a tick, restart or shutdown. Do not launch a
+          // stale scan, and never retain a limiter slot during stop/archive work.
+          if (
+            this.stopped ||
+            this.serviceOpsInFlight.has(serviceId) ||
+            this.serviceDiskSamples.get(serviceId) !== previous
+          )
+            return undefined
+          at = Date.now()
+          this.serviceDiskCheckedAt.set(serviceId, at)
+          return await measureServiceLocalDiskUsage(
+            this.docker.getContainer(snapshot.containerId),
+            snapshot
+          )
+        }
+      )
+      if (!local) return
+      const interval = previous?.intervalMs ?? SERVICE_DISK_CHECK_INTERVAL_MS
+      const predicted = previous
+        ? serviceDiskTimeToQuotaMs(
+            previous.usedBytes,
+            quotaBytes,
+            previous.growthBytesPerSecond
+          ) - Math.max(0, at - previous.at)
+        : 0
+      this.serviceVolumeSizes ??= createVolumeSizeCache(this.docker)
+      // Outside the measurement slot: df is serialized node-wide on its own.
+      usage = await addServiceVolumeUsage(local, snapshot, this.serviceVolumeSizes, {
+        maxAgeMs: interval,
+        forceFresh:
+          !previous ||
+          previous.usedBytes / quotaBytes >= SERVICE_DISK_NEAR_RATIO ||
+          predicted <= interval,
+        freshAfter: dueAt
+      })
+    } catch (e) {
+      if (
+        previous &&
+        at !== undefined &&
+        this.serviceDiskCheckedAt.get(serviceId) === at &&
+        this.serviceDiskSamples.get(serviceId) === previous
+      )
+        this.serviceDiskSamples.set(serviceId, {
+          ...previous,
+          intervalMs: serviceDiskBackoffIntervalMs(previous.intervalMs)
+        })
+      throw e
+    }
+    // Restart clears checkedAt while an old measurement may still complete.
+    if (
+      this.serviceDiskCheckedAt.get(serviceId) !== at ||
+      this.serviceDiskSamples.get(serviceId) !== previous
+    )
+      return
+    if (
+      previous &&
+      previous.intervalMs < SERVICE_DISK_CHECK_INTERVAL_MS &&
+      usage.unmeasured.some((mount) => !previous.unmeasured?.includes(mount))
+    ) {
+      // A mount that was sized before failed (e.g. a df timeout): the lower bound is not
+      // a real drop, so keep the last usage and growth rather than relax the cadence.
+      // Once backed off to the coarse interval, a lasting failure becomes the baseline.
+      this.serviceDiskSamples.set(serviceId, {
+        ...previous,
+        intervalMs: serviceDiskBackoffIntervalMs(previous.intervalMs)
+      })
+    } else {
+      const growth =
+        previous && at > previous.at
+          ? Math.max(
+              0,
+              ((usage.usedBytes - previous.usedBytes) * 1000) / (at - previous.at)
+            )
+          : 0
+      this.serviceDiskSamples.set(serviceId, {
+        containerId: snapshot.containerId,
+        usedBytes: usage.usedBytes,
+        at,
+        growthBytesPerSecond: growth,
+        intervalMs: serviceDiskCheckIntervalMs(usage.usedBytes, quotaBytes, growth),
+        unmeasured: usage.unmeasured
+      })
+    }
+    if (!usage) return
+    const { usedBytes, unmeasured } = usage
+    const unmeasuredKey = unmeasured.join(', ')
+    if (unmeasuredKey && this.serviceDiskUnmeasured.get(serviceId) !== unmeasuredKey)
+      CORE_LOGGER.warn(
+        `service ${serviceId}: disk quota counts only what it can measure — ` +
+          `could not size ${unmeasuredKey}`
+      )
+    this.serviceDiskUnmeasured.set(serviceId, unmeasuredKey)
+    CORE_LOGGER.debug(
+      `service ${serviceId} disk: ${(usedBytes / 1024 ** 3).toFixed(2)}GB / ` +
+        `${quota.toFixed(1)}GB`
+    )
+    if (this.stopped || usedBytes <= quota * 1024 ** 3) return
+    if (!(await this.tryAcquireServiceLifecycleLock(serviceId))) {
+      // Another operation owns the service: re-measure on the next tick, not in a minute.
+      this.serviceDiskCheckedAt.delete(serviceId)
+      return
+    }
+    try {
+      const [job] = await this.db.getServiceJob(serviceId, snapshot.owner)
+      if (
+        this.stopped ||
+        !job ||
+        job.status !== ServiceStatusNumber.Running ||
+        job.containerId !== snapshot.containerId
+      )
+        return
+      CORE_LOGGER.warn(
+        `DISK QUOTA EXCEEDED - Stopping service ${serviceId}: ` +
+          `${(usedBytes / 1024 ** 3).toFixed(2)}GB used, ${quota.toFixed(1)}GB allowed`
+      )
+      await this.doStopService(
+        serviceId,
+        job.owner,
+        false,
+        false,
+        ServiceStatusNumber.DiskQuotaExceeded
+      )
+    } finally {
+      await this.releaseServiceLifecycleLock(serviceId)
+    }
   }
 
   private async checkServiceContainerHealth(job: ServiceJob): Promise<void> {
@@ -4445,8 +5499,341 @@ export class C2DEngineDocker extends C2DEngine {
       await this.markServiceFailed(job, reason, details.State)
       return
     }
-    // Container healthy: sample live runtime metrics (throttled, best-effort, lease-free).
+    // Container up: ask the workload itself whether it can serve requests yet (throttled,
+    // best-effort, lease-free), then sample live runtime metrics on the same terms.
+    this.launchServiceReadinessProbe(job, details)
     await this.sampleAndPersistServiceMetrics(job)
+  }
+
+  /**
+   * Runs probeServiceReadiness without holding up the loop. The probe can walk several addresses
+   * with a timeout each, and its model-download sample waits on the Docker daemon and the Hub —
+   * seconds, on a bad day, that would otherwise delay every compute job and service start on the
+   * node. At most one probe per service runs at a time; a tick that finds one in flight skips it.
+   */
+  private launchServiceReadinessProbe(
+    job: ServiceJob,
+    details: Dockerode.ContainerInspectInfo
+  ): void {
+    if (this.stopped || this.serviceProbesInFlight.has(job.serviceId)) {
+      return
+    }
+    // probeServiceReadiness never throws; the catch only keeps a surprise from surfacing as an
+    // unhandled rejection.
+    const probe = this.probeServiceReadiness(job, details)
+      .catch((e: any) =>
+        CORE_LOGGER.throttled(
+          `readiness:${job.serviceId}`,
+          'warn',
+          `[readiness] service ${job.serviceId}: ${e?.message}`
+        )
+      )
+      .finally(() => this.serviceProbesInFlight.delete(job.serviceId))
+    this.serviceProbesInFlight.set(job.serviceId, probe)
+  }
+
+  /**
+   * Asks a recognized workload whether it can serve requests yet, and persists the answer.
+   *
+   * "Running" only means the container process started. An inference engine then spends minutes
+   * downloading weights and warming up, during which its forwarded port either refuses connections
+   * or answers 503 — so a consumer handed the URL at Running gets nothing but errors. The engine is
+   * the only thing that knows when that ends, and this is the node asking it, from outside the
+   * container, on the consumer's behalf.
+   *
+   * Which request to make is engine-specific and comes from the node's own table
+   * (components/c2d/serviceEngines). An image the node does not recognize is left alone entirely:
+   * `readiness` stays absent, and clients keep treating Running as usable exactly as before.
+   *
+   * Same discipline as the metrics sampler: no lifecycle lease, skipped while a lifecycle op is in
+   * flight, persisted through a guarded readiness-ONLY write, and it never throws.
+   */
+  private async probeServiceReadiness(
+    job: ServiceJob,
+    details: Dockerode.ContainerInspectInfo
+  ): Promise<void> {
+    try {
+      const engine = resolveServiceEngine(job)
+      if (!engine) {
+        await this.sampleUnprobedServiceDownload(job, details)
+        return
+      }
+      if (this.serviceOpsInFlight.has(job.serviceId)) return
+
+      const now = Date.now()
+      const wasReady = job.readiness?.state === 'ready'
+      // Has this container EVER answered? `wasReady` only covers the last sample, so a service
+      // that fails twice running would fall back to "waiting" on the second — reading as "still
+      // starting up" for something that already served and then stopped. readySince is set on the
+      // first success and kept through failures, so it is the durable answer.
+      const everReady = wasReady || job.readiness?.readySince !== undefined
+      // Hold off until the container has had a moment to bind its port — probing a process that
+      // has not called listen() yet only produces noise in the node's own logs.
+      const startedAt = Date.parse(details.State?.StartedAt ?? '')
+      if (
+        !wasReady &&
+        Number.isFinite(startedAt) &&
+        now - startedAt < PROBE_INITIAL_DELAY_SECONDS * 1000
+      ) {
+        return
+      }
+      // The loop ticks every couple of seconds; the probe runs on its own, slower period. Once
+      // ready it slows right down — from then on it is a liveness check, not a wait.
+      const periodMs =
+        (wasReady ? READY_PROBE_PERIOD_SECONDS : PROBE_PERIOD_SECONDS) * 1000
+      if (job.readiness?.lastCheckedAt && now - job.readiness.lastCheckedAt < periodMs) {
+        return
+      }
+
+      const port = engine.probe.port ?? job.exposedPorts[0]
+      if (!port) return
+      const containerIps = Object.values(details.NetworkSettings?.Networks ?? {})
+        .map((net: any) => net?.IPAddress)
+        .filter((ip: string) => !!ip)
+      const candidates = probeCandidates(job, containerIps, port, engine.probe.path)
+      // The address that answered last time, tried first — but never exclusively: a container
+      // restart can change its IP, so a cached candidate that stops connecting falls back to the
+      // full list on the same tick.
+      const cached = this.serviceProbeUrls.get(job.serviceId)
+      const ordered = cached
+        ? [cached, ...candidates.filter((url) => url !== cached)]
+        : candidates
+
+      let result = null
+      for (const url of ordered) {
+        const attempt = await runReadinessProbe(url, engine.probe.expectStatus)
+        if (attempt.ok) {
+          result = attempt
+          this.serviceProbeUrls.set(job.serviceId, url)
+          break
+        }
+        // A real HTTP answer means we reached the workload — it simply is not ready. That is a
+        // conclusive result, so stop here rather than reporting a later candidate's connection
+        // error, which would read as "unreachable" instead of "still warming up".
+        if (attempt.httpStatus !== undefined) {
+          result = attempt
+          this.serviceProbeUrls.set(job.serviceId, url)
+          break
+        }
+        result = result ?? attempt
+      }
+      if (!result) return
+
+      const readiness: ServiceReadiness = result.ok
+        ? {
+            state: 'ready',
+            engine: engine.id,
+            readySince: job.readiness?.readySince ?? now,
+            lastCheckedAt: now,
+            consecutiveFailures: 0,
+            httpStatus: result.httpStatus,
+            probedUrl: result.url
+          }
+        : {
+            // Only a service that HAD answered can be "failing"; one that never has is still
+            // warming up, which is the normal state for the first minutes of a model server.
+            state: everReady ? 'failing' : 'waiting',
+            engine: engine.id,
+            readySince: job.readiness?.readySince,
+            lastCheckedAt: now,
+            consecutiveFailures: (job.readiness?.consecutiveFailures ?? 0) + 1,
+            httpStatus: result.httpStatus,
+            lastError: result.error,
+            probedUrl: result.url
+          }
+
+      if (result.ok !== wasReady) {
+        CORE_LOGGER.info(
+          `[readiness] service ${job.serviceId} (${engine.id}): ${
+            job.readiness?.state ?? 'unknown'
+          } -> ${readiness.state} via ${result.url}${
+            result.error ? ` (${result.error})` : ''
+          }`
+        )
+      }
+
+      // While the engine is still warming up, sample how far its model download has got. Skipped
+      // once the service has EVER been ready: the files are on disk from that point on, so the walk
+      // would only re-measure a finished download — including while a ready service is failing,
+      // when it says nothing about why.
+      const modelDownload = everReady
+        ? undefined
+        : await this.sampleModelDownload(job, engine)
+
+      // Usually a node that cannot reach its container: tell the operator once per container.
+      if (
+        readiness.state === 'waiting' &&
+        Number.isFinite(startedAt) &&
+        now - startedAt >= READINESS_WARN_AFTER_SECONDS * 1000 &&
+        this.readinessWarned.get(job.serviceId) !== job.containerId
+      ) {
+        this.readinessWarned.set(job.serviceId, job.containerId)
+        const download = modelDownload ?? job.modelDownload
+        CORE_LOGGER.warn(
+          `[readiness] service ${job.serviceId} (${engine.id}) not ready ` +
+            `${Math.round((now - startedAt) / 60_000)} min after its container started: ` +
+            `${readiness.lastError ?? `HTTP ${readiness.httpStatus}`} via ${readiness.probedUrl}` +
+            (download ? `; model download at ${download.percent ?? '?'}%` : '')
+        )
+      }
+
+      await this.persistServiceReadiness(job, readiness, modelDownload)
+    } catch (e: any) {
+      CORE_LOGGER.throttled(
+        `readiness:probe:${job.serviceId}`,
+        'warn',
+        `[readiness] service ${job.serviceId}: probe failed: ${e?.message}`
+      )
+    }
+  }
+
+  // Same cross-process guard as the metrics write: a lifecycle transition must win.
+  private async persistServiceReadiness(
+    job: ServiceJob,
+    readiness: ServiceReadiness | undefined,
+    modelDownload: ServiceModelDownload | undefined
+  ): Promise<void> {
+    if (
+      this.serviceOpsInFlight.has(job.serviceId) ||
+      (await this.db.isServiceLocked(job.serviceId, SERVICE_LOCK_STALE_MS))
+    ) {
+      return
+    }
+    await this.db.updateServiceJobReadiness(
+      job.serviceId,
+      {
+        owner: job.owner,
+        clusterHash: job.clusterHash,
+        status: ServiceStatusNumber.Running,
+        containerId: job.containerId
+      },
+      readiness,
+      modelDownload
+    )
+  }
+
+  /**
+   * Manifest download progress for a service the node cannot probe; no readiness, so Running stays
+   * the signal. With no readiness to end it, sampling is bounded by MANIFEST_DISCOVERY_MS /
+   * MANIFEST_SAMPLING_MS and stops once the listed download is complete.
+   */
+  private async sampleUnprobedServiceDownload(
+    job: ServiceJob,
+    details: Dockerode.ContainerInspectInfo
+  ): Promise<void> {
+    if (
+      this.serviceOpsInFlight.has(job.serviceId) ||
+      isModelDownloadComplete(job.modelDownload)
+    ) {
+      return
+    }
+    const now = Date.now()
+    const startedAt = Date.parse(details.State?.StartedAt ?? '')
+    if (
+      Number.isFinite(startedAt) &&
+      now - startedAt > (job.modelDownload ? MANIFEST_SAMPLING_MS : MANIFEST_DISCOVERY_MS)
+    ) {
+      return
+    }
+    if (
+      now - (this.manifestCheckedAt.get(job.serviceId) ?? 0) <
+      PROBE_PERIOD_SECONDS * 1000
+    ) {
+      return
+    }
+    this.manifestCheckedAt.set(job.serviceId, now)
+    const modelDownload = await sampleDownloadManifest(
+      this.docker.getContainer(job.containerId),
+      (path) => this.manifestDirectoryBytes(job, path)
+    )
+    if (modelDownload) {
+      await this.persistServiceReadiness(job, undefined, modelDownload)
+    }
+  }
+
+  private async manifestDirectoryBytes(
+    job: ServiceJob,
+    path: string
+  ): Promise<number | null> {
+    let sizes = this.manifestDirSizes.get(job.serviceId)
+    if (!sizes) {
+      sizes = new Map()
+      this.manifestDirSizes.set(job.serviceId, sizes)
+    }
+    const last = sizes.get(path)
+    if (
+      last?.containerId === job.containerId &&
+      Date.now() - last.at <
+        (last.bytes === null ? MANIFEST_DIR_RETRY_MS : MANIFEST_DIR_MEASURE_MS)
+    ) {
+      return last.bytes
+    }
+    const bytes = await this.getContainerDiskUsage(
+      job.containerId,
+      path,
+      MANIFEST_DU_TIMEOUT_MS
+    )
+    // Stamped once measured: a `du` near its timeout would otherwise be stale on arrival.
+    sizes.set(path, { containerId: job.containerId, bytes, at: Date.now() })
+    return bytes
+  }
+
+  /**
+   * How much of its model the container has pulled down: from the launch script's download
+   * manifest when it writes one, otherwise from the engine's own cache.
+   *
+   * This is the wait the image pull does not cover: the image is fetched once per node and cached
+   * forever after, while the weights are fetched by the engine on EVERY container start, after it
+   * reports Running. Nothing serves that number over HTTP at the time (there is no server yet), so
+   * it is read from the cache files themselves — see components/c2d/modelDownload — raised to the
+   * bytes the container has received, which a Xet download reaches long before its files do.
+   *
+   * Best-effort throughout: an unreadable cache, an engine with no known cache path, or a model
+   * whose size the Hub cannot tell us all degrade to less information, never to an error.
+   */
+  private async sampleModelDownload(
+    job: ServiceJob,
+    engine: ServiceEngineProfile
+  ): Promise<ServiceModelDownload | undefined> {
+    try {
+      const container = this.docker.getContainer(job.containerId)
+      // Before the completion check: a script can append to its manifest after earlier downloads.
+      const fromManifest = await sampleDownloadManifest(container, (path) =>
+        this.manifestDirectoryBytes(job, path)
+      )
+      if (fromManifest) {
+        return fromManifest
+      }
+      if (!engine.modelCachePath) {
+        return undefined
+      }
+      // Downloaded: what remains is the engine loading weights, which the cache says nothing about.
+      // Returning nothing keeps the stored 100% record as it is.
+      if (isModelDownloadComplete(job.modelDownload)) {
+        return undefined
+      }
+      const downloaded = await this.modelDownloadSampler.sample(job.serviceId, container)
+      if (!downloaded) return undefined
+      // Only a Hugging Face repo has a size the node can look up; a local path or an object-store
+      // URI reports bytes with no total, which clients render as an indeterminate bar.
+      const modelId = engine.modelIdFromCommand?.(job.dockerCmd) ?? null
+      // A GGUF engine names the exact file it pulls; asking for that instead of the whole repo is
+      // the difference between a real denominator and one covering every quantization on offer.
+      const quant = engine.modelQuantFromCommand?.(job.dockerCmd) ?? undefined
+      const totalBytes = modelId ? await fetchModelTotalBytes(modelId, quant) : null
+      // The cache lags a Xet download by most of its length; the bytes received do not.
+      const received = await readContainerRxBytes(container)
+      return buildModelDownload(
+        withReceivedBytes(downloaded, received, totalBytes),
+        totalBytes,
+        modelId
+      )
+    } catch (e: any) {
+      CORE_LOGGER.error(
+        `[model-download] service ${job.serviceId}: sample failed: ${e?.message}`
+      )
+      return undefined
+    }
   }
 
   // Resolves a service's requested allocation as bytes/cores for the metrics snapshot.
@@ -4533,7 +5920,9 @@ export class C2DEngineDocker extends C2DEngine {
           describeSnapshot(snap)
       )
     } catch (e: any) {
-      CORE_LOGGER.debug(
+      CORE_LOGGER.throttled(
+        `metrics:service:${job.serviceId}`,
+        'warn',
         `[metrics] service ${job.serviceId}: collection failed: ${e?.message}`
       )
     }
@@ -4628,7 +6017,10 @@ export class C2DEngineDocker extends C2DEngine {
         fresh.runtimeMetrics = this.stampServiceExitInfo(fresh.runtimeMetrics, exitState)
       }
       await this.db.updateServiceJob(fresh)
-      CORE_LOGGER.error(`Service ${job.serviceId} container died — ${reason}`)
+      const msg = `Service ${job.serviceId} container died — ${reason}`
+      // 'container lost' is node-side (daemon unreachable / container removed externally)
+      if (reason.startsWith('container lost')) CORE_LOGGER.error(msg)
+      else CORE_LOGGER.warn(msg)
     } finally {
       await this.releaseServiceLifecycleLock(job.serviceId)
     }
@@ -4656,7 +6048,7 @@ export class C2DEngineDocker extends C2DEngine {
       if (gpu) snap.gpu = gpu
       job.runtimeMetrics = snap
     } catch (e: any) {
-      CORE_LOGGER.debug(
+      CORE_LOGGER.error(
         `captureFinalServiceSnapshot failed for ${job.serviceId}: ${e?.message}`
       )
     }
@@ -4687,7 +6079,7 @@ export class C2DEngineDocker extends C2DEngine {
       // lifecycle operation writes to the same SQLite file moments later anyway, so it
       // could not complete with a broken DB regardless. Callers reject with "retry
       // shortly" (handlers) or retry on the next tick (the loop).
-      CORE_LOGGER.warn(
+      CORE_LOGGER.error(
         `service lock DB acquire failed for ${serviceId} — deferring the operation (fail closed): ${e.message}`
       )
       this.serviceOpsInFlight.delete(serviceId)
@@ -4741,7 +6133,70 @@ export class C2DEngineDocker extends C2DEngine {
         `service lock ${serviceId}: released by ${this.serviceLockHolderId}`
       )
     } catch (e: any) {
-      CORE_LOGGER.warn(`service lock DB release failed for ${serviceId}: ${e.message}`)
+      CORE_LOGGER.error(`service lock DB release failed for ${serviceId}: ${e.message}`)
+    }
+  }
+
+  // Expiry teardown releases the reservation only once Docker cleanup completes.
+  // Caller holds the lifecycle lease across teardown and the terminal transition.
+  private async expireService(svc: ServiceJob): Promise<void> {
+    const finalStatus = ServiceStatusNumber.Expired
+    CORE_LOGGER.debug(`Service ${svc.serviceId} expired — stopping`)
+    let stopped: ServiceJob | null
+    try {
+      // onlyIfExpired: doStopService re-checks expiresAt on the FRESH row — a
+      // SERVICE_EXTEND that landed after the loop's expiredServices snapshot must not
+      // have its service torn down.
+      stopped = await this.doStopService(svc.serviceId, svc.owner, true)
+    } catch (e: any) {
+      const msg = `Failed to stop expired service ${svc.serviceId}: ${e.message} — retrying next tick`
+      // retried every tick: throttled so a persistent failure cannot flood the log
+      CORE_LOGGER.throttled(`svc-expiry-stop-${svc.serviceId}`, 'error', msg)
+      return
+    }
+    // Extended mid-sweep (expiresAt is in the future again on the fresh row) — not
+    // expired anymore, regardless of status. Leave it alone.
+    if (stopped && Date.now() < stopped.expiresAt) {
+      CORE_LOGGER.debug(
+        `Service ${svc.serviceId} was extended after the expiry snapshot — skipping expiry`
+      )
+      return
+    }
+    // Flip to Expired ONLY once teardown actually completed. Expired is terminal —
+    // it is never swept again — so marking it while the stop failed mid-way (the
+    // job comes back as Error "stop failed: …" with its container possibly still
+    // running and its ports still reserved) would leak those resources forever.
+    // Left as Error, the job stays in the expirable set and is retried next tick.
+    if (
+      !stopped ||
+      (!isStoppedLike(stopped.status) && stopped.status !== ServiceStatusNumber.Expired)
+    ) {
+      CORE_LOGGER.throttled(
+        `svc-expiry-teardown-${svc.serviceId}`,
+        'warn',
+        `Expired service ${svc.serviceId} teardown did not complete ` +
+          `(status "${stopped?.statusText ?? 'gone'}") — retrying next tick`
+      )
+      return
+    }
+    // Only expiry ends the reservation; disk-stopped services remain reserved until now.
+    const [stoppedJob] = await this.db.getServiceJob(svc.serviceId, svc.owner)
+    if (stoppedJob) {
+      delete stoppedJob.terminationReason
+      stoppedJob.status = finalStatus
+      stoppedJob.statusText = ServiceStatusText[finalStatus]
+      await this.db.updateServiceJob(stoppedJob)
+      // Expiry releases the reservation: amounts stop counting and host ports are freed
+      // here. Everywhere else — including an explicit user stop — the paid-for
+      // reservation survives so the service can be restarted on the same endpoints.
+      for (const ep of stoppedJob.endpoints ?? []) releaseHostPort(ep.hostPort)
+      CORE_LOGGER.resetThrottle(`svc-expiry-stop-${svc.serviceId}`)
+      CORE_LOGGER.resetThrottle(`svc-expiry-teardown-${svc.serviceId}`)
+      CORE_LOGGER.info(
+        `Service ${svc.serviceId} expired; ports [${(stoppedJob.endpoints ?? [])
+          .map((ep) => ep.hostPort)
+          .join(',')}] released`
+      )
     }
   }
 
@@ -4779,7 +6234,8 @@ export class C2DEngineDocker extends C2DEngine {
     serviceId: string,
     owner: string,
     onlyIfExpired: boolean = false,
-    release: boolean = false
+    release: boolean = false,
+    terminationReason?: ServiceStatusNumber.DiskQuotaExceeded
   ): Promise<ServiceJob | null> {
     const [job] = await this.db.getServiceJob(serviceId, owner)
     if (!job) {
@@ -4802,16 +6258,15 @@ export class C2DEngineDocker extends C2DEngine {
     const released = release && job.status !== ServiceStatusNumber.Expired
     if (released) job.expiresAt = Date.now()
 
-    if (
-      job.status === ServiceStatusNumber.Stopped ||
-      job.status === ServiceStatusNumber.Expired
-    ) {
+    if (isStoppedLike(job.status) || job.status === ServiceStatusNumber.Expired) {
       CORE_LOGGER.debug(
         `stopService ${serviceId}: already "${job.statusText}" — nothing to tear down`
       )
       if (released) await this.db.updateServiceJob(job)
       return job
     }
+    // Persisted with Stopping below, so a failed or interrupted teardown keeps the reason.
+    if (terminationReason) job.terminationReason = terminationReason
 
     CORE_LOGGER.debug(
       `stopService ${serviceId}: stopping (status=${job.statusText}, ` +
@@ -4834,7 +6289,11 @@ export class C2DEngineDocker extends C2DEngine {
         await c.stop({ t: 10 }).catch((e) => {
           if (!isBenignDockerError(e)) throw e
         })
-        await c.remove({ force: true }).catch((e) => {
+        await this.archiveServiceOutputs(job, c)
+        // v: also drop the anonymous volumes the image declared (e.g. comfyui-boot's
+        // VOLUME /root, where it keeps its models): no later container can attach them,
+        // so without it every stop/restart leaves that data on node disk forever.
+        await c.remove({ force: true, v: true }).catch((e) => {
           if (!isBenignDockerError(e)) throw e
         })
       }
@@ -4853,10 +6312,11 @@ export class C2DEngineDocker extends C2DEngine {
         serviceId
       )
       job.status = ServiceStatusNumber.Error
-      job.statusText = `stop failed: ${cleanupError.message}`
+      job.statusText = `${job.terminationReason ? ServiceStatusText[job.terminationReason] + ': ' : ''}stop failed: ${cleanupError.message}`
     } else {
-      job.status = ServiceStatusNumber.Stopped
-      job.statusText = ServiceStatusText[ServiceStatusNumber.Stopped]
+      job.status = job.terminationReason ?? ServiceStatusNumber.Stopped
+      job.statusText = ServiceStatusText[job.status]
+      delete job.terminationReason
       // The docker objects are confirmed gone — drop the stale ids so nothing later
       // mistakes them for live resources (a restart re-creates and re-persists both).
       job.containerId = ''
@@ -4865,7 +6325,7 @@ export class C2DEngineDocker extends C2DEngine {
       // failed teardown the old container may still be running on those cores, and
       // handing them to another job would double-pin them.
       this.releaseCpus(serviceId)
-      CORE_LOGGER.debug(`stopService ${serviceId}: stopped, container + network removed`)
+      CORE_LOGGER.info(`Service ${serviceId} stopped`)
     }
     await this.db.updateServiceJob(job)
     return job
@@ -4927,10 +6387,43 @@ export class C2DEngineDocker extends C2DEngine {
         throw new Error(
           'Cannot restart a service whose payment was never claimed (unpaid or refunded) — start a new service'
         )
+      // Subsidy image gate (SUBSIDY_PROVIDER_ALLOWED_IMAGES) — AUTHORITATIVE backstop. The handler
+      // fast-fails this on its pre-lock read, but a concurrent serviceExtend (which holds this same
+      // lifecycle lock) can subsidize the job AFTER that read and before we re-read here. Re-run the
+      // gate on the FRESH row, under the lock, so a RESPEC into a non-allowed image can never run on
+      // subsidized funds via that race. REUSE restarts (no newImage) and unsubsidized jobs are
+      // unaffected; gate off (no/empty config) drops nothing.
+      if (
+        newImage !== undefined &&
+        restartSubsidyDropped(
+          job,
+          {
+            image: newImage,
+            tag: newTag,
+            checksum: newChecksum,
+            dockerfile: newDockerfile
+          },
+          isNonEmpty(newDockerEntrypoint) || isNonEmpty(newDockerCmd),
+          this.getConfig()?.subsidyProviderAllowedImages
+        ).length > 0
+      )
+        throw new SubsidyGateError(
+          'Cannot restart a subsidized service into a non-allowed image or with a custom ' +
+            'entrypoint/command — start a new service instead'
+        )
+      // Resolve the output-bucket mount now, while the old container is still up: the
+      // background op tears it down before it creates the new one, so a bucket the owner
+      // lost access to (bucket sharing disabled, removed from its access list, bucket
+      // deleted) would otherwise leave the service without a container until expiresAt.
+      await this.serviceOutputMounts(job)
       // Persist Restarting BEFORE returning: status polls flip immediately, and a crash
       // from here on leaves a pending-status record the boot loop orphan-recovers
       // (Restarting is in SERVICE_START_PENDING_STATUSES) instead of a bare Starting
       // record that would be double-started with a second escrow lock.
+      delete job.terminationReason
+      this.serviceDiskCheckedAt?.delete(serviceId)
+      this.serviceDiskUnmeasured?.delete(serviceId)
+      this.serviceDiskSamples?.delete(serviceId)
       job.status = ServiceStatusNumber.Restarting
       job.statusText = ServiceStatusText[ServiceStatusNumber.Restarting]
       // Replace the stored metadata only when the request carries a new bag; otherwise the
@@ -4961,7 +6454,7 @@ export class C2DEngineDocker extends C2DEngine {
     // The outcome is persisted on the job status (Running or Error + statusText); nobody
     // awaits the background op, so swallow its rejection to avoid an unhandled rejection.
     op.catch((e) =>
-      CORE_LOGGER.debug(`restartService ${serviceId}: background op failed: ${e.message}`)
+      CORE_LOGGER.error(`restartService ${serviceId}: background op failed: ${e.message}`)
     )
     // Snapshot for the immediate response — the DB record already says Restarting.
     return job
@@ -4983,10 +6476,9 @@ export class C2DEngineDocker extends C2DEngine {
   ): Promise<ServiceJob | null> {
     const { serviceId } = job
 
-    // Re-reserve the job's host ports in the in-memory allocator: a Stopped service
-    // released them, so without this a concurrent start could be handed the same port
-    // this restart is about to re-bind. For a Running service the adds are no-ops (the
-    // ports are still reserved).
+    // Re-reserve the job's host ports in the in-memory allocator after node restart:
+    // stopped-like services retain their endpoints, so concurrent starts must not reuse
+    // ports this restart will re-bind. Already reserved ports make these adds no-ops.
     for (const ep of job.endpoints) reserveHostPort(ep.hostPort)
 
     await this.logServiceDockerState(`restart ${serviceId}: before teardown`, serviceId)
@@ -4995,20 +6487,52 @@ export class C2DEngineDocker extends C2DEngine {
     // persisted as Restarting, so a crash anywhere in this method leaves a pending-status
     // record that the boot loop orphan-recovers (refund-safe: the original payment's
     // claimTx is set, so recovery never touches escrow for a restart).
+    //
+    // A service without an output bucket keeps its /data/outputs across the restart: the old
+    // container is only stopped here, and removed once its folder has been copied into the
+    // new one (step 8). A stopped container is not an endpoint of the network, so removing
+    // the network below leaves it alone. With a bucket the results are in the bucket already.
+    let previous: Dockerode.Container | null = null
     if (job.containerId) {
-      CORE_LOGGER.debug(`restart ${serviceId}: removing old container ${job.containerId}`)
+      CORE_LOGGER.debug(`restart ${serviceId}: stopping old container ${job.containerId}`)
       // Final snapshot of the outgoing container before it is torn down (best-effort).
       await this.captureFinalServiceSnapshot(job)
       const c = this.docker.getContainer(job.containerId)
+      // Already stopped (304) or already gone (404) counts as stopped.
+      let stopped = true
       await c.stop({ t: 10 }).catch((e) => {
-        CORE_LOGGER.debug(`restart ${serviceId}: old container stop: ${e.message}`)
+        if (!isBenignDockerError(e)) stopped = false
+        logDockerCleanupError(e, `restart ${serviceId}: old container stop: ${e.message}`)
       })
-      await c.remove({ force: true }).catch((e) => {
-        CORE_LOGGER.debug(`restart ${serviceId}: old container remove: ${e.message}`)
-      })
+      if (job.outputBucketId) {
+        await c.remove({ force: true, v: true }).catch((e) => {
+          logDockerCleanupError(
+            e,
+            `restart ${serviceId}: old container remove: ${e.message}`
+          )
+        })
+      } else if (!stopped) {
+        // It can't be kept for the carry-over: it may still be running, and
+        // removeServiceNetwork below force-removes a container still attached to the
+        // network, folder and all. Archive the folder now instead; the new container
+        // starts with an empty one.
+        CORE_LOGGER.error(
+          `restart ${serviceId}: could not stop old container ${job.containerId} — archiving ${SERVICE_OUTPUTS_PATH} instead of carrying it over`
+        )
+        await this.archiveServiceOutputs(job, c)
+        await c.remove({ force: true, v: true }).catch((e) => {
+          logDockerCleanupError(
+            e,
+            `restart ${serviceId}: old container remove: ${e.message}`
+          )
+        })
+      } else {
+        previous = c
+        job.previousContainerId = job.containerId
+      }
     }
     await this.removeServiceNetwork(serviceId, job.networkId).catch((e) => {
-      CORE_LOGGER.debug(`restart ${serviceId}: old network removal: ${e.message}`)
+      CORE_LOGGER.error(`restart ${serviceId}: old network removal: ${e.message}`)
     })
     await this.logServiceDockerState(`restart ${serviceId}: after teardown`, serviceId)
 
@@ -5017,6 +6541,29 @@ export class C2DEngineDocker extends C2DEngine {
     // Reset the metrics accumulators: the new container is a fresh process, so peak memory
     // and CPU deltas must not carry over from the outgoing one.
     job.runtimeMetrics = undefined
+    // Same for readiness: the replacement container has to earn "ready" again (an Edit relaunch
+    // re-downloads the model), and reporting the outgoing container's ready state would hand the
+    // user a live endpoint minutes before there is one.
+    //
+    // Resolved defensively: this runs OUTSIDE the try below that turns a failure into a persisted
+    // Error status, so anything thrown here would abandon the restart with the job stuck reading
+    // Restarting forever. Readiness is best-effort reporting — it must never be the reason a
+    // lifecycle operation fails.
+    let restartEngineId: string | undefined
+    try {
+      restartEngineId = resolveServiceEngine(job)?.id
+    } catch (e: any) {
+      CORE_LOGGER.error(`restart ${serviceId}: engine detection failed: ${e?.message}`)
+    }
+    job.readiness = restartEngineId
+      ? { state: 'waiting', engine: restartEngineId }
+      : undefined
+    job.imagePull = undefined
+    job.modelDownload = undefined
+    // Optional-chained deliberately: this cache is best-effort bookkeeping for the next probe, and
+    // a restart must not fail because of it. (It is also absent on an engine built without running
+    // field initializers, which is how the unit tests construct one.)
+    this.serviceProbeUrls?.delete(serviceId)
     await this.db.updateServiceJob(job)
 
     // Live Docker handles for the newly-created container/network, tracked so the
@@ -5061,11 +6608,17 @@ export class C2DEngineDocker extends C2DEngine {
         await this.db.updateServiceJob(job)
         const ram = job.resources.find((r) => r.id === 'ram')?.amount
         const cpu = job.resources.find((r) => r.id === 'cpu')?.amount
+        // Image build gets its own short budget, not the service's full runtime duration, and
+        // is capped so it can never exceed that duration.
+        const buildTimeoutSeconds = this.resolveBuildTimeoutSeconds(
+          sod?.buildTimeoutSeconds,
+          job.duration
+        )
         await this.buildImageFromSpec(
           effContainerImage,
           effDockerfile,
           effAdditionalDockerFiles ?? {},
-          sod?.maxDurationSeconds ?? job.duration,
+          buildTimeoutSeconds,
           ram,
           cpu
         )
@@ -5079,8 +6632,12 @@ export class C2DEngineDocker extends C2DEngine {
       // 3. Decrypt the effective userData (empty in RESPEC mode when the caller omitted it).
       const decryptedUserData = await decryptUserData(effUserData, this.keyManager)
 
-      // 4. Rebuild env (from userData) + command/entrypoint
-      const env = userDataToEnv(decryptedUserData)
+      // 4. Rebuild env (from userData) + command/entrypoint. Node-owner PASS_CONTAINER_ENVS is
+      //    merged on top (owner wins), matching the start path above.
+      const env = mergeOwnerEnvs(
+        userDataToEnv(decryptedUserData),
+        this.getConfig()?.passContainerEnvs ?? {}
+      )
       const cmd = effDockerCmd?.length ? effDockerCmd : undefined
       const entrypoint = effDockerEntrypoint?.length ? effDockerEntrypoint : undefined
 
@@ -5115,11 +6672,13 @@ export class C2DEngineDocker extends C2DEngine {
       )
 
       // 8. Create and start new container
-      container = await this.docker.createContainer({
+      const outputMounts = await this.serviceOutputMounts(job)
+      const hfPlan = await this.serviceHfPlan(effContainerImage, env, serviceId)
+      const build = (spec: ServiceHfContainerSpec): ContainerCreateOptions => ({
         Image: effContainerImage,
         Cmd: cmd,
         Entrypoint: entrypoint,
-        Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
+        Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
         ExposedPorts,
         HostConfig: {
           Memory,
@@ -5133,12 +6692,40 @@ export class C2DEngineDocker extends C2DEngine {
           ...(IpcMode ? { IpcMode } : {}),
           ...(ShmSize ? { ShmSize } : {}),
           PidsLimit: PidsLimit ?? SERVICE_DEFAULT_PIDS_LIMIT,
-          Mounts: await this.serviceOutputMounts(job)
+          Mounts: outputMounts
         }
       })
+      container = await this.createServiceContainer(serviceId, hfPlan, build)
       CORE_LOGGER.debug(
         `restart ${serviceId}: created container ${container.id} on network ${network.id} — starting`
       )
+      await this.ensureServiceOutputsFolder(job, container)
+
+      // Carry /data/outputs over from the old container, then let it go. If the copy fails
+      // the old folder is archived instead, so nothing is lost. The new container is
+      // persisted before the old one is removed: a crash from here on recovers (and
+      // archives) the new container, which now holds the results.
+      if (previous) {
+        try {
+          await this.copyServiceOutputs(previous, container)
+        } catch (e: any) {
+          CORE_LOGGER.error(
+            `restart ${serviceId}: could not carry ${SERVICE_OUTPUTS_PATH} over (${e.message}) — archiving it instead`
+          )
+          await this.archiveServiceOutputs(job, previous)
+        }
+        job.containerId = container.id
+        await this.db.updateServiceJob(job)
+        await previous.remove({ force: true, v: true }).catch((e) => {
+          logDockerCleanupError(
+            e,
+            `restart ${serviceId}: old container remove: ${e.message}`
+          )
+        })
+        previous = null
+        delete job.previousContainerId
+      }
+
       await container.start()
       CORE_LOGGER.debug(`restart ${serviceId}: container ${container.id} started`)
 
@@ -5160,9 +6747,11 @@ export class C2DEngineDocker extends C2DEngine {
       job.statusText = ServiceStatusText[ServiceStatusNumber.Running]
       await this.db.updateServiceJob(job)
       CORE_LOGGER.info(
-        `restart ${serviceId}: completed — container ${container.id} Running on ` +
-          `ports [${job.endpoints.map((ep) => ep.hostPort).join(',')}]`
+        `Service ${serviceId} restarted on ports [${job.endpoints
+          .map((ep) => ep.hostPort)
+          .join(',')}]`
       )
+      CORE_LOGGER.debug(`restart ${serviceId}: container ${container.id} running`)
       return job
     } catch (err: any) {
       // Dump the daemon state BEFORE cleanup, so the log shows what the failure saw
@@ -5171,7 +6760,19 @@ export class C2DEngineDocker extends C2DEngine {
         `restart ${serviceId}: FAILED (${err.message}) — docker state at failure`,
         serviceId
       )
+      // The failed restart must not take /data/outputs with it: archive whichever container
+      // holds it — the old one if the carry-over didn't happen yet, else the new one.
+      if (!job.outputBucketId) {
+        const holder = previous ?? (job.containerId ? container : null)
+        if (holder) await this.archiveServiceOutputs(job, holder)
+      }
+      if (previous) {
+        await previous.remove({ force: true, v: true }).catch(() => {})
+        delete job.previousContainerId
+      }
       await this.cleanupServiceDocker(container, network, serviceId)
+      // Set once the carry-over switched to the new container, which is gone now too.
+      job.containerId = ''
       // Ports deliberately stay reserved: the consumer paid until expiresAt and may
       // restart again — the expiry sweep releases them when the window elapses.
       job.status = ServiceStatusNumber.Error
@@ -5220,6 +6821,126 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
+  public override async getServiceResult(
+    serviceId: string,
+    owner: string,
+    index: number | 'live',
+    offset: number = 0
+  ): Promise<ServiceResult | null> {
+    const [job] = await this.db.getServiceJob(serviceId, owner)
+    if (!job) return null
+    const zipHeaders = (filename: string) => ({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${filename}"`
+    })
+
+    if (index === 'live') {
+      if (job.outputBucketId)
+        throw new ServiceResultError(
+          400,
+          `Service ${serviceId} writes its outputs to bucket ${job.outputBucketId}; download them from the bucket`
+        )
+      if (
+        !job.containerId ||
+        (job.status !== ServiceStatusNumber.Running &&
+          job.status !== ServiceStatusNumber.Error)
+      )
+        throw new ServiceResultError(
+          409,
+          `Service ${serviceId} has no container right now (status "${job.statusText}"); download one of its output archives instead`
+        )
+      let tar: NodeJS.ReadableStream
+      try {
+        tar = await this.docker
+          .getContainer(job.containerId)
+          .getArchive({ path: SERVICE_OUTPUTS_PATH })
+      } catch (e: any) {
+        if (e?.statusCode === 404)
+          throw new ServiceResultError(
+            404,
+            `Service ${serviceId} has no ${SERVICE_OUTPUTS_PATH} to download`
+          )
+        throw e
+      }
+      return {
+        stream: tarToZip(tar),
+        headers: zipHeaders(`${serviceId}-outputs-live.zip`)
+      }
+    }
+
+    const archive = (job.outputArchives ?? []).find((a) => a.index === index)
+    if (!archive)
+      throw new ServiceResultError(
+        404,
+        `Service ${serviceId} has no output archive with index ${index}`
+      )
+    const file = path.join(this.getServiceOutputsFolder(serviceId), archive.filename)
+    let size: number
+    try {
+      ;({ size } = statSync(file))
+    } catch {
+      throw new ServiceResultError(
+        404,
+        `Output archive ${archive.filename} of service ${serviceId} is no longer available`
+      )
+    }
+    if (offset > size)
+      throw new ServiceResultError(
+        416,
+        `Offset ${offset} is past the end of ${archive.filename} (${size} bytes)`
+      )
+    return {
+      stream: createReadStream(file, offset > 0 ? { start: offset } : undefined),
+      headers: {
+        ...zipHeaders(`${serviceId}-${archive.filename}`),
+        'Content-Length': String(size - offset)
+      }
+    }
+  }
+
+  public override async cleanupExpiredServiceOutputs(): Promise<number> {
+    const envs = await this.getComputeEnvironments()
+    // Seconds. The schema defaults every environment's storageExpiry; the fallback only
+    // covers services whose environment was removed from the config since.
+    const defaultStorageExpiry = 604800
+    const storageExpiry = new Map(
+      envs.map((env) => [env.id, env.storageExpiry ?? defaultStorageExpiry])
+    )
+    const now = Date.now()
+    const shortest = Math.min(defaultStorageExpiry, ...storageExpiry.values())
+    const candidates = await this.db.getExpiredServiceJobsBefore(
+      now - shortest * 1000,
+      this.getC2DConfig().hash
+    )
+    let cleaned = 0
+    for (const candidate of candidates) {
+      if (!candidate.outputArchives?.length) continue
+      const expiry = storageExpiry.get(candidate.environment) ?? defaultStorageExpiry
+      if (now < candidate.expiresAt + expiry * 1000) continue
+      try {
+        await this.runExclusive(candidate.serviceId, async () => {
+          const [job] = await this.db.getServiceJob(candidate.serviceId, candidate.owner)
+          if (!job?.outputArchives?.length) return
+          rmSync(this.getServiceOutputsFolder(job.serviceId), {
+            recursive: true,
+            force: true
+          })
+          job.outputArchives = []
+          await this.db.updateServiceJob(job)
+          cleaned++
+          CORE_LOGGER.info(
+            `service ${job.serviceId}: output archives deleted (storage expiry elapsed)`
+          )
+        })
+      } catch (e: any) {
+        CORE_LOGGER.error(
+          `service ${candidate.serviceId}: failed to delete output archives: ${e.message} — retrying next run`
+        )
+      }
+    }
+    return cleaned
+  }
+
   private addUserDataToFilesObject(
     filesObject: any,
     userData: { [key: string]: any }
@@ -5231,7 +6952,6 @@ export class C2DEngineDocker extends C2DEngine {
         url.searchParams.append(key, String(value))
       }
       filesObject.url = url.toString()
-      CORE_LOGGER.info('Appended userData to file url: ' + filesObject.url)
     }
     return filesObject
   }
@@ -5270,9 +6990,10 @@ export class C2DEngineDocker extends C2DEngine {
         // ACL for persistent storage).
         const resolved = await resolveComputeFileObject(job.algorithm)
         if (!resolved) {
-          CORE_LOGGER.info(
-            'Could not extract any files object from the compute algorithm, skipping...'
-          )
+          const hasSource = !!(job.algorithm.fileObject || job.algorithm.documentId)
+          const msg = `Job ${job.jobId}: could not extract any files object from the compute algorithm, skipping`
+          if (hasSource) CORE_LOGGER.warn(msg)
+          else CORE_LOGGER.debug(msg)
           appendFileSync(
             configLogPath,
             'Could not extract any files object from the compute algorithm, skipping...\n'
@@ -5281,7 +7002,9 @@ export class C2DEngineDocker extends C2DEngine {
           try {
             storage = Storage.getStorageClass(resolved, config, job.owner)
           } catch (e) {
-            CORE_LOGGER.error(`Unable to get storage class for algorithm: ${e.message}`)
+            CORE_LOGGER.error(
+              `Job ${job.jobId}: unable to get storage class for algorithm: ${errorSummary(e)}`
+            )
             appendFileSync(
               configLogPath,
               `Unable to get storage class for algorithm: ${e.message}\n`
@@ -5299,7 +7022,7 @@ export class C2DEngineDocker extends C2DEngine {
       }
     } catch (e) {
       CORE_LOGGER.error(
-        'Unable to write algorithm to path: ' + fullAlgoPath + ': ' + e.message
+        `Job ${job.jobId}: unable to write algorithm to ${fullAlgoPath}: ${errorSummary(e)}`
       )
       appendFileSync(
         configLogPath,
@@ -5316,7 +7039,35 @@ export class C2DEngineDocker extends C2DEngine {
       const asset = job.assets[i]
       let storage = null
       let fileInfo = null
-      appendFileSync(configLogPath, `Downloading asset ${i} to /data/inputs/\n`)
+      appendFileSync(configLogPath, `Downloading asset ${i} to /data/inputs/${i}/\n`)
+      // Fill /data/ddos/<did> with this input's DDO (pod-configuration contract), so the
+      // algorithm can read the dataset metadata. Raw fileObject inputs have no DDO to write.
+      if (asset.documentId) {
+        try {
+          const ddo = await new FindDdoHandler(OceanNode.getInstance()).findAndFormatDdo(
+            asset.documentId
+          )
+          if (ddo) {
+            // basename strips any directory components so a crafted documentId cannot
+            // escape /data/ddos; a well-formed DID has no '/', so it is left intact
+            const ddoPath = path.join(
+              jobFolderPath,
+              'data/ddos',
+              path.basename(asset.documentId)
+            )
+            writeFileSync(ddoPath, JSON.stringify(ddo))
+            appendFileSync(
+              configLogPath,
+              `Wrote DDO for ${asset.documentId} to /data/ddos/\n`
+            )
+          }
+        } catch (e) {
+          appendFileSync(
+            configLogPath,
+            `Could not write DDO for ${asset.documentId}: ${e.message}\n`
+          )
+        }
+      }
       // without this check it would break if no fileObject is present
       if (asset.fileObject) {
         try {
@@ -5327,7 +7078,9 @@ export class C2DEngineDocker extends C2DEngine {
             }
             storage = Storage.getStorageClass(asset.fileObject, config)
           } else {
-            CORE_LOGGER.info('asset file object seems to be encrypted, checking it...')
+            CORE_LOGGER.debug(
+              `Job ${job.jobId} asset ${i}: file object seems to be encrypted, checking it`
+            )
             // get the encrypted bytes
             let filesObject: any = await decryptFilesObject(asset.fileObject)
             // persistent storage assets are bind-mounted during ConfiguringVolumes;
@@ -5344,7 +7097,9 @@ export class C2DEngineDocker extends C2DEngine {
             type: storage.getStorageType(asset.fileObject)
           })
         } catch (e) {
-          CORE_LOGGER.error(`Unable to get storage class for asset: ${e.message}`)
+          CORE_LOGGER.error(
+            `Job ${job.jobId} asset ${i}: unable to get storage class: ${errorSummary(e)}`
+          )
           appendFileSync(
             configLogPath,
             `Unable to get storage class for asset: ${e.message}\n`
@@ -5368,7 +7123,7 @@ export class C2DEngineDocker extends C2DEngine {
               OceanNode.getInstance()
             ).findAndFormatDdo(documentId)
             // 2. Get the service
-            const service: Service = AssetUtils.getServiceById(ddo, serviceId)
+            const service = DDOManager.getDDOClass(ddo).getService(serviceId) as Service
             // 3. Decrypt the url
             let decryptedFileObject = await decryptFilesObject(service.files)
             // persistent storage assets are bind-mounted during ConfiguringVolumes
@@ -5384,7 +7139,9 @@ export class C2DEngineDocker extends C2DEngine {
               type: storage.getStorageType(decryptedFileObject)
             })
           } catch (e) {
-            CORE_LOGGER.error(`Unable to get storage class for asset: ${e.message}`)
+            CORE_LOGGER.error(
+              `Job ${job.jobId} asset ${i}: unable to get storage class (DDO lookup): ${errorSummary(e)}`
+            )
             appendFileSync(
               configLogPath,
               `Unable to get storage class for asset: ${e.message}\n`
@@ -5398,7 +7155,35 @@ export class C2DEngineDocker extends C2DEngine {
       }
 
       if (storage && fileInfo) {
-        const fullPath = jobFolderPath + '/data/inputs/' + fileInfo[0].name
+        // Each input gets its own folder keyed by its position in job.assets, so two
+        // inputs can never collide on a shared file name (and a dataset can no longer
+        // overwrite the consumer's /data/inputs/algoCustomData.json). The DIDS env var
+        // maps the folder index back to the input DID.
+        const inputFolder = path.join(jobFolderPath, 'data/inputs', i)
+        try {
+          if (!existsSync(inputFolder)) {
+            mkdirSync(inputFolder, { recursive: true })
+          }
+          // match the 0o777 used for the job's top-level data dirs so the (non-root)
+          // container user can read the inputs
+          chmodSync(inputFolder, 0o777)
+        } catch (e) {
+          CORE_LOGGER.error(
+            'Unable to create input folder: ' + inputFolder + ': ' + e.message
+          )
+          appendFileSync(
+            configLogPath,
+            'Unable to create input folder: ' + inputFolder + ': ' + e.message + '\n'
+          )
+          return {
+            status: C2DStatusNumber.DataProvisioningFailed,
+            statusText: C2DStatusText.DataProvisioningFailed
+          }
+        }
+        // basename strips any directory components a storage driver might return, keeping
+        // the file inside its index folder; fall back to the index when there is no name
+        const inputName = path.basename(fileInfo[0].name || '') || i
+        const fullPath = path.join(inputFolder, inputName)
         appendFileSync(configLogPath, `Downloading asset to ${fullPath}\n`)
         try {
           await pipeline(
@@ -5407,7 +7192,7 @@ export class C2DEngineDocker extends C2DEngine {
           )
         } catch (e) {
           CORE_LOGGER.error(
-            'Unable to write input data to path: ' + fullPath + ': ' + e.message
+            `Job ${job.jobId}: unable to write input data to ${fullPath}: ${errorSummary(e)}`
           )
           appendFileSync(
             configLogPath,
@@ -5419,16 +7204,18 @@ export class C2DEngineDocker extends C2DEngine {
           }
         }
       } else {
-        CORE_LOGGER.info(
-          'Could not extract any files object from the compute asset, skipping...'
-        )
+        const msg = `Job ${job.jobId} asset ${i}: could not extract any files object from the compute asset, skipping`
+        if (asset.fileObject || asset.documentId) CORE_LOGGER.warn(msg)
+        else CORE_LOGGER.debug(msg)
         appendFileSync(
           configLogPath,
           'Could not extract any files object from the compute asset, skipping...\n'
         )
       }
     }
-    CORE_LOGGER.info('All good with data provisioning, will start uploading it...')
+    CORE_LOGGER.debug(
+      `Job ${job.jobId}: data provisioning done, starting upload to container`
+    )
     appendFileSync(
       configLogPath,
       'All good with data provisioning, will start uploading it...\n'
@@ -5458,6 +7245,9 @@ export class C2DEngineDocker extends C2DEngine {
             path: '/data'
           })
         } catch (e) {
+          CORE_LOGGER.error(
+            `Job ${job.jobId}: data upload to container failed: ${e.message}`
+          )
           appendFileSync(
             configLogPath,
             'Data upload to container failed: ' + e.message + '\n'
@@ -5472,7 +7262,7 @@ export class C2DEngineDocker extends C2DEngine {
         appendFileSync(configLogPath, `No data to upload, empty tar.gz\n`)
       }
     } catch (e) {
-      CORE_LOGGER.debug(e.message)
+      CORE_LOGGER.error(`Job ${job.jobId}: failed to create data archive: ${e.message}`)
       appendFileSync(configLogPath, `Error creating data archive: ${e.message}\n`)
       return {
         status: C2DStatusNumber.DataProvisioningFailed,
@@ -5517,7 +7307,9 @@ export class C2DEngineDocker extends C2DEngine {
       }
       return true
     } catch (e) {
-      CORE_LOGGER.error('Failed to create folders needed for the job: ' + e.message)
+      CORE_LOGGER.error(
+        `Job ${job.jobId}: failed to create folders needed for the job: ${e.message}`
+      )
       return false
     }
   }
@@ -5528,7 +7320,7 @@ export class C2DEngineDocker extends C2DEngine {
     isCleanAfterDownload: boolean = false
   ): Promise<boolean> {
     if (!job) return false
-    CORE_LOGGER.info('Cleaning up C2D storage for Job: ' + job.jobId)
+    CORE_LOGGER.debug(`Job ${job.jobId}: cleaning up C2D storage`)
     try {
       // delete the storage
       // for free env, the container is deleted as soon as we download the results
@@ -5543,7 +7335,7 @@ export class C2DEngineDocker extends C2DEngine {
       await this.db.deleteJob(job.jobId)
       return true
     } catch (e) {
-      CORE_LOGGER.error('Error cleaning up C2D storage and Job: ' + e.message)
+      CORE_LOGGER.error(`Job ${job.jobId}: error cleaning up C2D storage: ${e.message}`)
     }
     return false
   }
@@ -5564,28 +7356,28 @@ export class C2DEngineDocker extends C2DEngine {
       await this.docker.getImage(trivyImage).inspect()
       return true
     } catch (error) {
-      if (error.statusCode === 404) {
-        CORE_LOGGER.info(`Trivy not found. Pulling ${trivyImage}...`)
-        const stream = await this.docker.pull(trivyImage)
-
-        // We must wrap the pull stream in a promise to wait for completion
-        await new Promise((resolve, reject) => {
-          this.docker.modem.followProgress(stream, (err, res) =>
-            err ? reject(err) : resolve(res)
-          )
-        })
-
-        CORE_LOGGER.info('Pull complete.')
-        return true
-      } else {
-        CORE_LOGGER.error(`Unable to pull ${trivyImage}: ${error.message}`)
+      if (error.statusCode !== 404) {
+        CORE_LOGGER.error(`Unable to inspect Trivy image ${trivyImage}: ${error.message}`)
         return true
       }
     }
+    // 404: not pulled yet
+    CORE_LOGGER.info(`Trivy not found. Pulling ${trivyImage}...`)
+    const stream = await this.docker.pull(trivyImage)
+
+    // We must wrap the pull stream in a promise to wait for completion
+    await new Promise((resolve, reject) => {
+      this.docker.modem.followProgress(stream, (err, res) =>
+        err ? reject(err) : resolve(res)
+      )
+    })
+
+    CORE_LOGGER.info(`Trivy image ${trivyImage} pulled`)
+    return true
   }
 
   private async scanDBUpdate(): Promise<void> {
-    CORE_LOGGER.info('Starting Trivy database refresh cron')
+    CORE_LOGGER.debug('Starting Trivy database refresh cron')
     const hasImage = await this.checkscanDBImage()
     if (!hasImage) {
       // we cannot update without image
@@ -5602,7 +7394,7 @@ export class C2DEngineDocker extends C2DEngine {
     await updater.start()
     await updater.wait()
     await updater.remove()
-    CORE_LOGGER.info('Trivy database refreshed.')
+    CORE_LOGGER.debug('Trivy database refreshed')
   }
 
   private async scanImage(imageName: string) {
@@ -5682,23 +7474,19 @@ export class C2DEngineDocker extends C2DEngine {
         const jsonText = rawData.slice(firstBrace, lastBrace + 1).trim()
         if (!jsonText.includes('"SchemaVersion"')) {
           CORE_LOGGER.error(
-            'Trivy output did not contain SchemaVersion in extracted JSON. Truncated output: ' +
-              rawData.slice(0, 500)
+            `Trivy scan of ${imageName} returned unparseable output (no SchemaVersion)`
           )
+          CORE_LOGGER.debug(`Trivy raw output (truncated): ${rawData.slice(0, 500)}`)
           return null
         }
         return JSON.parse(jsonText)
       }
 
-      CORE_LOGGER.error(
-        `Failed to locate JSON in Trivy output. Truncated output: ${rawData.slice(
-          0,
-          1000
-        )}`
-      )
+      CORE_LOGGER.error(`Trivy scan of ${imageName} returned unparseable output`)
+      CORE_LOGGER.debug(`Trivy raw output (truncated): ${rawData.slice(0, 1000)}`)
       return null
     } catch (e) {
-      CORE_LOGGER.error('Failed to parse Trivy output: ' + e.message)
+      CORE_LOGGER.error(`Failed to parse Trivy output for ${imageName}: ${e.message}`)
       return null
     }
   }
@@ -5801,7 +7589,7 @@ export async function resolveComputeFileObject(
       if (!ddo) {
         return null
       }
-      const service: Service = AssetUtils.getServiceById(ddo, serviceId)
+      const service = DDOManager.getDDOClass(ddo).getService(serviceId) as Service
       if (!service) {
         return null
       }
@@ -5809,9 +7597,7 @@ export async function resolveComputeFileObject(
     }
     return null
   } catch (e) {
-    CORE_LOGGER.error(
-      `Unable to resolve compute file object: ${e instanceof Error ? e.message : String(e)}`
-    )
+    CORE_LOGGER.error(`Unable to resolve compute file object: ${errorSummary(e)}`)
     return null
   }
 }

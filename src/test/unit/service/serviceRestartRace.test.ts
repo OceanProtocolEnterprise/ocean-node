@@ -1,5 +1,6 @@
 import { expect, assert } from 'chai'
 import sinon from 'sinon'
+import { getAddress } from 'ethers'
 import { C2DEngineDocker } from '../../../components/c2d/compute_engine_docker.js'
 import { ServiceStatusNumber, ServiceJob } from '../../../@types/C2D/ServiceOnDemand.js'
 import {
@@ -7,6 +8,8 @@ import {
   releaseHostPort,
   reserveHostPort
 } from '../../../components/core/service/utils.js'
+import { PersistentStorageAccessDeniedError } from '../../../components/persistentStorage/PersistentStorageFactory.js'
+import { SubsidyGateError } from '../../../components/core/utils/subsidyProviders.js'
 
 const OWNER = '0x0000000000000000000000000000000000000001'
 const SERVICE_ID = 'svc-race-1'
@@ -16,6 +19,12 @@ const CLUSTER_HASH = 'hash-1'
 // (immediately-resolving) stubbed awaits up to the next genuinely pending promise.
 function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
+}
+
+// The expiry sweep launches each teardown in the background, like the start pipeline, so a
+// test waits for those ops to settle before asserting their outcome.
+async function drainServiceOps(engine: any): Promise<void> {
+  await Promise.allSettled([...engine.serviceOpPromises])
 }
 
 function makeJob(overrides: Partial<ServiceJob> = {}): ServiceJob {
@@ -139,6 +148,155 @@ describe('service lifecycle lock (restart/stop vs InternalLoop races)', () => {
     expect(engine.serviceOpsInFlight.has(SERVICE_ID)).to.equal(false)
     expect(job.status).to.equal(ServiceStatusNumber.Running)
     expect(job.containerId).to.equal('newc')
+  })
+
+  // SUBSIDY_PROVIDER_ALLOWED_IMAGES authoritative backstop: the handler fast-fails on its pre-lock
+  // read, but this check re-runs on the FRESH row UNDER the lifecycle lock — so a concurrent
+  // serviceExtend that subsidizes the job after the handler's read cannot let a RESPEC run a miner on
+  // subsidized funds. These exercise the engine method directly (where the lock + fresh read live).
+  const SUBSIDY = getAddress('0x1111111111111111111111111111111111111111')
+
+  it('restartService REJECTS a RESPEC into a non-allowed image on a subsidized job (under the lock)', async () => {
+    const engine = makeEngine()
+    const job = makeJob({
+      image: 'allowed/app',
+      tag: '1.0',
+      payment: {
+        chainId: 8996,
+        token: '0xtoken',
+        lockTx: '0xl',
+        claimTx: '0xc',
+        cancelTx: '',
+        cost: 5,
+        subsidyProviders: [SUBSIDY]
+      }
+    })
+    engine.db.getServiceJob.resolves([job])
+    engine.config = { subsidyProviderAllowedImages: { [SUBSIDY]: ['allowed/app:1.0'] } }
+
+    let threw: Error | null = null
+    try {
+      await engine.restartService(SERVICE_ID, OWNER, 'miner/xmrig', 'v1')
+    } catch (e: any) {
+      threw = e
+    }
+    expect(threw, 'expected restartService to reject').to.not.equal(null)
+    expect(threw).to.be.instanceOf(SubsidyGateError) // handler maps this to 403, not 500
+    expect(threw!.message).to.match(/non-allowed image/)
+    // Never persisted Restarting, and the lifecycle lock was released (not leaked on the throw).
+    expect(job.status).to.equal(ServiceStatusNumber.Running)
+    expect(engine.serviceOpsInFlight.has(SERVICE_ID)).to.equal(false)
+  })
+
+  it('restartService ALLOWS a RESPEC into the allowed image on a subsidized job', async () => {
+    const engine = makeEngine()
+    const job = makeJob({
+      image: 'allowed/app',
+      tag: '1.0',
+      payment: {
+        chainId: 8996,
+        token: '0xtoken',
+        lockTx: '0xl',
+        claimTx: '0xc',
+        cancelTx: '',
+        cost: 5,
+        subsidyProviders: [SUBSIDY]
+      }
+    })
+    engine.db.getServiceJob.resolves([job])
+    engine.config = { subsidyProviderAllowedImages: { [SUBSIDY]: ['allowed/app:1.0'] } }
+    engine.docker.getContainer.returns(stubContainer()) // old container is torn down
+    engine.docker.createNetwork.resolves({ id: 'newnet' })
+    engine.docker.createContainer.resolves({ ...stubContainer(), id: 'newc' })
+    engine.pullImageRef = sinon.stub().resolves()
+
+    const snapshot = await engine.restartService(SERVICE_ID, OWNER, 'allowed/app', '1.0')
+    expect(snapshot.status).to.equal(ServiceStatusNumber.Restarting)
+    // The background restart must run to completion on the allowed image (not just reach
+    // Restarting), proving the gate let an allowed subsidized restart through end-to-end.
+    await drainServiceOps(engine)
+    expect(job.status).to.equal(ServiceStatusNumber.Running)
+    expect(job.containerImage).to.equal('allowed/app:1.0')
+    expect(job.containerId).to.equal('newc')
+  })
+
+  for (const image of [undefined, 'different-template']) {
+    it(`restarts DiskQuotaExceeded with ${image ? 'RESPEC' : 'REUSE'} and clears disk state`, async () => {
+      const engine = makeEngine()
+      const job = makeJob({
+        status: ServiceStatusNumber.DiskQuotaExceeded,
+        statusText: 'DiskQuotaExceeded',
+        containerId: '',
+        networkId: ''
+      })
+      const { expiresAt } = job
+      engine.db.getServiceJob.resolves([job])
+      engine.serviceDiskCheckedAt = new Map([[SERVICE_ID, Date.now()]])
+      engine.serviceDiskUnmeasured = new Map([[SERVICE_ID, 'old mount']])
+      engine.docker.createNetwork.resolves({ id: 'newnet' })
+      engine.docker.createContainer.resolves({ ...stubContainer(), id: 'newc' })
+      engine.pullImageRef = sinon.stub().resolves()
+      const snapshot = await engine.restartService(
+        SERVICE_ID,
+        OWNER,
+        image,
+        image ? 'v2' : undefined
+      )
+      expect(snapshot.status).to.equal(ServiceStatusNumber.Restarting)
+      expect(engine.serviceDiskCheckedAt.has(SERVICE_ID)).to.equal(false)
+      expect(engine.serviceDiskUnmeasured.has(SERVICE_ID)).to.equal(false)
+      await drainServiceOps(engine)
+      expect(job.status).to.equal(ServiceStatusNumber.Running)
+      expect(job.statusText).to.equal('Running')
+      expect(job.image).to.equal(image ?? 'img')
+      expect(job.containerImage).to.equal(image ? 'different-template:v2' : 'img:latest')
+      expect(job.expiresAt).to.equal(expiresAt)
+      expect(job.terminationReason).to.equal(undefined)
+      expect(engine.docker.createContainer.firstCall.args[0].Image).to.equal(
+        job.containerImage
+      )
+    })
+  }
+
+  // A disk stop whose teardown failed (Error + pending reason) is restartable like any
+  // paid Error; the owner editing the service there must cancel the abandoned disk stop.
+  it('restarting a failed disk stop (Error + pending reason) with a new spec drops the reason for good', async () => {
+    const engine = makeEngine()
+    const job = makeJob({
+      status: ServiceStatusNumber.Error,
+      statusText: 'DiskQuotaExceeded: stop failed: daemon busy',
+      terminationReason: ServiceStatusNumber.DiskQuotaExceeded
+    })
+    engine.db.getServiceJob.resolves([job])
+    const old = stubContainer({ stop: sinon.stub().rejects(new Error('daemon busy')) })
+    engine.docker.getContainer.returns(old)
+    sinon.stub(engine, 'archiveServiceOutputs').resolves()
+    engine.docker.createNetwork.resolves({ id: 'newnet' })
+    engine.docker.createContainer.resolves({ ...stubContainer(), id: 'newc' })
+    engine.pullImageRef = sinon.stub().resolves()
+    await engine.restartService(
+      SERVICE_ID,
+      OWNER,
+      'smaller-model',
+      'v2',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ['serve', '--model', 'small']
+    )
+    await drainServiceOps(engine)
+    expect(job.status).to.equal(ServiceStatusNumber.Running)
+    expect(job.terminationReason).to.equal(undefined)
+    expect(job.containerImage).to.equal('smaller-model:v2')
+    expect(job.dockerCmd).to.deep.equal(['serve', '--model', 'small'])
+    expect(engine.docker.createContainer.firstCall.args[0].Cmd).to.deep.equal([
+      'serve',
+      '--model',
+      'small'
+    ])
+    // the old container's anonymous volumes (models) go with it
+    expect(old.remove.calledWith({ force: true, v: true })).to.equal(true)
   })
 
   it('restartService releases the lock and persists Error on the failure path', async () => {
@@ -345,7 +503,40 @@ describe('service lifecycle lock (restart/stop vs InternalLoop races)', () => {
     engine.serviceOpsInFlight.clear()
     engine.isInternalLoopRunning = false
     await engine.InternalLoop()
+    await drainServiceOps(engine)
     expect(expired.status).to.equal(ServiceStatusNumber.Expired)
+  })
+
+  it('the expiry sweep does not hold up InternalLoop while a teardown archives outputs', async () => {
+    const engine = makeEngine()
+    const expired = makeJob({ expiresAt: Date.now() - 1000 })
+    engine.db.getExpiredServiceJobs.resolves([expired])
+    engine.db.getServiceJob.resolves([expired])
+    engine.docker.getContainer.returns(stubContainer())
+    let finishArchive: () => void
+    engine.archiveServiceOutputs = sinon.stub().returns(
+      new Promise<void>((resolve) => {
+        finishArchive = resolve
+      })
+    )
+
+    // the loop returns while the zip of /data/outputs is still being written...
+    await engine.InternalLoop()
+    await flush()
+    expect(engine.archiveServiceOutputs.calledOnce).to.equal(true)
+    expect(expired.status).to.equal(ServiceStatusNumber.Stopping)
+    expect(engine.serviceOpsInFlight.has(SERVICE_ID)).to.equal(true)
+
+    // ...and an overlapping tick leaves the in-flight teardown alone
+    engine.isInternalLoopRunning = false
+    await engine.InternalLoop()
+    await flush()
+    expect(engine.archiveServiceOutputs.calledOnce).to.equal(true)
+
+    finishArchive!()
+    await drainServiceOps(engine)
+    expect(expired.status).to.equal(ServiceStatusNumber.Expired)
+    expect(engine.serviceOpsInFlight.has(SERVICE_ID)).to.equal(false)
   })
 
   it('restartService rejects when another process holds the DB lease', async () => {
@@ -452,6 +643,7 @@ describe('service lifecycle lock (restart/stop vs InternalLoop races)', () => {
       engine.db.getExpiredServiceJobs.resolves([job])
       engine.isInternalLoopRunning = false
       await engine.InternalLoop()
+      await drainServiceOps(engine)
       expect(job.status).to.equal(ServiceStatusNumber.Expired)
       expect(await allocateHostPort(PORT, PORT)).to.equal(PORT)
     } finally {
@@ -472,6 +664,7 @@ describe('service lifecycle lock (restart/stop vs InternalLoop races)', () => {
     engine.docker.getContainer.returns(stubContainer())
 
     await engine.InternalLoop()
+    await drainServiceOps(engine)
 
     expect(extended.status).to.equal(ServiceStatusNumber.Running)
     expect(engine.docker.getContainer.called, 'no teardown may happen').to.equal(false)
@@ -489,6 +682,7 @@ describe('service lifecycle lock (restart/stop vs InternalLoop races)', () => {
     )
 
     await engine.InternalLoop()
+    await drainServiceOps(engine)
     // Expired is terminal and never swept again — a failed stop must leave the job
     // OUT of Expired (as Error "stop failed") so the container/ports aren't leaked.
     expect(expired.status).to.not.equal(ServiceStatusNumber.Expired)
@@ -498,27 +692,34 @@ describe('service lifecycle lock (restart/stop vs InternalLoop races)', () => {
     engine.docker.getContainer.returns(stubContainer())
     engine.isInternalLoopRunning = false
     await engine.InternalLoop()
+    await drainServiceOps(engine)
     expect(expired.status).to.equal(ServiceStatusNumber.Expired)
   })
 
-  it('the expiry sweep flips a Stopped service past expiresAt to Expired without touching docker', async () => {
-    const engine = makeEngine()
-    const stopped = makeJob({
-      status: ServiceStatusNumber.Stopped,
-      statusText: 'Stopped',
-      containerId: '',
-      networkId: '',
-      expiresAt: Date.now() - 1000
+  for (const status of [
+    ServiceStatusNumber.Stopped,
+    ServiceStatusNumber.DiskQuotaExceeded
+  ]) {
+    it(`the expiry sweep flips stopped-like ${status} service past expiresAt to Expired without touching docker`, async () => {
+      const engine = makeEngine()
+      const stopped = makeJob({
+        status,
+        statusText: 'Stopped',
+        containerId: '',
+        networkId: '',
+        expiresAt: Date.now() - 1000
+      })
+      engine.db.getExpiredServiceJobs.resolves([stopped])
+      engine.db.getServiceJob.resolves([stopped])
+
+      await engine.InternalLoop()
+      await drainServiceOps(engine)
+
+      expect(stopped.status).to.equal(ServiceStatusNumber.Expired)
+      // resources were already released at stop time — no docker teardown must happen
+      expect(engine.docker.getContainer.called).to.equal(false)
     })
-    engine.db.getExpiredServiceJobs.resolves([stopped])
-    engine.db.getServiceJob.resolves([stopped])
-
-    await engine.InternalLoop()
-
-    expect(stopped.status).to.equal(ServiceStatusNumber.Expired)
-    // resources were already released at stop time — no docker teardown must happen
-    expect(engine.docker.getContainer.called).to.equal(false)
-  })
+  }
 
   it('processServiceStart ignores a stale pending snapshot (job already Running again)', async () => {
     const engine = makeEngine()
@@ -559,5 +760,34 @@ describe('service lifecycle lock (restart/stop vs InternalLoop races)', () => {
     }
     expect(engine.db.getServiceJob.called).to.equal(false)
     expect(engine.db.acquireServiceLock.called).to.equal(false)
+  })
+})
+
+describe('restartService with an output bucket the owner can no longer use', () => {
+  afterEach(() => sinon.restore())
+
+  it('refuses before tearing anything down, leaving the job and its container as they were', async () => {
+    const engine = makeEngine()
+    const job = makeJob({ outputBucketId: 'bucket-1' })
+    engine.db.getServiceJob.resolves([job])
+    const container = stubContainer()
+    engine.docker.getContainer.returns(container)
+    // e.g. bucket sharing was turned off and the bucket belongs to someone else
+    engine.serviceOutputMounts = sinon
+      .stub()
+      .rejects(new PersistentStorageAccessDeniedError())
+
+    let error: unknown
+    try {
+      await engine.restartService(SERVICE_ID, OWNER)
+    } catch (e) {
+      error = e
+    }
+    expect(error).to.be.instanceOf(PersistentStorageAccessDeniedError)
+    expect(container.stop.called).to.equal(false)
+    expect(container.remove.called).to.equal(false)
+    expect(engine.db.updateServiceJob.called).to.equal(false)
+    expect(job.status).to.equal(ServiceStatusNumber.Running)
+    expect(engine.serviceOpsInFlight.has(SERVICE_ID)).to.equal(false)
   })
 })

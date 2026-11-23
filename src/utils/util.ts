@@ -1,7 +1,7 @@
-import { LOG_LEVELS_STR } from './logging/Logger.js'
 import { Readable, Stream } from 'stream'
 import { Interface } from 'ethers'
-import { PROVIDER_LOGGER } from './logging/common.js'
+import { CORE_LOGGER } from './logging/common.js'
+import { errorSummary } from './logging/redact.js'
 
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -20,6 +20,26 @@ export function sanitizeServiceFiles(serviceFiles: string): string {
   } else {
     return serviceFiles
   }
+}
+
+/**
+ * Makes a caller-supplied value safe to interpolate into a single log line. Caller-controlled
+ * identifiers (did, serviceId, consumerAddress, command name, peer id, ...) can carry embedded
+ * CR/LF; interpolated raw they let an attacker forge extra log entries (CWE-117, log
+ * injection). This escapes the line breaks so the value stays readable on one line. Use it when
+ * a request-derived value is placed into a message by string interpolation - JSON.stringify
+ * already escapes control characters, so values logged that way do not need it.
+ *
+ * Only scalars are rendered; null, undefined and compound values (objects, arrays) become an
+ * empty string rather than "[object Object]" or a comma-joined dump of caller-supplied data.
+ */
+export function sanitizeLogValue(value: unknown): string {
+  const isScalar =
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  return (isScalar ? String(value) : '').replace(/\r/g, '\\r').replace(/\n/g, '\\n')
 }
 
 /**
@@ -106,38 +126,57 @@ export function getEventFromTx(txReceipt: { logs: any[] }, eventName: any) {
   })[0]
 }
 
+/**
+ * Decode the `eventName` logs of a receipt that were emitted by `expectedEmitter`.
+ *
+ * The emitter address is REQUIRED and the match is enforced: a log whose `log.address`
+ * is not `expectedEmitter` (case-insensitive) is skipped before decoding. Decoding by ABI
+ * signature alone is not enough to trust an event - any contract can emit a log whose topic0
+ * matches a well-known signature, so an attacker can self-emit a forged `OrderStarted`/
+ * `ProviderFee` from a contract they control and have it decode cleanly. Binding to the
+ * emitting contract (the datatoken / data NFT the DDO names) is what makes the event
+ * authentic (ON-01). The original `log` - including its `.address` - is preserved on each
+ * returned entry so callers can re-check the emitter if they need to.
+ */
 export function fetchEventFromTransaction(
   txReceipt: any,
   eventName: string,
-  contractInterface: Interface
+  contractInterface: Interface,
+  expectedEmitter: string
 ): any[] {
   try {
-    // Filter and decode logs
+    if (!expectedEmitter) {
+      CORE_LOGGER.error(
+        `fetchEventFromTransaction called without an expected emitter for ${eventName}`
+      )
+      return null
+    }
+    const emitter = expectedEmitter.toLowerCase()
+    // Filter by emitter first, then decode
     const events = txReceipt.logs
-      .map((log: any) => ({
-        address: log.address,
-        topics: [...log.topics],
-        data: log.data
-      }))
       .filter((log: any) => {
+        if (!log?.address || log.address.toLowerCase() !== emitter) {
+          return false
+        }
         try {
-          const parsedLog = contractInterface.parseLog(log)
-          return parsedLog.name === eventName
+          const parsedLog = contractInterface.parseLog({
+            topics: [...log.topics],
+            data: log.data
+          })
+          return parsedLog?.name === eventName
         } catch (error) {
           return false
         }
       })
       .map((log: any) => ({
-        ...contractInterface.parseLog(log),
+        ...contractInterface.parseLog({ topics: [...log.topics], data: log.data }),
         log
       }))
 
     return events.length > 0 ? events : null
   } catch (error) {
-    PROVIDER_LOGGER.log(
-      LOG_LEVELS_STR.LEVEL_ERROR,
-      'Error fetching event from transaction: ' + error.message,
-      true
+    CORE_LOGGER.error(
+      `Error fetching ${eventName} event from tx ${txReceipt?.hash}: ${errorSummary(error)}`
     )
     return null
   }
