@@ -148,7 +148,7 @@ export class ProviderFees {
      * We could have multiple orders, for multiple assets & providers
      */
     if (!txId) {
-      CORE_LOGGER.error('Invalid txId')
+      CORE_LOGGER.debug('Invalid txId')
       return {
         isValid: false,
         message: 'Invalid txId',
@@ -161,19 +161,29 @@ export class ProviderFees {
     const contractInterface = new Interface(ERC20Template.abi)
     const now = Math.round(new Date().getTime() / 1000)
     const txReceiptMined = await fetchTransactionReceipt(txId, provider)
-    const blockMined = await txReceiptMined.getBlock()
 
     if (!txReceiptMined) {
       const message = `Tx receipt cannot be processed, because tx id ${txId} was not mined.`
-      CORE_LOGGER.error(message)
+      CORE_LOGGER.debug(message)
       return { isValid: false, message, validUntil: 0 }
     }
+    // read the block only after confirming the receipt exists (fail-safe against NPE)
+    const blockMined = await txReceiptMined.getBlock()
 
+    // Bind the ProviderFee event to the service's datatoken emitter: a ProviderFee log
+    // self-emitted by an attacker-controlled contract must not be accepted (ON-01).
     const providerFeesEvents = fetchEventFromTransaction(
       txReceiptMined,
       'ProviderFee',
-      contractInterface
+      contractInterface,
+      service.datatokenAddress
     )
+
+    if (!providerFeesEvents || providerFeesEvents.length === 0) {
+      const message = 'No valid providerFee events'
+      CORE_LOGGER.debug(`${message} in tx ${txId} on chain ${chainId}`)
+      return { isValid: false, message, validUntil: 0 }
+    }
 
     let foundValid = false
     let providerData
@@ -185,7 +195,7 @@ export class ProviderFees {
       try {
         providerData = JSON.parse(utf)
       } catch (e) {
-        CORE_LOGGER.error('ProviderFee event JSON parsing failed')
+        CORE_LOGGER.error(`ProviderFee event JSON parsing failed for tx ${txId}`)
         continue
       }
 
@@ -210,7 +220,7 @@ export class ProviderFees {
 
     if (!foundValid) {
       const message = 'No valid providerFee events'
-      CORE_LOGGER.error(message)
+      CORE_LOGGER.debug(`${message} in tx ${txId} on chain ${chainId}`)
       return { isValid: false, message, validUntil: 0 }
     }
 
@@ -297,15 +307,10 @@ export class ProviderFees {
     //   ],
     // )
 
-    // console.log('messageHash: ' + messageHash)
     // 66 byte string, which represents 32 bytes of data
     // ethers.toUtf8Bytes(messageHash).length) // 66 byte string
 
     // 32 bytes of data in Uint8Array
-    // console.log(
-    //   'messageHash bytes length Uint8Array: ',
-    //   ethers.toBeArray(messageHash).length
-    // )
 
     // const signableHash = ethers.solidityPackedKeccak256(
     //   ['bytes'],
@@ -335,14 +340,6 @@ export class ProviderFees {
 
     // For Solidity, we need the expanded-format of a signature
     const signatureSplitted = ethers.Signature.from(signed32Bytes)
-    // console.log(
-    //   'verify message:',
-    //   await verifyMessage(
-    //     ethers.toBeArray(signableHash), // 32 bytes again
-    //     providerWallet.address,
-    //     signed32Bytes
-    //   )
-    // )
 
     // # make it compatible with last openzepellin https://github.com/OpenZeppelin/openzeppelin-contracts/pull/1622
     const v = signatureSplitted.v <= 1 ? signatureSplitted.v + 27 : signatureSplitted.v

@@ -1,9 +1,10 @@
 import { Service, DDOManager, DDO } from '@oceanprotocol/ddo-js'
-import { DDO_IDENTIFIER_PREFIX } from './constants.js'
+import type { Dispatcher } from 'undici'
+import { PRIVATE_URL_ERROR } from './safeUrl.js'
 import { CORE_LOGGER } from './logging/common.js'
-import { GENERIC_EMOJIS, LOG_LEVELS_STR } from './logging/Logger.js'
+import { errorSummary, safeStringify } from './logging/redact.js'
 import { createHash } from 'crypto'
-import { ethers, getAddress, Signer } from 'ethers'
+import { ethers, Signer } from 'ethers'
 import { KNOWN_CONFIDENTIAL_EVMS } from './address.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/interfaces/IERC20Template.sol/IERC20Template.json' with { type: 'json' }
 import ERC20Template4 from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20Template4.sol/ERC20Template4.json' with { type: 'json' }
@@ -11,42 +12,30 @@ import { getContractAddress, getNFTFactory } from '../components/Indexer/utils.j
 import { HeadersObject } from '../@types/fileObject.js'
 import { fetchHeadersTimeout } from './http.js'
 
-// Notes:
-// Asset as per asset.py on provider, is a class there, while on ocean.Js we only have a type
-// this is an utility to extract information from the Asset services
-export const AssetUtils = {
-  getServiceIndexById(asset: DDO, id: string): number | null {
-    const ddoInstance = DDOManager.getDDOClass(asset)
-    const { services } = ddoInstance.getDDOFields()
-
-    for (let c = 0; c < services.length; c++) if (services[c].id === id) return c
-    return null
-  },
-  getServiceByIndex(asset: DDO, index: number) {
-    const ddoInstance = DDOManager.getDDOClass(asset)
-    const { services } = ddoInstance.getDDOFields()
-
-    if (index >= 0 && index < services.length) {
-      return services[index] as Service
+/**
+ * undici wraps connector failures as TypeError('fetch failed', { cause }); walk the chain
+ * and return a plain Error with the SSRF guard's message when that is what failed.
+ */
+function findBlockedUrlError(error: unknown): Error | null {
+  let current: any = error
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (
+      typeof current.message === 'string' &&
+      current.message.includes(PRIVATE_URL_ERROR)
+    ) {
+      return new Error(current.message)
     }
-    return null
-  },
-
-  getServiceById(asset: DDO, id: string) {
-    const ddoInstance = DDOManager.getDDOClass(asset)
-    const { services } = ddoInstance.getDDOFields() as any
-
-    const filteredServices = services.filter((service: any) => service.id === id)
-
-    return filteredServices.length ? filteredServices[0] : null
+    current = current.cause
   }
+  return null
 }
 
 export async function fetchFileMetadata(
   url: string,
   method: string,
   forceChecksum: boolean,
-  headers?: HeadersObject
+  headers?: HeadersObject,
+  options: { dispatcher?: Dispatcher } = {}
 ): Promise<{ contentLength: string; contentType: string; contentChecksum: string }> {
   let contentType: string = ''
   let contentLength: number = 0
@@ -57,7 +46,7 @@ export async function fetchFileMetadata(
   try {
     const response = await fetchHeadersTimeout(
       url,
-      { method: method || 'GET', headers },
+      { method: method || 'GET', headers, dispatcher: options.dispatcher },
       30000
     )
     if (!response.ok) {
@@ -80,7 +69,13 @@ export async function fetchFileMetadata(
     }
     contentLength = totalSize
   } catch (error) {
-    CORE_LOGGER.error(error)
+    CORE_LOGGER.error(`fetchFileMetadata failed: ${errorSummary(error)}`)
+    // network errors are swallowed (caller gets empty metadata), but a URL refused by the
+    // SSRF guard is a client error worth reporting as such, with the reason
+    const blocked = findBlockedUrlError(error)
+    if (blocked) {
+      throw blocked
+    }
   }
 
   return {
@@ -90,26 +85,6 @@ export async function fetchFileMetadata(
   }
 }
 
-/**
- * Validates if a given DDO identifier matches the NFT address and the chain ID provided
- * @param ddoID the ID of the DDO
- * @param nftAddress the nft address
- * @param chainId the chain id
- * @returns validation result
- */
-export function validateDDOHash(
-  ddoID: string,
-  nftAddress: string,
-  chainId: number
-): boolean {
-  if (!ddoID || !nftAddress || !chainId) {
-    CORE_LOGGER.error('Invalid or missing data for proper DDO id validation')
-    return false
-  }
-  const hashAddressAndChain: string = generateDDOHash(nftAddress, chainId)
-  return ddoID === hashAddressAndChain
-}
-
 export function deleteIndexedMetadataIfExists(ddo: DDO): DDO {
   const ddoCopy: DDO = structuredClone(ddo)
   if ('indexedMetadata' in ddoCopy) {
@@ -117,24 +92,6 @@ export function deleteIndexedMetadataIfExists(ddo: DDO): DDO {
     return ddoCopy
   }
   return ddo
-}
-
-/**
- * Generates DDO Id given the chain and nft address provided
- * @param nftAddress the nft address
- * @param chainId the chain id
- * @returns did
- */
-export function generateDDOHash(nftAddress: string, chainId: number): string | null {
-  if (!nftAddress || !chainId) {
-    CORE_LOGGER.error('Invalid or missing data for proper DDO id hash generation')
-    return null
-  }
-  const hashAddressAndChain: string = createHash('sha256')
-    .update(getAddress(nftAddress) + chainId.toString(10))
-    .digest('hex')
-
-  return DDO_IDENTIFIER_PREFIX + hashAddressAndChain
 }
 
 /**
@@ -172,7 +129,7 @@ export async function isERC20Template4Active(
     }
   } catch (err) {
     CORE_LOGGER.error(
-      'Error checking if ERCTemplate4 is active on confidential EVM: ' + err.message
+      `Error checking if ERCTemplate4 is active on chain ${network}: ${errorSummary(err?.shortMessage ?? err)}`
     )
   }
 
@@ -193,7 +150,7 @@ export async function isDataTokenTemplate4(
     return id.toString() === '4'
   } catch (err) {
     CORE_LOGGER.error(
-      'Error checking if datatoken at address ' + templateAddress + ' has id 4'
+      `Error checking if datatoken ${templateAddress} has id 4: ${errorSummary(err?.shortMessage ?? err)}`
     )
     return false
   }
@@ -238,7 +195,9 @@ export async function getFilesObjectFromConfidentialEVM(
     const providerMessageHashBytes = ethers.toBeArray(providerMessage)
     const providerSignature = await signer.signMessage(providerMessageHashBytes)
 
-    CORE_LOGGER.info('Try getFilesObject from Confidential EVM (SC call)')
+    CORE_LOGGER.debug(
+      `getFilesObject from confidential EVM (datatoken ${datatokenAddress})`
+    )
     const contract = new ethers.Contract(datatokenAddress, ERC20Template4.abi, signer)
 
     // call smart contract to decrypt
@@ -254,7 +213,7 @@ export async function getFilesObjectFromConfidentialEVM(
     return filesObject
   } catch (err) {
     CORE_LOGGER.error(
-      'Unable to decrypt files object from Template4 on confidential EVM: ' + err.message
+      `Unable to decrypt files object from Template4 ${datatokenAddress}: ${errorSummary(err?.shortMessage ?? err)}`
     )
     return null
   }
@@ -272,20 +231,11 @@ export async function validateDDO(ddo: Record<string, any>): Promise<boolean> {
 
   const validation = await ddoInstance.validate()
   if (validation[0] === true) {
-    CORE_LOGGER.logMessageWithEmoji(
-      `Validation of DDO with did: ${ddo.id} has passed`,
-      true,
-      GENERIC_EMOJIS.EMOJI_OCEAN_WAVE,
-      LOG_LEVELS_STR.LEVEL_DEBUG
-    )
+    CORE_LOGGER.debug(`Validation of DDO ${ddo.id} passed`)
     return true
   } else {
-    CORE_LOGGER.logMessageWithEmoji(
-      `Validation of DDO with schema version ${ddo.version} failed with errors: ` +
-        JSON.stringify(validation[1]),
-      true,
-      GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-      LOG_LEVELS_STR.LEVEL_WARN
+    CORE_LOGGER.debug(
+      `Validation of DDO ${ddo.id} (version ${ddo.version}) failed: ${safeStringify(validation[1], { maxLength: 1000 })}`
     )
     return false
   }

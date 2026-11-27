@@ -148,6 +148,13 @@ export interface dockerRegistrysAuth {
 export interface OceanNodeConfig {
   dockerComputeEnvironments: C2DDockerConfig[]
   serviceTemplatesPath?: string // folder of *.json service templates; defaults to 'databases/serviceTemplates/'
+  // Service-on-Demand Hugging Face mirror (docs/services.md). serviceHfMirrorUrl is undefined
+  // when unset or invalid; serviceHfClientPatch undefined means "on when a mirror is set".
+  serviceHfMirrorUrl?: string
+  serviceHfClientPatch?: boolean
+  // Node-owner env vars injected into every spawned container (C2D + services). Parsed from
+  // PASS_CONTAINER_ENVS; always a (possibly empty) map after config load. See containerEnvs.ts.
+  passContainerEnvs: Record<string, string>
   dockerRegistrysAuth: dockerRegistrysAuth
   authorizedDecrypters: string[]
   authorizedDecryptersList: AccessListContract | null
@@ -177,18 +184,48 @@ export interface OceanNodeConfig {
   assetPurgatoryUrl: string | null
   allowedAdmins?: string[]
   allowedAdminsList?: AccessListContract | null
+  // per-chain map of Subsidy Provider contract addresses passed to the escrow at claim time
+  subsidyProviders?: AccessListContract | null
+  // when ON, a user-supplied subsidy-provider list may only contain addresses already present in
+  // `subsidyProviders` for the request chain; otherwise the request is rejected. Default false.
+  subsidyProviderFilter?: boolean
+  // optional map `{ "<subsidyContractAddr>": ["image:tag", "image@sha256:.."] }` restricting a
+  // subsidy address to specific docker images run with no custom entrypoint/cmd. null/absent or
+  // `{}` → no gating; populated → the gate filters the effective subsidy list per address.
+  subsidyProviderAllowedImages?: Record<string, string[]> | null
   codeHash?: string
   rateLimit?: number // per request ip or peer
   maxConnections?: number // global, regardless of client address(es)
+  // Express `trust proxy` value: false (default, ignore X-Forwarded-For), a hop count,
+  // 'loopback'/'linklocal'/'uniquelocal', or a comma-separated list of trusted IPs/CIDRs.
+  trustProxy?: boolean | number | string
   denyList?: DenyList
   unsafeURLs?: string[]
+  // CIDRs / IPs exempt from the private-address block on caller-supplied URLs
+  allowedPrivateUrlRanges?: string[]
+  // ON-18: opt-in Docker registry host allow-list. Empty = any registry allowed.
+  allowedDockerRegistries?: string[]
+  // ON-18: extra token-realm hosts trusted to receive registry credentials, kept separate from
+  // allowedDockerRegistries. Built-in realms (Docker Hub, GitLab) are always trusted.
+  allowedDockerRegistryRealms?: string[]
+  // ON-07: operator-supplied extra request headers allowed through to the upstream when a
+  // caller provides `file.headers`. EXTENDS the built-in default allow-list
+  // (accept, accept-encoding, range, content-type). Everything else is dropped.
+  fileInfoAllowedHeaders?: string[]
+  // ON-07: dedicated, stricter per-caller rate limit (requests/minute) for the raw-`file`
+  // fileInfo path, counted in a separate bucket from the global rate limit. 0 = disabled.
+  fileInfoRateLimit?: number
   isBootstrap?: boolean
+  // Ocean Enterprise node: switches enterprise-only behaviour (e.g. EnterpriseEscrow instead
+  // of Escrow for compute payments and escrow event indexing)
+  isEnterprise?: boolean
   validateUnsignedDDO?: boolean
   skipFeeTokenValidation?: boolean
   jwtSecret?: string
   httpCertPath?: string
   httpKeyPath?: string
   enableBenchmark?: boolean
+  // derived, not read from config: whether POLICY_SERVER_URL is set (refreshed by getConfig())
   isPSConfigured: boolean
   persistentStorage?: PersistentStorageConfig
 }
@@ -197,6 +234,10 @@ export interface P2PStatusResponse {
   httpStatus: number
   error?: string
   headers?: any
+  // Stable machine-readable error code (e.g. MAINTENANCE_MODE) clients discriminate on when
+  // the HTTP status alone is ambiguous. Carried in the P2P status frame; also echoed in the
+  // streamed JSON body so it reaches HTTP clients (which only see the body + status line).
+  code?: string
 }
 export interface P2PCommandResponse {
   status: P2PStatusResponse
@@ -256,9 +297,13 @@ export interface OceanNodeStatus {
   version: string
   http: boolean
   p2p: boolean
+  // whether a Policy Server is configured (POLICY_SERVER_URL); clients use it to decide
+  // whether to run the credential (SSI) flow before download/compute
+  isPSConfigured: boolean
+  // node owner/legal info from NODE_OWNER_INFO (free-form JSON object); absent when unset/invalid
+  ownerInfo?: Record<string, any>
   /** Present only when the P2P interface is enabled and running. */
   p2pStatus?: OceanNodeP2PStatus
-  isPSConfigured: boolean
   provider: OceanNodeProvider[]
   indexer: OceanNodeIndexer[]
   escrowAddress: AddressPerChain
@@ -267,11 +312,27 @@ export interface OceanNodeStatus {
   uptime?: number // seconds since start
   codeHash?: string
   allowedAdmins?: { addresses: string[]; accessLists: AccessListContract }
+  // per-chain map of Subsidy Provider contract addresses configured on this node
+  subsidyProviders?: AccessListContract
+  // whether this node restricts user-supplied subsidy providers to the configured whitelist
+  subsidyProviderFilter?: boolean
+  // per-subsidy-address docker image allowlist ({} when unset/no gating)
+  subsidyProviderAllowedImages?: Record<string, string[]>
   // detailed information
   c2dClusters?: any[]
   supportedSchemas?: Schema[]
   persistentStorage?: {
     accessLists?: AccessList[]
+    allowBucketSharing?: boolean
+  }
+  // Maintenance (drain) mode. `enabled` is the always-present signal clients/dashboard read.
+  // The drain-visibility counts are populated for detailed status only, so an admin can tell
+  // when the node has finished draining and is safe to reboot.
+  maintenance?: {
+    enabled: boolean
+    runningComputeJobs?: number
+    runningServices?: number
+    latestExpectedEndTime?: number // max job/service end time (unix seconds), the drain ETA
   }
 }
 

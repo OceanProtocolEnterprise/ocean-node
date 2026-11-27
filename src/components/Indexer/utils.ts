@@ -1,18 +1,21 @@
 import { Signer, ethers, getAddress, FallbackProvider } from 'ethers'
 import ERC721Factory from '@oceanprotocol/contracts/artifacts/contracts/ERC721Factory.sol/ERC721Factory.json' with { type: 'json' }
 import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
-import { EVENT_HASHES, isDefined } from '../../utils/index.js'
+import { EVENT_HASHES, ESCROW_EVENTS, isDefined } from '../../utils/index.js'
 import { NetworkEvent } from '../../@types/blockchain.js'
 import { INDEXER_LOGGER } from '../../utils/logging/common.js'
+import { errorSummary, redactUrls } from '../../utils/logging/redact.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
-import { getOceanArtifactsAdressesByChainId } from '../../utils/address.js'
+import {
+  getEscrowAddressForChain,
+  getOceanArtifactsAdressesByChainId
+} from '../../utils/address.js'
 import { CommandStatus, JobStatus } from '../../@types/commands.js'
 import { create256Hash } from '../../utils/crypt.js'
 import Dispenser from '@oceanprotocol/contracts/artifacts/contracts/pools/dispenser/Dispenser.sol/Dispenser.json' with { type: 'json' }
 import FixedRateExchange from '@oceanprotocol/contracts/artifacts/contracts/pools/fixedRate/FixedRateExchange.sol/FixedRateExchange.json' with { type: 'json' }
-import { createHash } from 'crypto'
 import { ServicePrice } from '../../@types/IndexedMetadata.js'
-import { VersionedDDO } from '@oceanprotocol/ddo-js'
+import { DDOManager, VersionedDDO, deriveDidCandidates } from '@oceanprotocol/ddo-js'
 import FactoryRouter from '@oceanprotocol/contracts/artifacts/contracts/pools/FactoryRouter.sol/FactoryRouter.json' with { type: 'json' }
 
 /**
@@ -88,33 +91,67 @@ export const getNetworkHeight = async (provider: FallbackProvider) => {
   return networkHeight
 }
 
+// Escrow events are emitted only by the Escrow singleton, but their signatures
+// (e.g. Deposit(address,address,uint256) / Withdraw(address,address,uint256)) are
+// generic enough to collide with unrelated contracts across a busy chain. We split
+// the escrow topic hashes out so they can be fetched with an `address` filter, while
+// the rest (emitted by dynamically-deployed data NFTs/datatokens) stay topic-only.
+const ESCROW_EVENT_HASHES = Object.entries(EVENT_HASHES)
+  .filter(([, value]) => ESCROW_EVENTS.includes(value.type))
+  .map(([hash]) => hash)
+const NON_ESCROW_EVENT_HASHES = Object.keys(EVENT_HASHES).filter(
+  (hash) => !ESCROW_EVENT_HASHES.includes(hash)
+)
+
 export const retrieveChunkEvents = async (
   signer: Signer,
   provider: FallbackProvider,
   network: number,
   lastIndexedBlock: number,
-  count: number
+  count: number,
+  isEnterprise: boolean = false
 ): Promise<ethers.Log[]> => {
+  const startIndex = lastIndexedBlock + 1
+  const toBlock = lastIndexedBlock + count
   try {
-    const eventHashes = Object.keys(EVENT_HASHES)
-    const startIndex = lastIndexedBlock + 1
-    const details = {
-      fromBlock: startIndex,
-      toBlock: lastIndexedBlock + count,
-      topics: [eventHashes]
+    INDEXER_LOGGER.debug(`Retrieving events from block ${startIndex} to ${toBlock}`)
+
+    const queries: Array<Promise<ethers.Log[]>> = [
+      provider.getLogs({
+        fromBlock: startIndex,
+        toBlock,
+        topics: [NON_ESCROW_EVENT_HASHES]
+      })
+    ]
+
+    // Only query escrow events from the known Escrow contract address (EnterpriseEscrow on
+    // enterprise nodes). When it is not deployed on this chain the escrow processor would
+    // drop every event anyway, so we skip the query entirely (this also avoids logging
+    // unrelated Deposit/Withdraw txs).
+    const escrowAddress = getEscrowAddressForChain(network, isEnterprise)
+    if (escrowAddress) {
+      queries.push(
+        provider.getLogs({
+          fromBlock: startIndex,
+          toBlock,
+          address: escrowAddress,
+          topics: [ESCROW_EVENT_HASHES]
+        })
+      )
     }
-    INDEXER_LOGGER.debug(
-      `Retrieving events from block ${startIndex} to ${lastIndexedBlock + count}`
-    )
-    const blockLogs = await provider.getLogs(details)
+
+    const blockLogs = (await Promise.all(queries)).flat()
+    // Preserve chain order (block, then log index) so downstream processing sees the
+    // same sequence it would from a single getLogs call.
+    blockLogs.sort((a, b) => a.blockNumber - b.blockNumber || a.index - b.index)
     return blockLogs
   } catch (error) {
-    INDEXER_LOGGER.error(
-      `Error retrieving events from block ${lastIndexedBlock + 1} to ${
-        lastIndexedBlock + count
-      }:`
+    // the caller logs the failed range at error; the stack is kept here for debugging
+    INDEXER_LOGGER.debug(
+      `Error retrieving events from block ${startIndex} to ${toBlock}: ${redactUrls(
+        error?.stack ?? errorSummary(error)
+      )}`
     )
-    INDEXER_LOGGER.error(error)
     throw new Error(` Error processing chunk of blocks events ${error.message}`)
   }
 }
@@ -212,18 +249,6 @@ export function buildJobIdentifier(command: string, extra: string[]): JobStatus 
   }
 }
 
-export function findServiceIdByDatatoken(
-  ddo: VersionedDDO,
-  datatokenAddress: string
-): string {
-  for (const s of ddo.getDDOFields().services) {
-    if (s.datatokenAddress.toLowerCase() === datatokenAddress.toLowerCase()) {
-      return s.id
-    }
-  }
-  return null
-}
-
 export function doesDispenserAlreadyExist(
   dispenserAddress: string,
   prices: ServicePrice[]
@@ -259,14 +284,16 @@ export async function getPricesByDt(
     dispensers = await datatoken.getDispensers()
   } catch (e) {
     if (isProviderError(e)) throw e
-    INDEXER_LOGGER.error(`[GET PRICES] failure when retrieving dispensers: ${e}`)
+    INDEXER_LOGGER.error(
+      `Failed to get dispensers for datatoken ${datatoken.target}: ${errorSummary(e)}`
+    )
   }
   try {
     fixedRates = await datatoken.getFixedRates()
   } catch (e) {
     if (isProviderError(e)) throw e
     INDEXER_LOGGER.error(
-      `[GET PRICES] failure when retrieving fixed rate exchanges: ${e}`
+      `Failed to get fixed rate exchanges for datatoken ${datatoken.target}: ${errorSummary(e)}`
     )
   }
   if (dispensers.length === 0 && fixedRates.length === 0) {
@@ -290,7 +317,7 @@ export async function getPricesByDt(
         } catch (e) {
           if (isProviderError(e)) throw e
           INDEXER_LOGGER.error(
-            `[GET PRICES] failure when retrieving dispenser status from contracts: ${e}`
+            `Failed to get status of dispenser ${dispenser} for datatoken ${datatoken.target}: ${errorSummary(e)}`
           )
         }
       }
@@ -318,7 +345,7 @@ export async function getPricesByDt(
         } catch (e) {
           if (isProviderError(e)) throw e
           INDEXER_LOGGER.error(
-            `[GET PRICES] failure when retrieving exchange status from contracts: ${e}`
+            `Failed to get status of exchange ${fixedRate[1]} for datatoken ${datatoken.target}: ${errorSummary(e)}`
           )
         }
       }
@@ -354,14 +381,16 @@ export async function getPricingStatsForDddo(
       dispensers = await datatoken.getDispensers()
     } catch (e) {
       if (isProviderError(e)) throw e
-      INDEXER_LOGGER.error(`Contract call fails when retrieving dispensers: ${e}`)
+      INDEXER_LOGGER.error(
+        `Failed to get dispensers for datatoken ${service.datatokenAddress}: ${errorSummary(e)}`
+      )
     }
     try {
       fixedRates = await datatoken.getFixedRates()
     } catch (e) {
       if (isProviderError(e)) throw e
       INDEXER_LOGGER.error(
-        `Contract call fails when retrieving fixed rate exchanges: ${e}`
+        `Failed to get fixed rate exchanges for datatoken ${service.datatokenAddress}: ${errorSummary(e)}`
       )
     }
     if (dispensers.length === 0 && fixedRates.length === 0) {
@@ -400,7 +429,7 @@ export async function getPricingStatsForDddo(
           } catch (e) {
             if (isProviderError(e)) throw e
             INDEXER_LOGGER.error(
-              `[GET PRICES] failure when retrieving dispenser status from contracts: ${e}`
+              `Failed to get status of dispenser ${dispenser} for datatoken ${service.datatokenAddress}: ${errorSummary(e)}`
             )
           }
         }
@@ -437,7 +466,7 @@ export async function getPricingStatsForDddo(
         } catch (e) {
           if (isProviderError(e)) throw e
           INDEXER_LOGGER.error(
-            `[GET PRICES] failure when retrieving exchange status from contracts: ${e}`
+            `Failed to get status of exchange ${fixedRate[1]} for datatoken ${service.datatokenAddress}: ${errorSummary(e)}`
           )
         }
       }
@@ -448,13 +477,58 @@ export async function getPricingStatsForDddo(
   return ddo
 }
 
-export function getDid(nftAddress: string, chainId: number): string {
-  return (
-    'did:op:' +
-    createHash('sha256')
-      .update(getAddress(nftAddress) + chainId.toString(10))
-      .digest('hex')
+/**
+ * Finds the DDO of an NFT. Contract events only give the NFT address and chain id,
+ * so the DDO is looked up under both DIDs it may be indexed as: v4 (`did:op:`)
+ * and v5 (`did:ope:`). Republishing an NFT with the other DDO version indexes it
+ * under the other DID and leaves the old record in place, so when both exist the
+ * one published at the later block is returned (v5 on a tie or missing block).
+ * @returns The DDO and the DID it was found under. When neither is indexed, `ddo`
+ * is null and `did` is the v4 DID.
+ */
+export async function retrieveDdoByNft(
+  ddoDatabase: { retrieve(did: string): Promise<Record<string, any> | null> },
+  nftAddress: string,
+  chainId: number
+): Promise<{ did: string; ddo: Record<string, any> | null }> {
+  const candidates = deriveDidCandidates(nftAddress, chainId)
+  const found = (
+    await Promise.all(
+      candidates.map(async (did) => ({ did, ddo: await ddoDatabase.retrieve(did) }))
+    )
+  ).filter((candidate) => candidate.ddo)
+  if (found.length === 0) return { did: candidates[0], ddo: null }
+
+  const publishedAt = (ddo: Record<string, any>): number => {
+    const block = Number(ddo.indexedMetadata?.event?.block)
+    return Number.isFinite(block) ? block : -1
+  }
+  // candidates are ordered v4 then v5, so >= lets the v5 record win a tie
+  return found.reduce((latest, candidate) =>
+    publishedAt(candidate.ddo) >= publishedAt(latest.ddo) ? candidate : latest
   )
+}
+
+/**
+ * Builds the short DDO stored when an asset's metadata state leaves Active (revoked,
+ * deprecated, ...)
+ */
+export function buildShortDdoRecord(
+  ddo: Record<string, any>,
+  chainId: number,
+  state: number
+): Record<string, any> {
+  const indexedMetadata: Record<string, any> = { nft: { state } }
+  if (ddo.indexedMetadata?.event) indexedMetadata.event = ddo.indexedMetadata.event
+  // v5 keeps nftAddress under credentialSubject; the versioned accessor reads both
+  const { nftAddress } = DDOManager.getDDOClass(ddo).getDDOFields()
+  return {
+    id: ddo.id,
+    version: 'deprecated',
+    chainId,
+    nftAddress,
+    indexedMetadata
+  }
 }
 
 export async function withRetrial<T>(

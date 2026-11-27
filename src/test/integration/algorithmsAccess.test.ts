@@ -254,6 +254,7 @@ describe('**********         Trusted algorithms Flow', () => {
     const resp = await new ComputeInitializeHandler(oceanNode).handle(
       initializeComputeTask
     )
+    console.log(resp)
     assert(resp, 'Failed to get response')
     assert(resp.status.httpStatus === 400, 'Failed to get 400 response')
     assert(
@@ -420,17 +421,15 @@ describe('**********         Trusted algorithms Flow', () => {
       .connect(consumerAccount)
       .deposit(initializeResponse.payment.token, balance)
     await depositTx.wait()
-    const authorizeTx = await escrowContract
-      .connect(consumerAccount)
-      .authorize(
-        initializeResponse.payment.token,
-        firstEnv.consumerAddress,
-        balance,
-        initializeResponse.payment.minLockSeconds,
-        10
-      )
+    const authorizeTx = await escrowContract.connect(consumerAccount).authorize(
+      initializeResponse.payment.token,
+      firstEnv.consumerAddress,
+      balance,
+      initializeResponse.payment.minLockSeconds,
+      10,
+      0 // expiryTimestamp: 0 = indefinite (Escrow v2)
+    )
     await authorizeTx.wait()
-
     const locks = await oceanNode.escrow.getLocks(
       DEVELOPMENT_CHAIN_ID,
       paymentToken,

@@ -1,6 +1,8 @@
 import fs from 'fs'
 import addresses from '@oceanprotocol/contracts/addresses/address.json' with { type: 'json' }
 import { CORE_LOGGER } from './logging/common.js'
+import { LOG_LEVELS_STR } from './logging/Logger.js'
+import { errorSummary } from './logging/redact.js'
 import { isDefined } from './util.js'
 
 /**
@@ -17,7 +19,11 @@ export function getOceanArtifactsAdresses(): any {
     }
     return addresses
   } catch (error) {
-    CORE_LOGGER.error(error)
+    CORE_LOGGER.throttled(
+      'addressFile',
+      LOG_LEVELS_STR.LEVEL_ERROR,
+      `Cannot read ADDRESS_FILE ${process.env.ADDRESS_FILE}: ${errorSummary(error)}; using bundled addresses`
+    )
     return addresses
   }
 }
@@ -41,12 +47,16 @@ export function getOceanArtifactsAdressesByChainId(chain: number): any {
     }
     // just warn about this missing configuration if running locally
     if (chain === DEVELOPMENT_CHAIN_ID && !isDefined(process.env.ADDRESS_FILE)) {
-      CORE_LOGGER.warn(
+      CORE_LOGGER.throttled(
+        'addressFile:development',
+        LOG_LEVELS_STR.LEVEL_WARN,
         'Cannot find contract artifacts addresses for "development" chain. Please set the "ADDRESS_FILE" environmental variable!'
       )
     }
   } catch (error) {
-    CORE_LOGGER.error(error)
+    CORE_LOGGER.error(
+      `Cannot resolve contract addresses for chain ${chain}: ${errorSummary(error)}`
+    )
   }
   return null
 }
@@ -55,6 +65,32 @@ export function getOceanTokenAddressForChain(chainId: number): string | null {
   const addresses = getOceanArtifactsAdressesByChainId(chainId)
   if (addresses && addresses.Ocean) return addresses.Ocean
   return null
+}
+
+/**
+ * Escrow contract the node pays/claims through and whose events the indexer tracks.
+ * Enterprise nodes use EnterpriseEscrow (same events/ABI as Escrow, plus the enterprise
+ * network fee), falling back to Escrow on chains where EnterpriseEscrow is not deployed.
+ * Core and Indexer must resolve it through here so they never disagree.
+ * @returns address as found in the address file, or null
+ */
+export function getEscrowAddressForChain(
+  chainId: number,
+  isEnterprise: boolean = false
+): string | null {
+  const addresses = getOceanArtifactsAdressesByChainId(chainId)
+  if (!addresses) return null
+  if (isEnterprise) {
+    if (addresses.EnterpriseEscrow) return addresses.EnterpriseEscrow
+    if (addresses.Escrow) {
+      CORE_LOGGER.throttled(
+        `enterpriseEscrow:${chainId}`,
+        LOG_LEVELS_STR.LEVEL_WARN,
+        `EnterpriseEscrow is not deployed on chain ${chainId}; enterprise node falls back to Escrow`
+      )
+    }
+  }
+  return addresses.Escrow || null
 }
 
 // default token addresses per chain

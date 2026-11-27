@@ -7,7 +7,8 @@ import {
   ServiceRestartHandler,
   ServiceGetStatusHandler,
   GetServicesHandler,
-  ServiceGetStreamableLogsHandler
+  ServiceGetStreamableLogsHandler,
+  ServiceGetResultHandler
 } from '../../components/core/service/index.js'
 import { ComputeGetEnvironmentsHandler } from '../../components/core/compute/index.js'
 import type {
@@ -18,7 +19,8 @@ import type {
   ServiceRestartCommand,
   ServiceGetStatusCommand,
   GetServicesCommand,
-  ServiceGetStreamableLogsCommand
+  ServiceGetStreamableLogsCommand,
+  ServiceGetResultCommand
 } from '../../@types/commands.js'
 import {
   ServiceStatusNumber,
@@ -51,6 +53,7 @@ import {
 import { DEVELOPMENT_CHAIN_ID, getOceanArtifactsAdresses } from '../../utils/address.js'
 import OceanToken from '@oceanprotocol/contracts/artifacts/contracts/utils/OceanToken.sol/OceanToken.json' with { type: 'json' }
 import EnterpriseEscrowJson from '@oceanprotocol/contracts/artifacts/contracts/escrow/EnterpriseEscrow.sol/EnterpriseEscrow.json' with { type: 'json' }
+import { ensureEnterpriseFeeTokenAllowed } from '../utils/contracts.js'
 import { EncryptMethod } from '../../@types/fileObject.js'
 import { createHashForSignature, safeSign } from '../utils/signature.js'
 import { C2DEngineDocker } from '../../components/c2d/compute_engine_docker.js'
@@ -58,6 +61,8 @@ import Dockerode from 'dockerode'
 import fsp from 'fs/promises'
 import path from 'path'
 import { tmpdir } from 'os'
+import * as tarStream from 'tar-stream'
+import yauzl from 'yauzl'
 
 const TEMPLATE_ID = 'nginx-demo'
 const MAX_DURATION = 600 // serviceOnDemand.maxDurationSeconds
@@ -72,9 +77,9 @@ const TEMPLATE_JSON = {
   image: 'nginxinc/nginx-unprivileged',
   tag: 'alpine',
   exposedPorts: [8080],
-  requiredResources: [
-    { id: 'cpu', min: 1 },
-    { id: 'ram', min: 1 }
+  recommendedResources: [
+    { id: 'cpu', recommended: 1, unit: 'cores' },
+    { id: 'ram', recommended: 1, unit: 'GB' }
   ],
   userConfigurableEnvVars: [{ key: 'EXTRA', validation: '^[a-zA-Z0-9]{1,20}$' }]
 }
@@ -103,6 +108,13 @@ describe('**********         Service on Demand', () => {
   let expiresAt: number
   let endpointUrl: string
   const startedServices: string[] = []
+
+  // Subsidy-provider fixtures for the user-supplied subsidyProviders tests. WHITELISTED is what a
+  // filter-ON node is configured to allow; NON_WHITELISTED is a different valid address that must
+  // be rejected under the filter. Supplied lower-case on purpose so the resolver's EIP-55
+  // normalization is observable in the persisted job.
+  const WHITELISTED_PROVIDER = '0xe2DD09d719Da89e5a3D0F2549c7E24566e947260'
+  const NON_WHITELISTED_PROVIDER = '0x529043886F21D9bc1AE0feDb751e34265a246e47'
 
   const mockSupportedNetworks: RPCS = getMockSupportedNetworks()
 
@@ -148,7 +160,7 @@ describe('**********         Service on Demand', () => {
     await (
       await escrowContract
         .connect(consumerAccount)
-        .authorize(paymentToken, beneficiaryNodeAddr, balance, minLockSeconds, 100)
+        .authorize(paymentToken, beneficiaryNodeAddr, balance, minLockSeconds, 100, 0)
     ).wait()
     return await oceanNode.escrow.getUserAvailableFunds(
       DEVELOPMENT_CHAIN_ID,
@@ -218,6 +230,98 @@ describe('**********         Service on Demand', () => {
   function getDockerEngine(): C2DEngineDocker {
     const engines = (oceanNode.getC2DEngines() as any).engines as C2DEngineDocker[]
     return engines.find((e) => e instanceof C2DEngineDocker) as C2DEngineDocker
+  }
+
+  // Temporarily flip the live node config to SUBSIDY_PROVIDER_FILTER=on with a given per-chain
+  // whitelist, run `fn`, then restore. Handlers read the config by reference via getConfig(), so
+  // mutating it here is enough to exercise the filter without re-booting the node. try/finally keeps
+  // the change from leaking into the surrounding lifecycle tests.
+  async function withSubsidyFilter(
+    whitelist: Record<string, string[]>,
+    fn: () => Promise<void>
+  ): Promise<void> {
+    const cfg = oceanNode.getConfig()
+    const prevFilter = cfg.subsidyProviderFilter
+    const prevProviders = cfg.subsidyProviders
+    cfg.subsidyProviderFilter = true
+    cfg.subsidyProviders = whitelist
+    try {
+      await fn()
+    } finally {
+      cfg.subsidyProviderFilter = prevFilter
+      cfg.subsidyProviders = prevProviders
+    }
+  }
+
+  // Temporarily install a SUBSIDY_PROVIDER_ALLOWED_IMAGES map on the live node config, run `fn`,
+  // then restore. Same reference-config trick as withSubsidyFilter.
+  async function withAllowedImages(
+    map: Record<string, string[]> | null,
+    fn: () => Promise<void>
+  ): Promise<void> {
+    const cfg = oceanNode.getConfig()
+    const prev = cfg.subsidyProviderAllowedImages
+    cfg.subsidyProviderAllowedImages = map
+    try {
+      await fn()
+    } finally {
+      cfg.subsidyProviderAllowedImages = prev
+    }
+  }
+
+  // Writes a file into the service container's /data/outputs, as the service itself would.
+  async function writeServiceOutput(
+    containerId: string,
+    name: string,
+    content: string
+  ): Promise<void> {
+    const pack = tarStream.pack()
+    pack.entry({ name, mode: 0o644 }, content)
+    pack.finalize()
+    await new Dockerode()
+      .getContainer(containerId)
+      .putArchive(pack as unknown as NodeJS.ReadableStream, { path: '/data/outputs' })
+  }
+
+  // SERVICE_GET_RESULT as the owner (or `signer`); resolves to the handler response.
+  async function getServiceResult(
+    params: Partial<ServiceGetResultCommand>,
+    signer: Signer = consumerAccount
+  ) {
+    const signed = await signFor(signer, PROTOCOL_COMMANDS.SERVICE_GET_RESULT)
+    return await new ServiceGetResultHandler(oceanNode).handle({
+      command: PROTOCOL_COMMANDS.SERVICE_GET_RESULT,
+      consumerAddress: signed.consumerAddress,
+      nonce: signed.nonce,
+      signature: signed.signature,
+      serviceId,
+      ...params
+    } as ServiceGetResultCommand)
+  }
+
+  // name → content of every file in a zip response stream
+  async function unzipFiles(stream: Readable): Promise<Record<string, string>> {
+    const chunks: Buffer[] = []
+    for await (const c of stream) chunks.push(c as Buffer)
+    return await new Promise((resolve, reject) => {
+      yauzl.fromBuffer(Buffer.concat(chunks), { lazyEntries: true }, (err, zip) => {
+        if (err) return reject(err)
+        const files: Record<string, string> = {}
+        zip.on('error', reject)
+        zip.on('end', () => resolve(files))
+        zip.on('entry', (entry) => {
+          if (entry.fileName.endsWith('/')) return zip.readEntry()
+          zip.openReadStream(entry, async (e, rs) => {
+            if (e) return reject(e)
+            const parts: Buffer[] = []
+            for await (const p of rs) parts.push(p as Buffer)
+            files[entry.fileName] = Buffer.concat(parts).toString()
+            zip.readEntry()
+          })
+        })
+        zip.readEntry()
+      })
+    })
   }
 
   // container.logs({follow: true}) never ends on its own, so read for a bounded
@@ -342,6 +446,12 @@ describe('**********         Service on Demand', () => {
     consumerAccount = (await provider.getSigner(1)) as Signer
     nonOwnerAccount = (await provider.getSigner(3)) as Signer
     consumerAddress = await consumerAccount.getAddress()
+    // EnterpriseEscrow only accepts tokens the EnterpriseFeeCollector allows
+    await ensureEnterpriseFeeTokenAllowed(
+      provider,
+      artifactsAddresses.development.EnterpriseFeeCollector,
+      paymentToken
+    )
 
     paymentTokenContract = new ethers.Contract(
       paymentToken,
@@ -442,9 +552,11 @@ describe('**********         Service on Demand', () => {
       tag: 'alpine',
       exposedPorts: [8080],
       duration: SERVICE_DURATION,
+      // Services must book a positive disk amount (SERVICE_START rejects 0 / omitted).
       resources: [
         { id: 'cpu', amount: 1 },
-        { id: 'ram', amount: 1 }
+        { id: 'ram', amount: 1 },
+        { id: 'disk', amount: 1 }
       ],
       userData: await encryptUserData({ EXTRA: 'hello123' }),
       payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken }
@@ -475,6 +587,211 @@ describe('**********         Service on Demand', () => {
     const res = await httpGetWithRetry(endpointUrl)
     assert(res.status === 200, `expected nginx HTTP 200, got ${res.status}`)
     assert(res.body.toLowerCase().includes('nginx'), 'body should be the nginx page')
+  })
+
+  it('(d-subsidy-1) SERVICE_START rejects an invalid subsidyProviders address (400)', async () => {
+    const {
+      consumerAddress: addr,
+      nonce,
+      signature
+    } = await signFor(consumerAccount, PROTOCOL_COMMANDS.SERVICE_START)
+    const task: ServiceStartCommand = {
+      command: PROTOCOL_COMMANDS.SERVICE_START,
+      consumerAddress: addr,
+      nonce,
+      signature,
+      environment: servicesEnv.id,
+      image: 'nginxinc/nginx-unprivileged',
+      tag: 'alpine',
+      exposedPorts: [8080],
+      duration: SERVICE_DURATION,
+      // Services must book a positive disk amount (SERVICE_START rejects 0 / omitted).
+      resources: [
+        { id: 'cpu', amount: 1 },
+        { id: 'ram', amount: 1 },
+        { id: 'disk', amount: 1 }
+      ],
+      payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken },
+      // not a valid EVM address → rejected before any escrow interaction
+      subsidyProviders: ['0xnot-an-address']
+    }
+    const resp = await new ServiceStartHandler(oceanNode).handle(task)
+    expect(resp.status.httpStatus).to.equal(400)
+    expect(resp.status.error).to.contain('subsidy provider')
+  })
+
+  it('(d-subsidy-2) SERVICE_START rejects a provider outside the whitelist when the filter is on (400)', async () => {
+    await withSubsidyFilter(
+      { [String(DEVELOPMENT_CHAIN_ID)]: [WHITELISTED_PROVIDER] },
+      async () => {
+        const {
+          consumerAddress: addr,
+          nonce,
+          signature
+        } = await signFor(consumerAccount, PROTOCOL_COMMANDS.SERVICE_START)
+        const task: ServiceStartCommand = {
+          command: PROTOCOL_COMMANDS.SERVICE_START,
+          consumerAddress: addr,
+          nonce,
+          signature,
+          environment: servicesEnv.id,
+          image: 'nginxinc/nginx-unprivileged',
+          tag: 'alpine',
+          exposedPorts: [8080],
+          duration: SERVICE_DURATION,
+          // Services must book a positive disk amount (SERVICE_START rejects 0 / omitted).
+          resources: [
+            { id: 'cpu', amount: 1 },
+            { id: 'ram', amount: 1 },
+            { id: 'disk', amount: 1 }
+          ],
+          payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken },
+          subsidyProviders: [NON_WHITELISTED_PROVIDER]
+        }
+        const resp = await new ServiceStartHandler(oceanNode).handle(task)
+        expect(resp.status.httpStatus).to.equal(400)
+        expect(resp.status.error).to.contain('not allowed')
+      }
+    )
+  })
+
+  it('(d-subsidy-3) SERVICE_EXTEND rejects a provider outside the whitelist when the filter is on (400)', async () => {
+    await withSubsidyFilter(
+      { [String(DEVELOPMENT_CHAIN_ID)]: [WHITELISTED_PROVIDER] },
+      async () => {
+        const {
+          consumerAddress: addr,
+          nonce,
+          signature
+        } = await signFor(consumerAccount, PROTOCOL_COMMANDS.SERVICE_EXTEND)
+        const task: ServiceExtendCommand = {
+          command: PROTOCOL_COMMANDS.SERVICE_EXTEND,
+          consumerAddress: addr,
+          nonce,
+          signature,
+          serviceId,
+          additionalDuration: SERVICE_DURATION,
+          payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken },
+          subsidyProviders: [NON_WHITELISTED_PROVIDER]
+        }
+        const resp = await new ServiceExtendHandler(oceanNode).handle(task)
+        expect(resp.status.httpStatus).to.equal(400)
+        expect(resp.status.error).to.contain('not allowed')
+      }
+    )
+  })
+
+  it('(d-subsidy-4) SERVICE_START gates out a subsidy whose allowed image does not match, persisting droppedSubsidies', async function () {
+    // SUBSIDY_PROVIDER_ALLOWED_IMAGES restricts WHITELISTED_PROVIDER to an image this service does
+    // not run, so the gate drops it: the persisted start payment carries an empty subsidyProviders
+    // (unsponsored → the funds pre-check runs and passes on the funded escrow) and the removed
+    // address in droppedSubsidies, visible via SERVICE_GET_STATUS.
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
+    await withAllowedImages(
+      { [ethers.getAddress(WHITELISTED_PROVIDER)]: ['never/matches:0'] },
+      async () => {
+        const {
+          consumerAddress: addr,
+          nonce,
+          signature
+        } = await signFor(consumerAccount, PROTOCOL_COMMANDS.SERVICE_START)
+        const task: ServiceStartCommand = {
+          command: PROTOCOL_COMMANDS.SERVICE_START,
+          consumerAddress: addr,
+          nonce,
+          signature,
+          environment: servicesEnv.id,
+          image: 'nginxinc/nginx-unprivileged',
+          tag: 'alpine',
+          exposedPorts: [8080],
+          duration: SERVICE_DURATION,
+          resources: [
+            { id: 'cpu', amount: 1 },
+            { id: 'ram', amount: 1 },
+            { id: 'disk', amount: 1 }
+          ],
+          payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken },
+          subsidyProviders: [WHITELISTED_PROVIDER]
+        }
+        const resp = await new ServiceStartHandler(oceanNode).handle(task)
+        assert(
+          resp.status.httpStatus === 200,
+          `expected 200, got ${resp.status.httpStatus}: ${resp.status?.error ?? ''}`
+        )
+        const [job] = (await streamToObject(resp.stream as Readable)) as ServiceJob[]
+        startedServices.push(job.serviceId)
+        // persisted synchronously on the Starting record
+        expect(job.payment.subsidyProviders).to.deep.equal([])
+        expect(job.payment.droppedSubsidies).to.deep.equal([
+          ethers.getAddress(WHITELISTED_PROVIDER)
+        ])
+        // and the same via the authenticated status endpoint
+        const viaStatus = await getServiceJob(job.serviceId)
+        assert(viaStatus, 'gated service not found via status')
+        expect(viaStatus.payment.subsidyProviders).to.deep.equal([])
+        expect(viaStatus.payment.droppedSubsidies).to.deep.equal([
+          ethers.getAddress(WHITELISTED_PROVIDER)
+        ])
+      }
+    )
+  })
+
+  it('(d-subsidy-5) SERVICE_RESTART RESPEC into a non-allowed image on a subsidized service returns 403', async function () {
+    // Restart creates no new escrow lock, so a swap to a non-allowed image on already-subsidized
+    // funds is rejected rather than silently dropped. Simulate a subsidized service by stamping a
+    // provider onto the stored start payment, attempt the forbidden RESPEC under a populated map,
+    // then restore the original payment so the lifecycle suite below is unaffected.
+    this.timeout(DEFAULT_TEST_TIMEOUT * 2)
+    const [raw] = await dbconn.c2d.getServiceJob(serviceId)
+    assert(raw, 'service job not found in DB')
+    const originalPayment = { ...raw.payment }
+    raw.payment = {
+      ...raw.payment,
+      subsidyProviders: [ethers.getAddress(WHITELISTED_PROVIDER)]
+    }
+    await dbconn.c2d.updateServiceJob(raw)
+    try {
+      await withAllowedImages(
+        {
+          [ethers.getAddress(WHITELISTED_PROVIDER)]: [
+            'nginxinc/nginx-unprivileged:alpine'
+          ]
+        },
+        async () => {
+          const { nonce, signature } = await signFor(
+            consumerAccount,
+            PROTOCOL_COMMANDS.SERVICE_RESTART
+          )
+          const task = {
+            command: PROTOCOL_COMMANDS.SERVICE_RESTART,
+            consumerAddress,
+            nonce,
+            signature,
+            serviceId,
+            image: 'evil/miner',
+            tag: 'latest'
+          }
+          const resp = await new ServiceRestartHandler(oceanNode).handle(task as any)
+          expect(resp.status.httpStatus).to.equal(403)
+          expect(String(resp.status.error)).to.contain('start a new service')
+        }
+      )
+    } finally {
+      const [current] = await dbconn.c2d.getServiceJob(serviceId)
+      current.payment = originalPayment
+      await dbconn.c2d.updateServiceJob(current)
+    }
+  })
+
+  it('(d2) reports no readiness for an image the node does not recognize', async function () {
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
+    // nginx is not an engine the node knows, so it must be left exactly as it was before this
+    // feature existed: Running, and no readiness field for a client to gate on.
+    const job = await getServiceJob(serviceId)
+    assert(job, 'job not found')
+    expect(job.status).to.equal(ServiceStatusNumber.Running)
+    expect(job.readiness).to.equal(undefined)
+    expect(job.modelDownload).to.equal(undefined)
   })
 
   it('(e) SERVICE_GET_STATUS returns the job with userData stripped', async () => {
@@ -677,6 +994,33 @@ describe('**********         Service on Demand', () => {
     expect(nonOwnerResp.status.httpStatus).to.not.equal(200)
   })
 
+  it('(f2) SERVICE_GET_RESULT live zips the running container /data/outputs (owner-only)', async () => {
+    const job = await getServiceJob(serviceId)
+    // the node created a writable /data/outputs before starting the container
+    await writeServiceOutput(job.containerId, 'first.txt', 'from the first container')
+
+    const live = await getServiceResult({ live: true })
+    assert(
+      live.status.httpStatus === 200,
+      `expected 200, got ${live.status.httpStatus}: ${live.status?.error ?? ''}`
+    )
+    expect(live.status.headers['Content-Type']).to.equal('application/zip')
+    const files = await unzipFiles(live.stream as Readable)
+    expect(files['first.txt']).to.equal('from the first container')
+
+    // nothing archived while the first container is still running
+    expect(job.outputArchives ?? []).to.deep.equal([])
+    expect((await getServiceResult({ index: 0 })).status.httpStatus).to.equal(404)
+    // index and live together are rejected
+    expect((await getServiceResult({ index: 0, live: true })).status.httpStatus).to.equal(
+      400
+    )
+    // a non-owner can't read the outputs
+    expect(
+      (await getServiceResult({ live: true }, nonOwnerAccount)).status.httpStatus
+    ).to.not.equal(200)
+  })
+
   it('(g) SERVICE_START on a services-disabled environment → 403', async () => {
     const {
       consumerAddress: addr,
@@ -852,6 +1196,26 @@ describe('**********         Service on Demand', () => {
 
     const res = await httpGetWithRetry(endpointUrl)
     assert(res.status === 200, `expected nginx HTTP 200 after restart, got ${res.status}`)
+
+    // the old container's /data/outputs was carried over into the new container...
+    const live = await getServiceResult({ live: true })
+    assert(
+      live.status.httpStatus === 200,
+      `expected 200, got ${live.status.httpStatus}: ${live.status?.error ?? ''}`
+    )
+    const files = await unzipFiles(live.stream as Readable)
+    expect(files['first.txt']).to.equal('from the first container')
+    // ...so nothing was archived for the restart, and the old container is gone
+    expect(
+      (running.outputArchives ?? []).filter((a) => a.containerId === oldContainerId)
+    ).to.deep.equal([])
+    let oldInspect: { statusCode?: number } | null = null
+    try {
+      await new Dockerode().getContainer(oldContainerId).inspect()
+    } catch (e) {
+      oldInspect = e
+    }
+    expect(oldInspect?.statusCode, 'old container must be removed').to.equal(404)
   })
 
   it('(l2) SERVICE_RESTART self-heals a network leaked by a crash mid-start', async function () {
@@ -1069,6 +1433,9 @@ describe('**********         Service on Demand', () => {
     this.timeout(DEFAULT_TEST_TIMEOUT * 2)
     const before = await getServiceJob(serviceId)
     const { containerId } = before
+    // (l2) simulates a lost container ref, so f2's file did not survive the restarts —
+    // write one into the last container for (m2) to find in the stop archive.
+    await writeServiceOutput(containerId, 'last.txt', 'from the last container')
 
     const {
       consumerAddress: addr,
@@ -1106,6 +1473,31 @@ describe('**********         Service on Demand', () => {
     expect(matching.length).to.equal(0)
   })
 
+  it('(m2) SERVICE_STOP archived the last container; its outputs stay downloadable', async function () {
+    const job = await getServiceJob(serviceId)
+    expect(
+      job.outputArchives,
+      'stop must archive /data/outputs'
+    ).to.have.length.greaterThan(0)
+    const archive = job.outputArchives[job.outputArchives.length - 1]
+    expect(job.outputArchives.map((a) => a.index)).to.deep.equal(
+      job.outputArchives.map((_, i) => i)
+    )
+
+    const full = await getServiceResult({ index: archive.index })
+    expect(full.status.httpStatus).to.equal(200)
+    expect(full.status.headers['Content-Length']).to.equal(String(archive.filesize))
+    const files = await unzipFiles(full.stream as Readable)
+    expect(files['last.txt']).to.equal('from the last container')
+
+    // resumable: the tail from an offset is exactly the rest of the file
+    const tail = await getServiceResult({ index: archive.index, offset: 10 })
+    expect(tail.status.headers['Content-Length']).to.equal(String(archive.filesize - 10))
+
+    // no container any more → no live download
+    expect((await getServiceResult({ live: true })).status.httpStatus).to.equal(409)
+  })
+
   it('(n) [slow] expiry cron marks a short-lived service Expired', async function () {
     this.timeout(150000)
     const {
@@ -1127,9 +1519,11 @@ describe('**********         Service on Demand', () => {
       tag: 'alpine',
       exposedPorts: [8080],
       duration: EXPIRY_DURATION,
+      // Services must book a positive disk amount (SERVICE_START rejects 0 / omitted).
       resources: [
         { id: 'cpu', amount: 1 },
-        { id: 'ram', amount: 1 }
+        { id: 'ram', amount: 1 },
+        { id: 'disk', amount: 1 }
       ],
       payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken }
     }
@@ -1173,9 +1567,11 @@ describe('**********         Service on Demand', () => {
       dockerCmd: ['nginx', '-g', 'daemon off;'],
       exposedPorts: [8080],
       duration: SERVICE_DURATION,
+      // Services must book a positive disk amount (SERVICE_START rejects 0 / omitted).
       resources: [
         { id: 'cpu', amount: 1 },
-        { id: 'ram', amount: 1 }
+        { id: 'ram', amount: 1 },
+        { id: 'disk', amount: 1 }
       ],
       payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken }
     }
@@ -1198,5 +1594,66 @@ describe('**********         Service on Demand', () => {
 
     // stop it
     await getDockerEngine().stopService(job.serviceId, consumerAddress)
+  })
+
+  it('(p) SERVICE_START persists a checksummed, whitelisted subsidyProviders list on the job', async function () {
+    // Budget matches test (d): the stopService() call below blocks on the same per-service
+    // lifecycle lock as the background pipeline (lock → image → claim → start), so this test does
+    // the full flow synchronously. NOTE: the whitelisted address here is a plain EOA, not a
+    // deployed subsidy-provider contract, so the on-chain claim is expected to revert and fall into
+    // the cancel-refund path — that is fine, this test only asserts the value persisted at request
+    // time (before any claim runs), so a resulting Error status is not a regression.
+    this.timeout(DEFAULT_TEST_TIMEOUT * 4)
+    await withSubsidyFilter(
+      { [String(DEVELOPMENT_CHAIN_ID)]: [WHITELISTED_PROVIDER] },
+      async () => {
+        const {
+          consumerAddress: addr,
+          nonce,
+          signature
+        } = await signFor(consumerAccount, PROTOCOL_COMMANDS.SERVICE_START)
+        const task: ServiceStartCommand = {
+          command: PROTOCOL_COMMANDS.SERVICE_START,
+          consumerAddress: addr,
+          nonce,
+          signature,
+          environment: servicesEnv.id,
+          image: 'nginxinc/nginx-unprivileged',
+          tag: 'alpine',
+          exposedPorts: [8080],
+          duration: SERVICE_DURATION,
+          // Services must book a positive disk amount (SERVICE_START rejects 0 / omitted).
+          resources: [
+            { id: 'cpu', amount: 1 },
+            { id: 'ram', amount: 1 },
+            { id: 'disk', amount: 1 }
+          ],
+          payment: { chainId: DEVELOPMENT_CHAIN_ID, token: paymentToken },
+          // lower-case on input; the resolver must store the EIP-55 checksummed form
+          subsidyProviders: [WHITELISTED_PROVIDER.toLowerCase()]
+        }
+        const resp = await new ServiceStartHandler(oceanNode).handle(task)
+        assert(
+          resp.status.httpStatus === 200,
+          `expected 200, got ${resp.status.httpStatus}: ${resp.status?.error ?? ''}`
+        )
+        const [job] = (await streamToObject(resp.stream as Readable)) as ServiceJob[]
+        // register for teardown before any further await, so a later assertion failure
+        // still leaves the service to be cleaned up by after()
+        startedServices.push(job.serviceId)
+
+        // The resolved override is persisted synchronously by createServiceJob, so it is
+        // readable straight from the DB — no need to wait for the background pipeline.
+        const [stored] = await dbconn.c2d.getServiceJob(job.serviceId)
+        assert(stored, 'service job not persisted')
+        expect(stored.payment.subsidyProviders).to.deep.equal([
+          ethers.getAddress(WHITELISTED_PROVIDER)
+        ])
+
+        await getDockerEngine()
+          .stopService(job.serviceId, consumerAddress)
+          .catch(() => {})
+      }
+    )
   })
 })

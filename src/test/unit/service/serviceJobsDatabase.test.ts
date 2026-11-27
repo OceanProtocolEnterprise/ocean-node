@@ -393,6 +393,98 @@ describe('Service Jobs Database', () => {
     expect(ids).to.not.include(futureStopped.serviceId)
   })
 
+  it('getExpiredServiceJobsBefore returns only Expired jobs past the cutoff that still hold output archives', async () => {
+    const archive = {
+      index: 0,
+      filename: 'outputs-0.zip',
+      filesize: 5,
+      createdAt: Date.now(),
+      containerId: 'container-1'
+    }
+    const expired = { status: ServiceStatusNumber.Expired, statusText: 'Expired' }
+    const withArchives = makeServiceJob({
+      ...expired,
+      expiresAt: Date.now() - 10_000,
+      outputArchives: [archive]
+    })
+    // the record is kept with outputArchives: [] once its archives were deleted
+    const cleaned = makeServiceJob({
+      ...expired,
+      expiresAt: Date.now() - 10_000,
+      outputArchives: []
+    })
+    const neverArchived = makeServiceJob({ ...expired, expiresAt: Date.now() - 10_000 })
+    const tooRecent = makeServiceJob({
+      ...expired,
+      expiresAt: Date.now(),
+      outputArchives: [archive]
+    })
+    const notExpired = makeServiceJob({
+      status: ServiceStatusNumber.Stopped,
+      expiresAt: Date.now() - 10_000,
+      outputArchives: [archive]
+    })
+    for (const job of [withArchives, cleaned, neverArchived, tooRecent, notExpired]) {
+      await db.newServiceJob(job)
+    }
+
+    const jobs = await db.getExpiredServiceJobsBefore(Date.now() - 5_000, CLUSTER_HASH)
+    const ids = jobs.map((j) => j.serviceId)
+    expect(ids).to.include(withArchives.serviceId)
+    expect(ids).to.not.include(cleaned.serviceId)
+    expect(ids).to.not.include(neverArchived.serviceId)
+    expect(ids).to.not.include(tooRecent.serviceId)
+    expect(ids).to.not.include(notExpired.serviceId)
+    expect(
+      jobs.find((j) => j.serviceId === withArchives.serviceId).outputArchives
+    ).to.deep.equal([archive])
+  })
+
+  it('DiskQuotaExceeded reserves claimed resources, expires normally, and waits for Expired before archive cleanup', async () => {
+    const diskStopped = makeServiceJob({
+      status: ServiceStatusNumber.DiskQuotaExceeded,
+      statusText: 'DiskQuotaExceeded',
+      expiresAt: Date.now() - 10_000,
+      outputArchives: [
+        {
+          index: 0,
+          filename: 'outputs-0.zip',
+          filesize: 5,
+          createdAt: Date.now(),
+          containerId: 'container-1'
+        }
+      ]
+    })
+    const unpaid = makeServiceJob({
+      ...diskStopped,
+      serviceId: `${diskStopped.serviceId}-unpaid`,
+      payment: { ...diskStopped.payment, claimTx: '' }
+    })
+    await db.newServiceJob(diskStopped)
+    await db.newServiceJob(unpaid)
+    const active = (await db.getRunningServiceJobs(CLUSTER_HASH)).map((j) => j.serviceId)
+    expect(active).to.include(diskStopped.serviceId)
+    expect(active).to.not.include(unpaid.serviceId)
+    expect(
+      (await db.getExpiredServiceJobs(CLUSTER_HASH)).map((j) => j.serviceId)
+    ).to.include(diskStopped.serviceId)
+    expect(
+      (await db.getPendingServiceStarts(CLUSTER_HASH)).map((j) => j.serviceId)
+    ).to.not.include(diskStopped.serviceId)
+    expect(
+      (await db.getExpiredServiceJobsBefore(Date.now(), CLUSTER_HASH)).map(
+        (j) => j.serviceId
+      )
+    ).to.not.include(diskStopped.serviceId)
+    diskStopped.status = ServiceStatusNumber.Expired
+    await db.updateServiceJob(diskStopped)
+    expect(
+      (await db.getExpiredServiceJobsBefore(Date.now(), CLUSTER_HASH)).map(
+        (j) => j.serviceId
+      )
+    ).to.include(diskStopped.serviceId)
+  })
+
   describe('shared resource accounting (compute + service)', () => {
     let engine: SharedAccountingEngine
 

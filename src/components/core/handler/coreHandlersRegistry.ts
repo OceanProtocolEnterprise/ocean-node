@@ -34,6 +34,7 @@ import {
   ComputeGetStreamableLogsHandler
 } from '../compute/index.js'
 import { StopNodeHandler } from '../admin/stopNodeHandler.js'
+import { SetMaintenanceHandler } from '../admin/setMaintenanceHandler.js'
 import { StopJobHandler } from '../admin/stopJob.js'
 import { ReindexTxHandler } from '../admin/reindexTxHandler.js'
 import { ReindexChainHandler } from '../admin/reindexChainHandler.js'
@@ -76,7 +77,8 @@ import {
   ServiceRestartHandler,
   ServiceGetStatusHandler,
   GetServicesHandler,
-  ServiceGetStreamableLogsHandler
+  ServiceGetStreamableLogsHandler,
+  ServiceGetResultHandler
 } from '../service/index.js'
 
 export type HandlerRegistry = {
@@ -194,7 +196,15 @@ export class CoreHandlersRegistry {
       PROTOCOL_COMMANDS.SERVICE_GET_STREAMABLE_LOGS,
       new ServiceGetStreamableLogsHandler(node)
     )
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.SERVICE_GET_RESULT,
+      new ServiceGetResultHandler(node)
+    )
     this.registerCoreHandler(PROTOCOL_COMMANDS.STOP_NODE, new StopNodeHandler(node))
+    this.registerCoreHandler(
+      PROTOCOL_COMMANDS.SET_MAINTENANCE,
+      new SetMaintenanceHandler(node)
+    )
     this.registerCoreHandler(PROTOCOL_COMMANDS.STOP_JOB, new StopJobHandler(node))
     this.registerCoreHandler(PROTOCOL_COMMANDS.REINDEX_TX, new ReindexTxHandler(node))
     this.registerCoreHandler(
@@ -316,7 +326,7 @@ export class CoreHandlersRegistry {
   // pass the handler name from the SUPPORTED_PROTOCOL_COMMANDS keys
   public getHandler(handlerName: string): any {
     if (!SUPPORTED_PROTOCOL_COMMANDS.includes(handlerName)) {
-      OCEAN_NODE_LOGGER.error(
+      OCEAN_NODE_LOGGER.debug(
         `Invalid handler "${handlerName}". No known associated protocol command!`
       )
       return null

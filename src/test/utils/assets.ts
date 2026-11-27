@@ -20,7 +20,7 @@ import {
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 import { getEventFromTx, streamToObject } from '../../utils/util.js'
 
-import { AssetUtils } from '../../utils/asset.js'
+import { DDOManager, Service } from '@oceanprotocol/ddo-js'
 
 import { DDO_IDENTIFIER_PREFIX, PROTOCOL_COMMANDS } from '../../utils/index.js'
 import { FeesHandler } from '../../components/core/handler/feesHandler.js'
@@ -129,37 +129,6 @@ export async function publishAsset(asset: any, publisherAccount: Signer) {
   }
 }
 
-export async function updateAssetMetadata(
-  nftAddress: string,
-  updatedDDO: any,
-  publisherAccount: Signer
-) {
-  const nftContract = new ethers.Contract(
-    nftAddress,
-    ERC721Template.abi,
-    publisherAccount
-  )
-
-  const stringDDO = JSON.stringify(updatedDDO)
-  const bytes = Buffer.from(stringDDO)
-  const metadata = hexlify(bytes)
-  const hash = createHash('sha256').update(metadata).digest('hex')
-
-  const setMetaDataTx = await nftContract.setMetaData(
-    0,
-    'http://v4.provider.oceanprotocol.com',
-    '0x123',
-    '0x01',
-    metadata,
-    '0x' + hash,
-    []
-  )
-  const trxReceipt = await setMetaDataTx.wait()
-  return {
-    trxReceipt
-  }
-}
-
 export async function orderAsset(
   genericAsset: any,
   serviceIndex: number,
@@ -172,7 +141,9 @@ export async function orderAsset(
   const consumeMarketFeeAddress = ZeroAddress
   const consumeMarketFeeAmount = 0
   const consumeMarketFeeToken = ZeroAddress
-  const service = AssetUtils.getServiceByIndex(genericAsset, serviceIndex)
+  const service = DDOManager.getDDOClass(genericAsset).getServiceByIndex(
+    serviceIndex
+  ) as Service
 
   let orderTxReceipt = null
   const dataTokenContract = new Contract(
@@ -259,7 +230,9 @@ export async function reOrderAsset(
   const consumeMarketFeeAddress = ZeroAddress
   const consumeMarketFeeAmount = 0
   const consumeMarketFeeToken = ZeroAddress
-  const service = AssetUtils.getServiceByIndex(genericAsset, serviceIndex)
+  const service = DDOManager.getDDOClass(genericAsset).getServiceByIndex(
+    serviceIndex
+  ) as Service
   const dataTokenContract = new Contract(
     service.datatokenAddress,
     ERC20Template.abi,

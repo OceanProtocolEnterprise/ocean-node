@@ -40,7 +40,6 @@ export class BlockchainRegistry {
     // Get network configuration
     const networkConfig = supportedNetworks[chainId.toString()]
     if (!networkConfig.chainId) networkConfig.chainId = chainId
-
     // Create Blockchain instance with new constructor
     const blockchain = new Blockchain(this.keyManager, networkConfig)
 

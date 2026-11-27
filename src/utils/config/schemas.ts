@@ -7,10 +7,14 @@ import {
   DEFAULT_SERVICE_MIN_DURATION_SECONDS
 } from '../../@types/C2D/ServiceOnDemand.js'
 import { CONFIG_LOGGER } from '../logging/common.js'
+import { parseMemoryTotalToBytes } from '../../components/c2d/gpu/types.js'
+import { parsePassContainerEnvs } from '../../components/c2d/containerEnvs.js'
 import { booleanFromString, jsonFromString } from './transforms.js'
+import { parseAllowedRange } from '../safeUrl.js'
 import {
   DEFAULT_BOOTSTRAP_ADDRESSES,
   DEFAULT_RATE_LIMIT_PER_MINUTE,
+  DEFAULT_MAX_CONNECTIONS_PER_MINUTE,
   DEFAULT_UNSAFE_URLS,
   DEFAULT_FILTER_ANNOUNCED_ADDRESSES,
   DEFAULT_DB_INIT_MAX_ATTEMPTS,
@@ -24,6 +28,7 @@ import {
   SENDTO_MAX_CONCURRENCY_CAP,
   normalizeP2pBudget
 } from '../../components/P2P/timeouts.js'
+import { MAX_SUBSIDY_PROVIDERS_PER_LOCK } from '../../components/core/utils/subsidyProviders.js'
 
 function isValidUrl(urlString: string): boolean {
   try {
@@ -33,6 +38,20 @@ function isValidUrl(urlString: string): boolean {
   } catch {
     return false
   }
+}
+
+// SERVICE_HF_MIRROR_URL: http(s) URL with a host, or undefined (unset, empty or invalid).
+function parseServiceHfMirrorUrl(value: string | undefined): string | undefined {
+  const v = value?.trim()
+  if (!v) return undefined
+  try {
+    const url = new URL(v)
+    if ((url.protocol === 'http:' || url.protocol === 'https:') && url.hostname) return v
+  } catch {}
+  CONFIG_LOGGER.error(
+    `serviceHfMirrorUrl "${v}" is not an http(s) URL — services start without the HF mirror`
+  )
+  return undefined
 }
 
 /**
@@ -99,6 +118,127 @@ export const AccessListContractSchema = z.preprocess(
   z.record(z.string(), z.array(z.string())).nullable()
 )
 
+// Per-chain map of Subsidy Provider contract addresses `{ "<chainId>": ["0x.."] }`, passed to
+// the escrow at lock and claim time. Same shape as AccessListContract, but each chain's addresses
+// are normalized to their EIP-55 checksummed form via ethers `getAddress` and de-duplicated.
+// Anything malformed (bad JSON, not a per-chain object, an invalid address, or more than
+// `MAX_SUBSIDY_PROVIDERS_PER_LOCK` unique providers on a chain) collapses the whole map to `null`
+// rather than throwing, so a typo in this optional knob can never keep the node from booting.
+export const SubsidyProvidersSchema = z.preprocess(
+  (val) => {
+    if (val === null || val === undefined) return null
+    if (typeof val === 'string') {
+      try {
+        val = JSON.parse(val)
+      } catch {
+        return null
+      }
+    }
+    if (typeof val !== 'object' || Array.isArray(val)) return null
+    try {
+      const checksummed: Record<string, string[]> = {}
+      for (const [chainId, addresses] of Object.entries(val as Record<string, unknown>)) {
+        // Keys must be canonical decimal chain ids (matching `String(chainId)` used by
+        // Escrow.getSubsidyProvidersForChain); reject hex/whitespace/leading-zero/non-numeric
+        // keys that would otherwise be stored but never matched at claim time.
+        if (!/^[1-9]\d*$/.test(chainId)) return null
+        if (!Array.isArray(addresses)) return null
+        // Checksum + de-duplicate: the escrow counts UNIQUE sponsors, so duplicates are one
+        // sponsor. This is also the default list handed to createLock/claimLock when a request
+        // supplies no override, so it must obey the same per-lock cap the request path enforces.
+        const unique = Array.from(
+          new Set(addresses.map((addr) => getAddress(addr as string)))
+        )
+        if (unique.length > MAX_SUBSIDY_PROVIDERS_PER_LOCK) {
+          // A configured list above the escrow's `maxSponsorsPerLock()` would make every default
+          // lock/claim for this chain revert "Too many sponsors"; treat it as invalid config.
+          CONFIG_LOGGER.error(
+            `SUBSIDY_PROVIDERS for chain ${chainId} has ${unique.length} unique providers; max is ${MAX_SUBSIDY_PROVIDERS_PER_LOCK} per lock`
+          )
+          return null
+        }
+        checksummed[chainId] = unique
+      }
+      return checksummed
+    } catch (error) {
+      CONFIG_LOGGER.error(`Invalid address in SUBSIDY_PROVIDERS: ${error.message}`)
+      return null
+    }
+  },
+  z.record(z.string(), z.array(z.string())).nullable()
+)
+
+// Map of Subsidy Provider contract address → the docker image references that address is allowed
+// to subsidize: `{ "0x..": ["image:tag", "image@sha256:.."] }`. Modeled on SubsidyProvidersSchema:
+// anything malformed (bad JSON, not an object, an invalid address key, or a non-array/non-string
+// image list) collapses the WHOLE map to `null` rather than throwing, so a typo in this optional
+// knob can never keep the node from booting. IMPORTANT: because this is an anti-abuse gate, `null`
+// means the gate is OFF (no restrictions) — a malformed value is therefore fail-OPEN (every image
+// stays subsidized), so each collapse is logged at `error` for the operator to notice. The address
+// KEY is checksummed (EIP-55) so it matches the checksummed effective subsidy list at gate time,
+// and keys that differ only in case are merged (de-duped) rather than silently overwriting; the
+// image entries are trimmed (empties dropped) but NOT otherwise validated — they are docker
+// references, not addresses. Note `{}` (zero keys) is a valid, boot-safe value meaning "no
+// restrictions" (identical to unset), so it must NOT collapse to null.
+export const SubsidyProviderAllowedImagesSchema = z.preprocess(
+  (val) => {
+    if (val === null || val === undefined) return null
+    if (typeof val === 'string') {
+      try {
+        val = JSON.parse(val)
+      } catch (error) {
+        CONFIG_LOGGER.error(
+          `SUBSIDY_PROVIDER_ALLOWED_IMAGES is not valid JSON — the image gate is DISABLED (no restrictions): ${error.message}`
+        )
+        return null
+      }
+    }
+    if (typeof val !== 'object' || Array.isArray(val)) {
+      CONFIG_LOGGER.error(
+        'SUBSIDY_PROVIDER_ALLOWED_IMAGES must be a JSON object { "0x..": ["image:tag", ..] } — the image gate is DISABLED (no restrictions)'
+      )
+      return null
+    }
+    try {
+      const checksummed: Record<string, string[]> = {}
+      for (const [addr, images] of Object.entries(val as Record<string, unknown>)) {
+        if (!Array.isArray(images)) {
+          CONFIG_LOGGER.error(
+            `SUBSIDY_PROVIDER_ALLOWED_IMAGES: the value for "${addr}" must be an array of image references — the image gate is DISABLED (no restrictions)`
+          )
+          return null
+        }
+        const cleaned: string[] = []
+        for (const image of images) {
+          if (typeof image !== 'string') {
+            CONFIG_LOGGER.error(
+              `SUBSIDY_PROVIDER_ALLOWED_IMAGES: the image list for "${addr}" must contain only strings — the image gate is DISABLED (no restrictions)`
+            )
+            return null
+          }
+          const trimmed = image.trim()
+          if (trimmed.length > 0) cleaned.push(trimmed)
+        }
+        // getAddress throws on an invalid address key → the catch collapses the whole map to null.
+        const key = getAddress(addr)
+        // Two keys that checksum to the same address (e.g. differ only in case) are merged, not
+        // overwritten, so one entry can't silently shadow another.
+        const existing = checksummed[key]
+        checksummed[key] = existing
+          ? Array.from(new Set([...existing, ...cleaned]))
+          : cleaned
+      }
+      return checksummed
+    } catch (error) {
+      CONFIG_LOGGER.error(
+        `Invalid address key in SUBSIDY_PROVIDER_ALLOWED_IMAGES — the image gate is DISABLED (no restrictions): ${error.message}`
+      )
+      return null
+    }
+  },
+  z.record(z.string(), z.array(z.string())).nullable()
+)
+
 export const OceanNodeConfigKeysSchema = z.object({
   privateKey: z.any().optional().nullable(),
   type: z.string().optional().default('raw')
@@ -135,9 +275,14 @@ export const PersistentStorageConfigSchema = z
   .object({
     enabled: z.boolean().optional().default(false),
     type: z.enum(['localfs', 's3']).optional().default('localfs'),
-    accessLists: jsonFromString(z.array(z.record(z.string(), z.array(z.string()))))
+    accessLists: jsonFromString(
+      z.array(z.record(z.string(), z.array(z.string()))),
+      'accessLists'
+    )
       .optional()
       .default([]),
+    // Unless true, bucket accessLists are ignored and only the bucket owner can use it.
+    allowBucketSharing: booleanFromString.optional().default(false),
     options: z.any().optional()
   })
   .superRefine((data, ctx) => {
@@ -319,6 +464,27 @@ export const ComputeResourceSchema = z
     constraints: z.array(ResourceConstraintSchema).optional()
   })
   .superRefine((res, ctx) => {
+    // GPU resources must declare their VRAM (`memoryTotal`): consumers rely on it to size
+    // workloads, and it is exposed verbatim in getComputeEnvironments. It is only informational
+    // for other resource kinds, so the requirement is gated on `type: "gpu"`.
+    if (String(res.type ?? '').toLowerCase() === 'gpu') {
+      if (res.memoryTotal === undefined || String(res.memoryTotal).trim() === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `GPU resource "${res.id}": "memoryTotal" (VRAM, e.g. "16 GiB" or "40960 MiB") is required`,
+          path: ['memoryTotal']
+        })
+      } else {
+        const bytes = parseMemoryTotalToBytes(res.memoryTotal)
+        if (bytes === undefined || bytes <= 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `GPU resource "${res.id}": "memoryTotal" ("${res.memoryTotal}") is not a valid VRAM amount — use a number with an optional unit, e.g. "16 GiB", "40960 MiB" or "8GB"`,
+            path: ['memoryTotal']
+          })
+        }
+      }
+    }
     if (res.cpuList === undefined) return
     if (res.id !== 'cpu') {
       ctx.addIssue({
@@ -359,25 +525,112 @@ const ComputeEnvFeaturesSchema = z
 
 // ── Template resource requirements ────────────────────────────────────
 
-const TemplateResourceRequirementSchema = z
+// Advisory recommendations only: the node never gates SERVICE_START on them (choosing an
+// environment is the client's job). There is no `min` — environment minima, granularity and
+// constraints are what the node enforces. A template still using the retired
+// `requiredResources` / `min` shape fails here and the loader skips it with a warning.
+
+const NonNegativeNumber = z.number().finite().min(0)
+const PositiveNumber = z.number().finite().positive()
+
+// One allowed way to spread the recommended VRAM over identical GPUs of one type on one host.
+const GpuLayoutSchema = z
   .object({
-    id: z.string().optional(),
-    kind: z.enum(['discrete', 'fungible']).optional(),
-    type: z.string().optional(),
-    min: z.number().min(0),
-    recommended: z.number().min(0).optional(),
-    unit: z.string().optional(),
+    gpuCount: z.number().int().min(1).max(64),
+    vramPerGpu: PositiveNumber.optional()
+  })
+  .strict()
+  .superRefine((l, ctx) => {
+    if (l.gpuCount === 1 && l.vramPerGpu !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a one-GPU layout uses "recommended" as its VRAM; omit vramPerGpu',
+        path: ['vramPerGpu']
+      })
+    }
+    if (l.gpuCount > 1 && l.vramPerGpu === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a multi-GPU layout must state vramPerGpu (GB per GPU)',
+        path: ['vramPerGpu']
+      })
+    }
+  })
+
+const CpuRequirementSchema = z
+  .object({
+    id: z.literal('cpu'),
+    recommended: NonNegativeNumber,
+    unit: z.literal('cores'),
     description: z.string().optional()
   })
   .strict()
-  .refine((r) => r.id !== undefined || r.kind !== undefined, {
-    message: 'Each resource requirement must specify either "id" or "kind"'
+
+const MemoryRequirementSchema = z
+  .object({
+    id: z.enum(['ram', 'disk']),
+    recommended: NonNegativeNumber, // decimal GB
+    unit: z.literal('GB'),
+    description: z.string().optional()
   })
-  .refine((r) => !(r.id !== undefined && r.kind !== undefined), {
-    message: '"id" and "kind" are mutually exclusive in a resource requirement'
+  .strict()
+
+const GpuRequirementSchema = z
+  .object({
+    kind: z.literal('discrete'),
+    type: z.literal('gpu'),
+    recommended: PositiveNumber, // TOTAL VRAM, decimal GB
+    unit: z.literal('GB'),
+    layouts: z.array(GpuLayoutSchema).nonempty().max(8),
+    gpuCountEnv: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      .optional(),
+    description: z.string().optional()
   })
-  .refine((r) => r.recommended === undefined || r.recommended >= r.min, {
-    message: '"recommended" must be >= "min"'
+  .strict()
+  .superRefine((r, ctx) => {
+    r.layouts.forEach((l, i) => {
+      if (i > 0 && l.gpuCount <= r.layouts[i - 1].gpuCount) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'layouts must be strictly ascending by gpuCount',
+          path: ['layouts', i]
+        })
+      }
+      const total = l.gpuCount * (l.vramPerGpu ?? r.recommended)
+      // Compare with a small tolerance (1e-6 GB ≈ 1 KB — far below any real VRAM granularity).
+      if (total < r.recommended - 1e-6) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'gpuCount x vramPerGpu is below the recommended total VRAM',
+          path: ['layouts', i]
+        })
+      }
+    })
+  })
+
+export const TemplateResourceRequirementSchema = z.union([
+  CpuRequirementSchema,
+  MemoryRequirementSchema,
+  GpuRequirementSchema
+])
+
+export const RecommendedResourcesSchema = z
+  .array(TemplateResourceRequirementSchema)
+  .superRefine((list, ctx) => {
+    const seen = new Set<string>()
+    list.forEach((r, i) => {
+      const key = 'id' in r ? r.id : 'gpu'
+      if (seen.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate "${key}" requirement`,
+          path: [i]
+        })
+      }
+      seen.add(key)
+    })
   })
 
 // ── Template ──────────────────────────────────────────────────────────
@@ -420,6 +673,9 @@ const ServiceTemplateWorkflowSchema = z
     message: 'A workflow must set exactly one of "file" or "graph"'
   })
 
+// template ids (and command index) already warned about for shell invocation
+const shellTemplateWarnings = new Set<string>()
+
 export const ServiceTemplateSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, {
@@ -427,8 +683,10 @@ export const ServiceTemplateSchema = z
     }),
     name: z.string().optional(),
     description: z.string().optional(),
-    // Catalogue metadata (all optional; absent `kind` means 'service')
-    kind: z.enum(['service', 'bundle']).optional(),
+    // Catalogue metadata (all optional; absent `kind` means 'service'). 'bundle' and 'curated' are
+    // both built on a parent `service`; 'curated' is a hand-picked model template: a fixed model +
+    // fixed serve args, no user command/model override (e.g. a vLLM-served model).
+    kind: z.enum(['service', 'bundle', 'curated']).optional(),
     service: z
       .string()
       .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, {
@@ -467,8 +725,7 @@ export const ServiceTemplateSchema = z
     command: z.array(z.string()).optional(),
     commandFile: z.string().min(1).optional(),
     entrypoint: z.array(z.string()).optional(),
-    requiredResources: z.array(TemplateResourceRequirementSchema).optional(),
-    recommendedResources: z.array(TemplateResourceRequirementSchema).optional(),
+    recommendedResources: RecommendedResourcesSchema.optional(),
     workflows: z.array(ServiceTemplateWorkflowSchema).optional()
   })
   .strict()
@@ -488,13 +745,83 @@ export const ServiceTemplateSchema = z
         }
       }
     })
+
+    // Duplicate userConfigurableEnvVars keys are ambiguous: a client cannot tell which
+    // declaration (and which validation regex) applies, and the gpuCountEnv layout check below
+    // resolves the key with .find(), so it would only ever see the first. Reject duplicates,
+    // pointing at each later occurrence, so every linked variable has one authoritative regex.
+    const seenEnvKeys = new Set<string>()
+    ;(tmpl.userConfigurableEnvVars ?? []).forEach((uvar, i) => {
+      if (seenEnvKeys.has(uvar.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `userConfigurableEnvVars[${i}].key "${uvar.key}" is declared more than once — keys must be unique`,
+          path: ['userConfigurableEnvVars', i, 'key']
+        })
+      } else {
+        seenEnvKeys.add(uvar.key)
+      }
+    })
+
+    // A GPU recommendation's `gpuCountEnv` names the user-set env var that forces the exact
+    // GPU width at runtime, so clients can only offer layouts that var accepts.
+    const gpu = (tmpl.recommendedResources ?? []).find(
+      (r): r is Extract<typeof r, { type: 'gpu' }> => 'type' in r && r.type === 'gpu'
+    )
+    if (gpu?.gpuCountEnv) {
+      const key = gpu.gpuCountEnv
+      const env = (tmpl.userConfigurableEnvVars ?? []).find((v) => v.key === key)
+      if (!env) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'gpuCountEnv must reference a declared userConfigurableEnvVars key',
+          path: ['recommendedResources']
+        })
+      } else if (env.validation) {
+        // an uncompilable regex is already reported by the loop above
+        let re: RegExp | undefined
+        try {
+          // eslint-disable-next-line security/detect-non-literal-regexp
+          re = new RegExp(env.validation)
+        } catch {
+          re = undefined
+        }
+        gpu.layouts.forEach((l, i) => {
+          if (re && !re.test(String(l.gpuCount))) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `layouts[${i}].gpuCount ${l.gpuCount} is not accepted by ${key}'s validation`,
+              path: ['recommendedResources']
+            })
+          }
+        })
+      }
+      // envVars values are stripped before templates reach clients (compute_engines.ts), so
+      // an operator-fixed forced width would be invisible to every planner.
+      if (tmpl.envVars && Object.hasOwn(tmpl.envVars, key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'gpuCountEnv must not be an operator-fixed envVars key: clients cannot see its value',
+          path: ['recommendedResources']
+        })
+      }
+    }
+
     // Warn on shell-injection-prone command patterns (security plan #3)
     ;(tmpl.command ?? []).forEach((arg, i) => {
       if (/sh\s+-c|`/.test(arg)) {
-        CONFIG_LOGGER.warn(
+        // templates are re-parsed on every getTemplates request: warn once per template
+        const warnKey = `${tmpl.id}:${i}`
+        const message =
           `Template "${tmpl.id}" command[${i}] contains shell invocation. ` +
-            'This enables injection when userData values are substituted.'
-        )
+          'This enables injection when userData values are substituted.'
+        if (shellTemplateWarnings.has(warnKey)) {
+          CONFIG_LOGGER.debug(message)
+        } else {
+          shellTemplateWarnings.add(warnKey)
+          CONFIG_LOGGER.warn(message)
+        }
       }
     })
 
@@ -518,19 +845,21 @@ export const ServiceTemplateSchema = z
       })
     }
 
-    // A bundle without a parent id renders as a plain service in clients (they key the
-    // grouping off `service`), so a half-declared bundle is a template bug, not a variant.
-    if (tmpl.kind === 'bundle' && !tmpl.service) {
+    // A bundle or curated template without a parent id renders as a plain service in clients (they
+    // key the grouping off `service`), so a half-declared one is a template bug, not a variant.
+    const hasParent = tmpl.kind === 'bundle' || tmpl.kind === 'curated'
+    if (hasParent && !tmpl.service) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: '"service" (the parent template id) is required when kind is "bundle"',
+        message: `"service" (the parent template id) is required when kind is "${tmpl.kind}"`,
         path: ['service']
       })
     }
-    if (tmpl.service && tmpl.kind !== 'bundle') {
+    if (tmpl.service && !hasParent) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: '"service" only applies to a bundle — set kind: "bundle" or drop it',
+        message:
+          '"service" only applies to a bundle or curated template — set kind accordingly or drop it',
         path: ['service']
       })
     }
@@ -568,7 +897,10 @@ export const ServiceOnDemandConfigSchema = z
       .min(60)
       .optional()
       .default(DEFAULT_SERVICE_MAX_DURATION_SECONDS),
-    allowImageBuild: z.boolean().optional().default(false)
+    allowImageBuild: z.boolean().optional().default(false),
+    // No schema default: the 300s fallback is applied once at runtime
+    // (resolveBuildTimeoutSeconds), so an operator's value can win the resolution chain.
+    buildTimeoutSeconds: z.number().int().min(1).optional()
   })
   .strict()
 
@@ -596,7 +928,10 @@ export const ComputeEnvironmentFreeOptionsSchema = z.object({
         .optional()
     })
     .optional(),
-  allowImageBuild: z.boolean().optional().default(false)
+  allowImageBuild: z.boolean().optional().default(false),
+  // No schema default: the 300s fallback is applied once at runtime
+  // (resolveBuildTimeoutSeconds), so an operator's value can win the resolution chain.
+  buildTimeoutSeconds: z.number().int().min(1).optional()
 })
 
 // Config-time schema for the free block — resources are refs, not full ComputeResource objects.
@@ -614,7 +949,10 @@ export const C2DEnvironmentFreeConfigSchema = z.object({
         .optional()
     })
     .optional(),
-  allowImageBuild: z.boolean().optional().default(false)
+  allowImageBuild: z.boolean().optional().default(false),
+  // No schema default: the 300s fallback is applied once at runtime
+  // (resolveBuildTimeoutSeconds), so an operator's value can win the resolution chain.
+  buildTimeoutSeconds: z.number().int().min(1).optional()
 })
 
 export const C2DEnvironmentConfigSchema = z
@@ -631,6 +969,9 @@ export const C2DEnvironmentConfigSchema = z
     // which is resolved at engine start and clamped there if this exceeds it.
     maxServiceDuration: z.number().int().min(1).optional(),
     maxJobs: z.number().int().optional(),
+    // No schema default: the 300s fallback is applied once at runtime
+    // (resolveBuildTimeoutSeconds), so an operator's value can win the resolution chain.
+    buildTimeoutSeconds: z.number().int().min(1).optional(),
     fees: z.record(z.string(), z.array(ComputeEnvFeesSchema)).optional(),
     access: z
       .object({
@@ -774,7 +1115,7 @@ export const C2DClusterInfoSchema = z.object({
 })
 
 export const OceanNodeP2PConfigSchema = z.object({
-  bootstrapNodes: jsonFromString(z.array(z.string())).default([
+  bootstrapNodes: jsonFromString(z.array(z.string()), 'bootstrapNodes').default([
     ...DEFAULT_BOOTSTRAP_ADDRESSES
   ]),
   bootstrapTimeout: z.coerce.number().optional().default(10000),
@@ -852,8 +1193,13 @@ export const OceanNodeP2PConfigSchema = z.object({
   enableCircuitRelayClient: booleanFromString.optional().default(false),
   circuitRelays: z.coerce.number().optional().default(0),
   announcePrivateIp: booleanFromString.optional().default(false),
-  announceAddresses: jsonFromString(z.array(z.string())).optional().default([]),
-  filterAnnouncedAddresses: jsonFromString(z.array(z.string()))
+  announceAddresses: jsonFromString(z.array(z.string()), 'announceAddresses')
+    .optional()
+    .default([]),
+  filterAnnouncedAddresses: jsonFromString(
+    z.array(z.string()),
+    'filterAnnouncedAddresses'
+  )
     .optional()
     .default([...DEFAULT_FILTER_ANNOUNCED_ADDRESSES]),
   minConnections: z.coerce.number().optional().default(1),
@@ -1005,36 +1351,146 @@ export const OceanNodeP2PConfigSchema = z.object({
   )
 })
 
-const addressArrayFromString = jsonFromString(z.array(z.string())).transform(
-  (addresses) => {
+const addressArrayFromString = (field: string) =>
+  jsonFromString(z.array(z.string()), field).transform((addresses) => {
     if (!Array.isArray(addresses)) return []
     try {
       return addresses.map((addr) => getAddress(addr))
     } catch (error) {
-      CONFIG_LOGGER.error(`Invalid address in list: ${error.message}`)
+      CONFIG_LOGGER.error(`Invalid address in ${field}: ${error.message}`)
       return []
     }
+  })
+
+/**
+ * `unsafeURLs`: operator regexes extend the built-in defaults (cloud metadata endpoints
+ * and loopback). Setting UNSAFE_URLS used to replace the defaults, so an operator adding
+ * one pattern silently dropped the metadata-endpoint protection.
+ */
+function withDefaultUnsafeUrls(value: unknown): string[] {
+  const defaults: string[] = [...DEFAULT_UNSAFE_URLS]
+  if (value === undefined || value === null) {
+    return defaults
   }
-)
+  if (!Array.isArray(value)) {
+    CONFIG_LOGGER.error(
+      'unsafeURLs must be a JSON array of regex strings; using the built-in defaults'
+    )
+    return defaults
+  }
+  const extra = value.filter((entry) => typeof entry === 'string' && entry.length > 0)
+  return Array.from(new Set([...defaults, ...extra]))
+}
+
+/**
+ * `allowedPrivateUrlRanges`: keep only valid CIDR / IP entries, log and drop the rest.
+ * Invalid input never widens the allow-list.
+ */
+function normalizeAllowedPrivateUrlRanges(value: unknown): string[] {
+  if (value === undefined || value === null) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    CONFIG_LOGGER.error(
+      'allowedPrivateUrlRanges must be a JSON array of CIDR strings; ignoring it'
+    )
+    return []
+  }
+  const valid: string[] = []
+  for (const entry of value) {
+    if (parseAllowedRange(entry)) {
+      valid.push(String(entry).trim())
+    } else {
+      CONFIG_LOGGER.error(
+        `Ignoring invalid ALLOWED_PRIVATE_URL_RANGES entry (expected CIDR or IP): ${String(entry)}`
+      )
+    }
+  }
+  return valid
+}
 
 export const OceanNodeConfigSchema = z
   .object({
-    dockerComputeEnvironments: jsonFromString(C2DDockerConfigSchema)
+    // `jsonFromString` JSON-parses the env-var string but does NOT re-validate the parsed
+    // value against the inner schema (its union matches `z.string()`, then the transform
+    // returns the parsed object as-is). A config.json array is validated by the union's first
+    // member, but a `DOCKER_COMPUTE_ENVIRONMENTS` env-var string skips validation entirely, so
+    // a GPU missing `memoryTotal` — or any other C2DDockerConfigSchema violation — slipped
+    // through. We re-validate here with `safeParse` and surface the issues, but deliberately
+    // keep the ORIGINAL parsed value (we do not swap in `safeParse`'s output): piping through
+    // the schema would also inject its operational defaults (e.g. `paymentClaimInterval: 3600`)
+    // onto env-var configs that previously carried none, which changes runtime behaviour — the
+    // engine-creation guard in compute_engines.ts treats an unset paymentClaimInterval as "no
+    // limit", so defaulting it there wrongly blocks engine creation. Validation only, no defaults.
+    dockerComputeEnvironments: jsonFromString(
+      C2DDockerConfigSchema,
+      'dockerComputeEnvironments'
+    )
+      .superRefine((val, ctx) => {
+        // config.json (array) input was already validated by the union above; only the
+        // env-var (JSON-parsed) path needs re-checking. undefined is handled by the
+        // optional/default wrappers below.
+        if (val === undefined) return
+        const result = C2DDockerConfigSchema.safeParse(val)
+        if (!result.success) {
+          for (const issue of result.error.issues) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: issue.message,
+              path: issue.path as (string | number)[]
+            })
+          }
+        }
+      })
       .optional()
       .default([]),
 
     serviceTemplatesPath: z.string().optional().default('databases/serviceTemplates/'),
 
-    dockerRegistrysAuth: jsonFromString(DockerRegistrysSchema).optional().default({}),
+    // Service-on-Demand Hugging Face mirror (docs/services.md). Both are optional and
+    // fail soft: an invalid value is logged and dropped, which turns the feature (or the
+    // patch) off instead of refusing to start the node.
+    serviceHfMirrorUrl: z
+      .string()
+      .optional()
+      .transform((v) => parseServiceHfMirrorUrl(v)),
+    serviceHfClientPatch: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      booleanFromString.optional()
+    ),
 
-    authorizedDecrypters: addressArrayFromString.optional().default([]),
-    authorizedDecryptersList: jsonFromString(AccessListContractSchema).optional(),
+    // Node-owner env vars injected into every spawned container (C2D + services). Accepts a
+    // JSON object or a JSON array of KEY=value strings; fail-soft to {} on anything invalid.
+    passContainerEnvs: z
+      .unknown()
+      .optional()
+      .transform((v) => parsePassContainerEnvs(v)),
 
-    allowedValidators: addressArrayFromString.optional().default([]),
-    allowedValidatorsList: jsonFromString(AccessListContractSchema).optional(),
+    dockerRegistrysAuth: jsonFromString(DockerRegistrysSchema, 'dockerRegistrysAuth')
+      .optional()
+      .default({}),
 
-    authorizedPublishers: addressArrayFromString.optional().default([]),
-    authorizedPublishersList: jsonFromString(AccessListContractSchema).optional(),
+    authorizedDecrypters: addressArrayFromString('authorizedDecrypters')
+      .optional()
+      .default([]),
+    authorizedDecryptersList: jsonFromString(
+      AccessListContractSchema,
+      'authorizedDecryptersList'
+    ).optional(),
+
+    allowedValidators: addressArrayFromString('allowedValidators').optional().default([]),
+    allowedValidatorsList: jsonFromString(
+      AccessListContractSchema,
+      'allowedValidatorsList'
+    ).optional(),
+
+    authorizedPublishers: addressArrayFromString('authorizedPublishers')
+      .optional()
+      .default([]),
+    authorizedPublishersList: jsonFromString(
+      AccessListContractSchema,
+      'authorizedPublishersList'
+    ).optional(),
 
     keys: OceanNodeConfigKeysSchema.optional(),
 
@@ -1093,6 +1549,48 @@ export const OceanNodeConfigSchema = z
 
     httpPort: z.coerce.number().optional().default(3000),
     rateLimit: z.coerce.number().optional().default(DEFAULT_RATE_LIMIT_PER_MINUTE),
+    // Express `trust proxy` value. Env vars arrive as strings, so normalise: 'true'/'false'
+    // -> boolean, a numeric value -> number (so a bad hop count is caught below), anything else
+    // (e.g. 'loopback' or a CIDR list) passed through as a string for Express to interpret.
+    // Defaults to false (do not trust any proxy / ignore X-Forwarded-For) so address-based
+    // limits are not spoofable by default.
+    trustProxy: z
+      .preprocess(
+        (val) => {
+          if (val === undefined || val === null || val === '') return false
+          if (typeof val !== 'string') return val
+          const v = val.trim()
+          if (v.toLowerCase() === 'true') return true
+          if (v.toLowerCase() === 'false') return false
+          // Numeric-looking values (incl. signed/decimal) become numbers so the refine below
+          // can reject a fractional or negative hop count. A dotted IP or CIDR is not a finite
+          // number, so it stays a string for Express to interpret.
+          const asNumber = Number(v)
+          if (Number.isFinite(asNumber)) return asNumber
+          return v
+        },
+        z.union([z.boolean(), z.number(), z.string()])
+      )
+      // Reject bare `true`. In Express, trust proxy === true trusts the WHOLE chain and makes
+      // req.ip the left-most, client-claimed X-Forwarded-For address — which silently re-opens
+      // the exact spoofing DoS this setting exists to prevent. Operators must instead name what
+      // they actually trust: a hop count, a preset, or an explicit IP/CIDR list.
+      .refine((val) => val !== true, {
+        message:
+          'TRUST_PROXY=true is not allowed: it trusts the entire proxy chain and lets clients ' +
+          'spoof their IP via X-Forwarded-For. Use the number of trusted proxy hops (e.g. 1), ' +
+          'a preset (loopback/linklocal/uniquelocal), or a comma-separated list of trusted ' +
+          'proxy IPs/CIDRs.'
+      })
+      // A numeric hop count must be a non-negative integer. Fractional or negative values are
+      // operator typos, not valid Express config. (String presets and IP/CIDR lists are left
+      // untouched — Express validates those, and they are the most precise, safest option.)
+      .refine((val) => typeof val !== 'number' || (Number.isInteger(val) && val >= 0), {
+        message:
+          'TRUST_PROXY as a number must be a non-negative integer hop count (e.g. 0, 1, 2).'
+      })
+      .optional()
+      .default(false),
 
     // Startup database-init retry knobs. int().min(1) is load-bearing, not decoration:
     // maxAttempts of 0 would skip Database.init() altogether and boot the node with no
@@ -1121,11 +1619,14 @@ export const OceanNodeConfigSchema = z
     ipfsGateway: z.string().nullable().optional(),
     arweaveGateway: z.string().nullable().optional(),
 
-    supportedNetworks: jsonFromString(RPCSSchema).optional(),
+    supportedNetworks: jsonFromString(RPCSSchema, 'supportedNetworks').optional(),
 
     claimDurationTimeout: z.coerce.number().default(3600),
     indexingNetworks: z
-      .union([jsonFromString(RPCSSchema), z.array(z.union([z.string(), z.number()]))])
+      .union([
+        jsonFromString(RPCSSchema, 'indexingNetworks'),
+        z.array(z.union([z.string(), z.number()]))
+      ])
       .optional(),
 
     c2dClusters: z.array(C2DClusterInfoSchema).optional(),
@@ -1141,17 +1642,113 @@ export const OceanNodeConfigSchema = z
       .refine((url) => !url || isValidUrl(url), {
         message: 'assetPurgatoryUrl must be a valid URL'
       }),
-    allowedAdmins: addressArrayFromString.optional(),
-    allowedAdminsList: jsonFromString(AccessListContractSchema).optional(),
+    allowedAdmins: addressArrayFromString('allowedAdmins').optional(),
+    allowedAdminsList: jsonFromString(
+      AccessListContractSchema,
+      'allowedAdminsList'
+    ).optional(),
+    subsidyProviders: SubsidyProvidersSchema.optional().default(null),
+    // When ON, a user-supplied subsidy-provider list may only contain addresses that are
+    // already in this node's `subsidyProviders` whitelist for the request's chain; anything
+    // else is rejected. Default OFF (users may send any valid address).
+    subsidyProviderFilter: booleanFromString.optional().default(false),
+    // Per-subsidy-address docker-image allowlist (SUBSIDY_PROVIDER_ALLOWED_IMAGES). null/`{}` =
+    // gate OFF (no restrictions); populated = a listed subsidy address only applies to a job
+    // running one of its allowed images with no custom entrypoint/cmd (and, for compute, no
+    // external algorithm). Parsed by SubsidyProviderAllowedImagesSchema (checksummed keys).
+    subsidyProviderAllowedImages:
+      SubsidyProviderAllowedImagesSchema.optional().default(null),
 
     codeHash: z.string().optional(),
-    maxConnections: z.coerce.number().optional(),
-    denyList: jsonFromString(DenyListSchema).optional().default({ peers: [], ips: [] }),
-    unsafeURLs: jsonFromString(z.array(z.string()))
+    // Node-wide request throughput ceiling per minute (sum across all clients). Defaulted
+    // here so the schema and the runtime fallback in checkGlobalConnectionsRateLimit agree
+    // on a single value instead of silently diverging.
+    maxConnections: z.coerce
+      .number()
       .optional()
-      .default([...DEFAULT_UNSAFE_URLS]),
+      .default(DEFAULT_MAX_CONNECTIONS_PER_MINUTE),
+    denyList: jsonFromString(DenyListSchema, 'denyList')
+      .optional()
+      .default({ peers: [], ips: [] }),
+    // operator patterns are added to the built-in defaults (cloud metadata endpoints),
+    // never replace them
+    unsafeURLs: jsonFromString(z.array(z.string()), 'unsafeURLs')
+      .optional()
+      .transform(withDefaultUnsafeUrls),
+    allowedPrivateUrlRanges: jsonFromString(
+      z.array(z.string()),
+      'allowedPrivateUrlRanges'
+    )
+      .optional()
+      .transform(normalizeAllowedPrivateUrlRanges),
+    // ON-18: opt-in Docker registry allow-list (JSON array of registry host strings, e.g.
+    // ["registry-1.docker.io","ghcr.io"]). Unset (undefined) keeps current behaviour: any public
+    // registry allowed. But this is a SECURITY control: a value that is PRESENT-but-malformed must
+    // NOT silently collapse to [] (which checkRegistryAllowList reads as "allow any registry") —
+    // that fail-open would let a typo disable the restriction. So invalid input fails config load
+    // (fail-closed); getConfiguration() surfaces the issue and refuses to start.
+    allowedDockerRegistries: jsonFromString(
+      z.array(z.string()),
+      'allowedDockerRegistries'
+    )
+      .transform((val, ctx) => {
+        if (val === undefined) return []
+        if (!Array.isArray(val) || !val.every((v) => typeof v === 'string')) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              'Invalid ALLOWED_DOCKER_REGISTRIES: expected a JSON array of registry host strings'
+          })
+          return z.NEVER
+        }
+        return val
+      })
+      .optional()
+      .default([]),
+    // ON-18: extra token-realm hosts trusted to receive the operator's registry credentials,
+    // kept SEPARATE from the registry allow-list so trusting a realm never enables allow-list
+    // mode. JSON array of host strings. Invalid input is logged and dropped to [].
+    allowedDockerRegistryRealms: jsonFromString(
+      z.array(z.string()),
+      'allowedDockerRegistryRealms'
+    )
+      .transform((val) => {
+        if (val === undefined) return []
+        if (!Array.isArray(val) || !val.every((v) => typeof v === 'string')) {
+          CONFIG_LOGGER.error(
+            'Invalid ALLOWED_DOCKER_REGISTRY_REALMS: expected a JSON array of realm host strings, dropping to []'
+          )
+          return []
+        }
+        return val
+      })
+      .optional()
+      .default([]),
+    // ON-07: extra request-header names forwarded to the upstream when a caller supplies
+    // `file.headers`. EXTENDS the built-in default allow-list. Invalid input is logged and
+    // dropped to [] (fail-closed to only the defaults, never crash config load).
+    fileInfoAllowedHeaders: jsonFromString(z.array(z.string()), 'fileInfoAllowedHeaders')
+      .transform((val) => {
+        if (val === undefined) return []
+        if (!Array.isArray(val) || !val.every((v) => typeof v === 'string')) {
+          CONFIG_LOGGER.error(
+            'Invalid FILEINFO_ALLOWED_HEADERS: expected a JSON array of header-name strings, dropping to []'
+          )
+          return []
+        }
+        return val
+      })
+      .optional()
+      .default([]),
+    // ON-07: dedicated stricter per-caller rate limit for the raw-`file` fileInfo path
+    // (separate bucket). 0 = disabled. A negative/non-numeric value fails validation.
+    fileInfoRateLimit: z.coerce.number().int().min(0).optional().default(0),
     isBootstrap: booleanFromString.optional().default(false),
+    isEnterprise: booleanFromString.optional().default(true),
     validateUnsignedDDO: booleanFromString.optional().default(true),
+    // enterprise: skip the startup check that every fee token is allowed by the
+    // EnterpriseFeeCollector. Parsed as a boolean so SKIP_FEE_TOKEN_VALIDATION=false enforces it
+    skipFeeTokenValidation: booleanFromString.optional().default(false),
     jwtSecret: z.string(),
     httpCertPath: z.string().optional(),
     httpKeyPath: z.string().optional()

@@ -2,12 +2,10 @@ import { DDOManager } from '@oceanprotocol/ddo-js'
 import { ethers, Signer, FallbackProvider, ZeroAddress } from 'ethers'
 import { EVENTS } from '../../../utils/constants.js'
 import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
-import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
 import {
   getDtContract,
-  getDid,
+  retrieveDdoByNft,
   doesDispenserAlreadyExist,
-  findServiceIdByDatatoken,
   getPricesByDt,
   isValidDispenserContract
 } from '../utils.js'
@@ -29,36 +27,32 @@ export class DispenserActivatedEventProcessor extends BaseEventProcessor {
     )
     const datatokenAddress = decodedEventData.args[0].toString()
     if (!datatokenAddress) {
-      INDEXER_LOGGER.error(
-        `Datatoken address is not found in decoded event. Decoded event: ${JSON.stringify(
-          decodedEventData
-        )}`
+      INDEXER_LOGGER.debug(
+        `Datatoken address not found in decoded event (tx ${event.transactionHash})`
       )
       return null
     }
     if (datatokenAddress === ZeroAddress) {
-      INDEXER_LOGGER.error(
-        `Datatoken address is ZERO ADDRESS. Cannot find DDO by ZERO ADDRESS contract.`
+      INDEXER_LOGGER.debug(
+        `Datatoken address is ZERO ADDRESS, no DDO to update (tx ${event.transactionHash})`
       )
       return null
     }
     const datatokenContract = getDtContract(signer, datatokenAddress)
 
     const nftAddress = await datatokenContract.getERC721Address()
-    const did = getDid(nftAddress, chainId)
     try {
       const { ddo: ddoDatabase } = await this.getDatabase()
-      const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
+      const { did, ddo } = await retrieveDdoByNft(ddoDatabase, nftAddress, chainId)
       if (!ddo) {
-        INDEXER_LOGGER.logMessage(
+        INDEXER_LOGGER.debug(
           `Detected DispenserActivated changed for ${did}, but it does not exists.`
         )
         return
       }
       if (!(await isValidDispenserContract(event.address, chainId, signer))) {
-        INDEXER_LOGGER.warn(
-          `Dispenser contract ${event.address} is not approved by Router. 
-            Abort updating DDO pricing! Returning the existing DDO...`
+        INDEXER_LOGGER.debug(
+          `Dispenser contract ${event.address} is not approved by Router, DDO pricing not updated`
         )
         return ddo
       }
@@ -89,10 +83,10 @@ export class DispenserActivatedEventProcessor extends BaseEventProcessor {
           }
         }
       } else {
-        INDEXER_LOGGER.logMessage(`[DispenserActivated] - No stats were found on the ddo`)
-        const serviceIdToFind = findServiceIdByDatatoken(ddoInstance, datatokenAddress)
+        INDEXER_LOGGER.debug(`[DispenserActivated] - No stats were found on the ddo`)
+        const serviceIdToFind = ddoInstance.getServiceByDatatoken(datatokenAddress)?.id
         if (!serviceIdToFind) {
-          INDEXER_LOGGER.logMessage(
+          INDEXER_LOGGER.debug(
             `[DispenserActivated] - This datatoken does not contain this service. Invalid service id!`
           )
           return
@@ -113,7 +107,7 @@ export class DispenserActivatedEventProcessor extends BaseEventProcessor {
       return savedDDO
     } catch (err) {
       this.rethrowIfProviderError(err)
-      INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error retrieving DDO: ${err}`, true)
+      INDEXER_LOGGER.error(`Error retrieving DDO: ${err}`)
     }
   }
 }

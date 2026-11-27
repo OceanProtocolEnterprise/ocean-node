@@ -28,7 +28,15 @@ export class PushConfigHandler extends AdminCommandHandler {
       const currentConfig = this.getOceanNode().getConfig()
       const mergedConfig = { ...currentConfig, ...command.config }
 
-      OceanNodeConfigSchema.parse(mergedConfig)
+      const parsedConfig = OceanNodeConfigSchema.parse(mergedConfig)
+      // isEnterprise picks the escrow contract. Core would switch on reload, but the running
+      // indexers keep tracking the old one, and jobs locked on it would be claimed on the new
+      // one, so it only changes with a restart.
+      if (Boolean(parsedConfig.isEnterprise) !== Boolean(currentConfig.isEnterprise)) {
+        return buildInvalidRequestMessage(
+          'isEnterprise cannot be changed at runtime; update the config and restart the node'
+        )
+      }
     } catch (error) {
       if (error.name === 'ZodError') {
         const issues = error.issues
@@ -56,6 +64,10 @@ export class PushConfigHandler extends AdminCommandHandler {
       const currentConfig = JSON.parse(configContent)
 
       const mergedConfig = { ...currentConfig, ...task.config }
+      mergedConfig.isEnterprise = this.getOceanNode().getConfig().isEnterprise
+      // a client that echoed an older pushConfig response back may have saved `over` - a
+      // copy of the raw private key - into the file; this write drops it
+      delete mergedConfig.over
       await this.saveConfigToFile(mergedConfig)
 
       const newConfig = await getConfiguration(true, false)
@@ -64,7 +76,8 @@ export class PushConfigHandler extends AdminCommandHandler {
 
       const responseConfig = structuredClone(newConfig)
       responseConfig.keys.privateKey = '[*** HIDDEN CONTENT ***]'
-      CORE_LOGGER.logMessage('Configuration reloaded successfully')
+      CORE_LOGGER.info(`Admin pushed config: saved to ${configPath} and reloaded`)
+      CORE_LOGGER.debug(`Pushed config keys: ${Object.keys(task.config).join(', ')}`)
 
       return new Promise<P2PCommandResponse>((resolve) => {
         resolve({
@@ -87,6 +100,6 @@ export class PushConfigHandler extends AdminCommandHandler {
     const configPath = getConfigFilePath()
     const content = JSON.stringify(config, null, 4)
     await fs.promises.writeFile(configPath, content, 'utf-8')
-    CORE_LOGGER.logMessage(`Config saved to: ${configPath}`)
+    CORE_LOGGER.debug(`Config saved to: ${configPath}`)
   }
 }

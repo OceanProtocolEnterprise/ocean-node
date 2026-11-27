@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# One run per PR (or per branch/tag ref). A newer push cancels the older,
+# still-running set of jobs instead of letting both finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -22,15 +28,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: '24.19.0'
+          node-version: '26.12.1'
       - name: Cache node_modules
         uses: actions/cache@v6
         env:
           cache-name: cache-node-modules
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-lint-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-lint-${{ env.cache-name }}-
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-${{ env.cache-name }}-
       - run: npm ci
       - run: npm run lint
 
@@ -49,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        node: ['24.19.0']
+        node: ['26.12.1']
 
     steps:
       - uses: actions/checkout@v7
@@ -64,8 +70,8 @@ jobs:
           cache-name: cache-node-modules
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-${{ matrix.node }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.node }}-build-${{ env.cache-name }}-
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-${{ env.cache-name }}-
       - run: npm ci
       - run: npm run build
 
@@ -77,15 +83,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: '24.19.0'
+          node-version: '26.12.1'
       - name: Cache node_modules
         uses: actions/cache@v6
         env:
           cache-name: cache-node-modules
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-test-unit-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-test-unit-${{ env.cache-name }}-
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-${{ env.cache-name }}-
       - run: npm ci
       - run: npm run test:unit:cover
         env:
@@ -115,15 +121,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: '24.19.0'
+          node-version: '26.12.1'
       - name: Cache node_modules
         uses: actions/cache@v6
         env:
           cache-name: cache-node-modules
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-test-integration-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-test-integration-${{ env.cache-name }}-
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-${{ env.cache-name }}-
       - name: Set ADDRESS_FILE
         run: echo "ADDRESS_FILE=${HOME}/.ocean/ocean-contracts/artifacts/address.json" >> $GITHUB_ENV
       - name: Checkout Barge
@@ -144,7 +150,7 @@ jobs:
         run: |
           bash -x start_ocean.sh --no-node --with-typesense 2>&1 > start_ocean.log &
         env:
-          CONTRACTS_VERSION: 2.10.0
+          CONTRACTS_VERSION: 3.2.0
       - run: npm ci
       - run: npm run build
       - run: docker image ls
@@ -214,7 +220,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '24.19.0'
+          node-version: '26.12.1'
 
       - name: Cache node_modules
         uses: actions/cache@v6
@@ -222,8 +228,8 @@ jobs:
           cache-name: cache-node-modules
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-test-integration-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-test-integration-${{ env.cache-name }}-
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-${{ env.cache-name }}-
 
       - name: Set ADDRESS_FILE
         run: echo "ADDRESS_FILE=${HOME}/.ocean/ocean-contracts/artifacts/address.json" >> $GITHUB_ENV
@@ -248,7 +254,7 @@ jobs:
         run: |
           bash -x start_ocean.sh --no-node --with-typesense 2>&1 > start_ocean.log &
         env:
-          CONTRACTS_VERSION: 2.10.0
+          CONTRACTS_VERSION: 3.2.0
       - run: docker image ls
       - name: Delete default runner images
         run: |
@@ -264,7 +270,7 @@ jobs:
         with:
           persist-credentials: false
           repository: 'oceanprotocol/ocean.js'
-          ref: 'v9.2.2'
+          ref: 'v10.1.0'
           path: 'ocean.js'
       - name: Build ocean-js
         working-directory: ${{ github.workspace }}/ocean.js
@@ -353,6 +359,8 @@ jobs:
           DOCKER_COMPUTE_ENVIRONMENTS: '[{"socketPath":"/var/run/docker.sock","environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"8996":[{"prices":[{"id":"cpu","price":1}]}]},"free":{"maxJobDuration":60,"maxJobs":3,"resources":[{"id":"cpu","max":1},{"id":"ram","max":1},{"id":"disk","max":1}]}}]}]'
           DOCKER_REGISTRY_AUTHS: ${{ steps.docker_auths.outputs.value }}
           PERSISTENT_STORAGE: '{"enabled": true, "type": "localfs", "options": {"folder": "/tmp/ocean-persistent-storage"}}'
+          PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING: 'true'
+          ALLOWED_PRIVATE_URL_RANGES: '["127.0.0.1/32"]'
       - name: Check Ocean Node is running
         run: |
           for i in $(seq 1 12); do

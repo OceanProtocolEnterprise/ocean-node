@@ -113,6 +113,7 @@ describe('C2DEngineDocker.buildImage', () => {
     mkdirSync(path.join((engine as any).getStoragePath(), job.jobId, 'data', 'logs'), {
       recursive: true
     })
+
     const buildStream = new Readable({ read() {} })
     ;(engine as any).docker = {
       buildImage: sinon.stub().resolves(buildStream),
@@ -139,6 +140,7 @@ describe('C2DEngineDocker.buildImage', () => {
     mkdirSync(path.join((engine as any).getStoragePath(), job.jobId, 'data', 'logs'), {
       recursive: true
     })
+
     const buildStream = new Readable({ read() {} })
     ;(engine as any).docker = {
       buildImage: sinon.stub().resolves(buildStream),

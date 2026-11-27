@@ -2,8 +2,7 @@ import { DDOManager } from '@oceanprotocol/ddo-js'
 import { ethers, Signer, FallbackProvider } from 'ethers'
 import { EVENTS } from '../../../utils/constants.js'
 import { INDEXER_LOGGER } from '../../../utils/logging/common.js'
-import { LOG_LEVELS_STR } from '../../../utils/logging/Logger.js'
-import { getDtContract, getDid, getPricesByDt } from '../utils.js'
+import { getDtContract, retrieveDdoByNft, getPricesByDt } from '../utils.js'
 import { BaseEventProcessor } from './BaseProcessor.js'
 import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
 
@@ -24,32 +23,29 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
     const timestamp = parseInt(decodedEventData.args[4].toString())
     const consumer = decodedEventData.args[0].toString()
     const payer = decodedEventData.args[1].toString()
-    INDEXER_LOGGER.logMessage(
-      `Processed new order for service index ${serviceIndex} at ${timestamp}`,
-      true
+    INDEXER_LOGGER.debug(
+      `Processed new order for service index ${serviceIndex} at ${timestamp}`
     )
     const datatokenContract = getDtContract(signer, event.address)
 
     const nftAddress = await datatokenContract.getERC721Address()
-    const did = getDid(nftAddress, chainId)
     try {
       const { ddo: ddoDatabase, order: orderDatabase } = await this.getDatabase()
-      const ddo = await this.getDDO(ddoDatabase, nftAddress, chainId)
+      const { did, ddo } = await retrieveDdoByNft(ddoDatabase, nftAddress, chainId)
       if (!ddo) {
-        INDEXER_LOGGER.logMessage(
+        INDEXER_LOGGER.debug(
           `Detected OrderStarted changed for ${did}, but it does not exists.`
         )
         return
       }
       const existingOrder = await orderDatabase.retrieve(event.transactionHash)
       if (existingOrder) {
-        INDEXER_LOGGER.logMessage(
+        INDEXER_LOGGER.debug(
           `OrderStarted already processed for tx ${event.transactionHash}, skipping duplicate`
         )
         return ddo
       }
       const ddoInstance = DDOManager.getDDOClass(ddo)
-      const storedDid = ddoInstance.getDid()
       if (!ddoInstance.getAssetFields().indexedMetadata) {
         ddoInstance.updateFields({ indexedMetadata: {} })
       }
@@ -92,16 +88,14 @@ export class OrderStartedEventProcessor extends BaseEventProcessor {
         payer,
         ddoInstance.getDDOFields().services[serviceIndex].datatokenAddress,
         nftAddress,
-        storedDid
+        did
       )
-      INDEXER_LOGGER.logMessage(
-        `Found did ${storedDid} for order starting on network ${chainId}`
-      )
+      INDEXER_LOGGER.debug(`Found did ${did} for order starting on network ${chainId}`)
       const savedDDO = await this.createOrUpdateDDO(ddoInstance, EVENTS.ORDER_STARTED)
       return savedDDO
     } catch (err) {
       this.rethrowIfProviderError(err)
-      INDEXER_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error retrieving DDO: ${err}`, true)
+      INDEXER_LOGGER.error(`Error retrieving DDO: ${err}`)
     }
   }
 }

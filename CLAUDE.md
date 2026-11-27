@@ -12,16 +12,16 @@ of which dispatch to the same set of command handlers.
 
 ## 1. Environment & tooling prerequisites
 
-- **Node.js 24 is required** (`.nvmrc` pins `24.19.0` — the current Node 24 LTS "Krypton" —
-  matching the Dockerfile and CI; `package.json` `engines` requires `>=24`, so Node 22 is
-  no longer a supported runtime). The Dockerfile additionally pins each base
-  image by digest, so bumping the version means updating the `sha256:` alongside the tag —
-  resolve it with `docker buildx imagetools inspect node:<version>-trixie`, not from the tag
-  alone. Always run `nvm use` (or `source ~/.nvm/nvm.sh && nvm use`) before
-  any `npm`, build, or test command. The wrong Node version fails with errors like
-  `Unexpected token 'with'`, missing `GLIBC_2.38`, or — since the SQLite layer uses the
-  built-in `node:sqlite` module — `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` on Node < 22.13.
-  This is enforced by `.cursor/rules/tests-nvm.mdc` and the in-repo `CLAUDE.md`.
+- **Node.js 26 is required** (`.nvmrc` pins 26.12.1`— the current Node 26 LTS  —
+matching the Dockerfile and CI;`package.json` `engines`requires`>=24`, so Node 22 is
+no longer a supported runtime). The Dockerfile additionally pins each base
+image by digest, so bumping the version means updating the `sha256:`alongside the tag —
+resolve it with`docker buildx imagetools inspect node:<version>-trixie`, not from the tag
+alone. Always run `nvm use`(or`source ~/.nvm/nvm.sh && nvm use`) before
+any `npm`, build, or test command. The wrong Node version fails with errors like
+`Unexpected token 'with'`, missing `GLIBC_2.38`, or — since the SQLite layer uses the
+built-in `node:sqlite`module —`ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite`on Node < 22.13.
+This is enforced by`.cursor/rules/tests-nvm.mdc`and the in-repo`CLAUDE.md`.
 - **There is no `postinstall` step.** `npm install` is plain. (Historically a `postinstall`
   ran `scripts/fix-libp2p-http-utils.js` to default a missing URL port to 443/80 in
   `@libp2p/http-utils`; upstream shipped that fix in `2.0.3`, so both the hook and the
@@ -89,7 +89,7 @@ eslint to flat config, so the preset is composed in-repo from `@eslint/js`,
 `eslint-plugin-prettier`. Only `**/*.ts` is linted; `.js` is ignored as build output.
 Notable rules: `require-await` is an **error**, `no-unused-vars` is an **error** (with
 `args: 'none'`, `caughtErrors: 'none'`), empty catch blocks are allowed. `@typescript-eslint`'s
-`recommended` set is deliberately *not* extended, and a few rules that eslint 9/10 and the
+`recommended` set is deliberately _not_ extended, and a few rules that eslint 9/10 and the
 newer plugins added are switched off — see the comments in `eslint.config.js`. Prettier:
 no semicolons, single quotes, `printWidth: 90`, no trailing commas, 2-space tabs.
 
@@ -137,7 +137,7 @@ the compiled output. In tests, do **not** mutate `process.env` directly — use 
 `config.json` points the DB at Typesense on `http://localhost:8108`.
 
 Other useful scripts: `npm run client` (2-node download flow demo), `npm run check-nonce`
-(nonce tracking; needs DB), `npm run logs` (tail logs), and k6 perf tests
+(nonce tracking; needs DB), `npm run logs` (calls the signed `/logs` API; currently broken, see `docs/Logs.md`), and k6 perf tests
 `test:smoke` / `test:load` / `test:stress` / `test:request:rate` (require k6 installed and
 a running node).
 
@@ -202,12 +202,15 @@ HTTP/HTTPS → `scheduleCronJobs()`.
 `OceanNode` (`src/OceanNode.ts`) is the central singleton wiring everything together. It
 holds the `CoreHandlersRegistry`, `C2DEngines`, `Escrow`, `Auth`, `PersistentStorage`,
 `Database`, `KeyManager`, `BlockchainRegistry`, and the per-caller rate-limit `requestMap`.
-`handleDirectProtocolCommand(message)` is the single choke point for dispatch: it JSON-parses
-the command, looks up the handler by `task.command`, and calls `handler.handle(task)`.
+The common dispatch primitive is `CoreHandlersRegistry.getHandler(task.command)` followed by
+`handler.handle(task)`. `handleDirectProtocolCommand(message)` is the HTTP `/directCommand`
+wrapper around that (it JSON-parses the command, looks up the handler, and calls it); P2P
+inbound and the REST routes resolve/instantiate the handler and call `handle(task)` directly,
+without going through `handleDirectProtocolCommand`.
 
 ### Request / command flow
 
-Two front doors, one dispatcher:
+Multiple front doors, one shared `handler.handle(task)` primitive:
 
 - **HTTP `POST /directCommand`** (`src/components/httpRoutes/commands.ts`): validates the
   body, then decides _local vs remote_. If the command targets this node (or no P2P), it
@@ -255,7 +258,7 @@ Handler source is grouped under `src/components/core/`:
   `getTemplates`, plus `templateLoader`).
 - `admin/` — privileged handlers gated by `ALLOWED_ADMINS`: `stopNode`, `stopJob`,
   `reindexTx`, `reindexChain`, `IndexingThreadHandler`, `collectFees`, `fetchConfig`,
-  `pushConfig`, `getLogs`.
+  `pushConfig`, `getLogs`, `setMaintenance` (toggle maintenance/drain mode; persisted + sticky).
 - `utils/` — shared logic: `escrow`, `feesHandler`, `findDdoHandler`, `nonceHandler`,
   `statusHandler`, `validateOrders`.
 
@@ -310,8 +313,8 @@ Handler source is grouped under `src/components/core/`:
 - `src/@types/` — shared TypeScript types (`OceanNode.ts` for config/response shapes,
   `commands.ts` for `Command`/handler interfaces, `blockchain.ts`, `C2D/`).
 - `src/utils/` — cross-cutting helpers: `config/` (config builder + zod schemas),
-  `constants.ts`, `crypt.ts` (hashing/signing), `blockchain.ts`, `logging/` (winston, with a
-  DB transport in prod/staging), `cronjobs/`, `validators.ts`, `credentials.ts`,
+  `constants.ts`, `crypt.ts` (hashing/signing), `blockchain.ts`, `logging/` (winston: console, per-module
+  rotating files in `logs/` by default when `LOG_DB` is off, optional DB transport), `cronjobs/`, `validators.ts`, `credentials.ts`,
   `accessList.ts`, `asset.ts`, `attestation.ts`.
 - Runtime data dirs: `databases/` (SQLite files + libp2p LevelDB store), `c2d_storage/` (C2D
   job working data), `logs/`, `schemas/` (SHACL DDO validation schemas — shipped into the
@@ -326,7 +329,8 @@ Handler source is grouped under `src/components/core/`:
 ## 5. Docker & deployment
 
 Multi-stage `Dockerfile` (builder + slim runner) on `node:24`. The runner ships only
-`dist/`, `node_modules`, `schemas/`, and `config.json` (`.dockerignore` excludes all of
+`dist/`, `node_modules`, `schemas/`, `hfpatch/` (the `sitecustomize.py` the node copies
+into services — see `docs/services.md`) and `config.json` (`.dockerignore` excludes all of
 `docs/`) — no service templates. It exposes P2P ports `9000-9003,9005` and
 HTTP `8000`. `docker-entrypoint.sh` handles Docker socket group membership at runtime so C2D
 can talk to `/var/run/docker.sock`. Deployment options (Docker, local Docker build via
@@ -340,5 +344,7 @@ can talk to `/var/run/docker.sock`. Deployment options (Docker, local Docker bui
 `Arhitecture.md` (note the spelling), `API.md` (full HTTP API reference — very large, plus a
 Postman collection), `env.md` (authoritative env-var reference), `database.md`,
 `Storage.md` / `persistentStorage.md`, `KeyManager.md`, `PolicyServer.md`, `services.md`
-(Service-on-Demand), `compute.md` (C2D configuration: resources, GPUs, constraints, pricing), `networking.md`, `Logs.md`,
+(Service-on-Demand), `compute.md` (C2D configuration: resources, GPUs, constraints, pricing),
+`subsidyProviders.md` (third-party sponsorship of paid compute/services: prepaid vs refund,
+zero-deposit, `SUBSIDY_PROVIDERS`), `networking.md`, `Logs.md`,
 `Publishing.md`, `testing.md`, `dockerDeployment.md`.

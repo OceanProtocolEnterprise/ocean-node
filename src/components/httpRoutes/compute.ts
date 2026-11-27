@@ -29,7 +29,8 @@ import type {
   ServiceRestartCommand,
   ServiceGetStatusCommand,
   GetServicesCommand,
-  ServiceGetStreamableLogsCommand
+  ServiceGetStreamableLogsCommand,
+  ServiceGetResultCommand
 } from '../../@types/commands.js'
 import {
   ServiceGetTemplatesHandler,
@@ -39,22 +40,48 @@ import {
   ServiceRestartHandler,
   ServiceGetStatusHandler,
   GetServicesHandler,
-  ServiceGetStreamableLogsHandler
+  ServiceGetStreamableLogsHandler,
+  ServiceGetResultHandler
 } from '../core/service/index.js'
 
-import { streamToObject, streamToString } from '../../utils/util.js'
+import { streamToObject, streamToString, sanitizeLogValue } from '../../utils/util.js'
 import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants.js'
-import { Readable } from 'stream'
+import { Readable, pipeline } from 'stream'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
-import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
+import { errorSummary } from '../../utils/logging/redact.js'
+import type { P2PStatusResponse } from '../../@types/OceanNode.js'
 
 export const computeRoutes = express.Router()
 
+// a handler that answered non-200 has no stream, so reading it throws: log the handler's
+// status instead (4xx = client-caused, debug)
+function logRouteError(route: string, error: unknown, status?: P2PStatusResponse) {
+  if (status && status.httpStatus !== 200) {
+    HTTP_LOGGER.logByStatus(
+      status.httpStatus,
+      `${route} failed (${status.httpStatus}): ${status.error}`
+    )
+    return
+  }
+  HTTP_LOGGER.error(`${route} failed: ${errorSummary(error)}`)
+}
+
+// Send a handler's non-200 status to the HTTP client. When the handler set a machine-readable
+// `code` (e.g. MAINTENANCE_MODE), emit `{ error, code }` so clients can discriminate on it;
+// otherwise keep the legacy shape (the bare error string) for backwards compatibility.
+function sendCommandError(res: express.Response, status?: P2PStatusResponse): void {
+  const httpStatus = status?.httpStatus || 500
+  if (status?.code) {
+    res.status(httpStatus).json({ error: status.error, code: status.code })
+  } else {
+    res.status(httpStatus).json(status?.error)
+  }
+}
+
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeEnvironments`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `GET computeEnvironments request received with query: ${JSON.stringify(req.query)}`,
-      true
+    HTTP_LOGGER.debug(
+      `computeEnvironments request: chainId=${sanitizeLogValue(req.query.chainId ?? '-')} node=${sanitizeLogValue(req.query.node ?? '-')}`
     )
     const getEnvironmentsTask = {
       command: PROTOCOL_COMMANDS.COMPUTE_GET_ENVIRONMENTS,
@@ -65,12 +92,17 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeEnvironments`, async (req, r
     const response = await new ComputeGetEnvironmentsHandler(req.oceanNode).handle(
       getEnvironmentsTask
     ) // get compute environments
-    const computeEnvironments = await streamToObject(response.stream as Readable)
-
-    // always return the array, even if it's empty
-    res.json(computeEnvironments)
+    // a non-200 answer has no stream: return the handler's status and error
+    if (response?.status?.httpStatus === 200) {
+      const computeEnvironments = await streamToObject(response.stream as Readable)
+      // always return the array, even if it's empty
+      res.json(computeEnvironments)
+    } else {
+      logRouteError('computeEnvironments', null, response?.status)
+      res.status(response?.status?.httpStatus || 500).json(response?.status?.error)
+    }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('computeEnvironments', error)
     res.status(500).send('Internal Server Error')
   }
 })
@@ -78,9 +110,8 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeEnvironments`, async (req, r
 // start compute
 computeRoutes.post(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `ComputeStartCommand request received as body params: ${JSON.stringify(req.body)}`,
-      true
+    HTTP_LOGGER.debug(
+      `computeStart request: consumer=${sanitizeLogValue(req.body?.consumerAddress)} env=${sanitizeLogValue(req.body?.environment)}`
     )
 
     const startComputeTask: PaidComputeStartCommand = {
@@ -102,7 +133,10 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
       queueMaxWaitTime: req.body.queueMaxWaitTime || 0,
       caller: req.caller,
       encryptedDockerRegistryAuth:
-        (req.body.encryptedDockerRegistryAuth as string) || null
+        (req.body.encryptedDockerRegistryAuth as string) || null,
+      // Tri-state preserved: undefined (absent) = use node config, [] = no providers, array = use
+      // exactly these. Passing the raw value through keeps the absent-vs-empty distinction.
+      subsidyProviders: req.body.subsidyProviders as string[] | undefined
     }
     if (req.body.output) {
       startComputeTask.output = req.body.output
@@ -118,11 +152,11 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
       const jobs = await streamToObject(response.stream as Readable)
       res.status(200).json(jobs)
     } else {
-      HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_INFO, `Error: ${response?.status?.error}`)
-      res.status(response?.status.httpStatus).json(response?.status?.error)
+      logRouteError('computeStart', null, response?.status)
+      sendCommandError(res, response?.status)
     }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('computeStart', error)
     res.status(500).send('Internal Server Error')
   }
 })
@@ -130,11 +164,8 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
 // free compute
 computeRoutes.post(`${SERVICES_API_BASE_PATH}/freeCompute`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `FreeComputeStartCommand request received as body params: ${JSON.stringify(
-        req.body
-      )}`,
-      true
+    HTTP_LOGGER.debug(
+      `freeCompute request: consumer=${sanitizeLogValue(req.body?.consumerAddress)} env=${sanitizeLogValue(req.body?.environment)}`
     )
     const startComputeTask: FreeComputeStartCommand = {
       command: PROTOCOL_COMMANDS.FREE_COMPUTE_START,
@@ -170,11 +201,11 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/freeCompute`, async (req, res) => 
       const jobs = await streamToObject(response.stream as Readable)
       res.status(200).json(jobs)
     } else {
-      HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_INFO, `Error: ${response?.status?.error}`)
-      res.status(response?.status.httpStatus).json(response?.status?.error)
+      logRouteError('freeCompute', null, response?.status)
+      sendCommandError(res, response?.status)
     }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('freeCompute', error)
     res.status(500).send('Internal Server Error')
   }
 })
@@ -182,11 +213,8 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/freeCompute`, async (req, res) => 
 // stop compute
 computeRoutes.put(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `ComputeStopCommand request received as body parameters : ${JSON.stringify(
-        req.body
-      )}`,
-      true
+    HTTP_LOGGER.debug(
+      `computeStop request: job=${sanitizeLogValue(req.query.jobId ?? '-')} consumer=${sanitizeLogValue(req.query.consumerAddress)}`
     )
 
     const stopComputeTask: ComputeStopCommand = {
@@ -201,10 +229,15 @@ computeRoutes.put(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
       caller: req.caller
     }
     const response = await new ComputeStopHandler(req.oceanNode).handle(stopComputeTask)
-    const jobs = await streamToObject(response.stream as Readable)
-    res.status(200).json(jobs)
+    if (response?.status?.httpStatus === 200) {
+      const jobs = await streamToObject(response.stream as Readable)
+      res.status(200).json(jobs)
+    } else {
+      logRouteError('computeStop', null, response?.status)
+      res.status(response?.status?.httpStatus || 500).json(response?.status?.error)
+    }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('computeStop', error)
     res.status(500).send('Internal Server Error')
   }
 })
@@ -212,9 +245,8 @@ computeRoutes.put(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
 // get status
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `ComputeGetStatusCommand request received with query: ${JSON.stringify(req.query)}`,
-      true
+    HTTP_LOGGER.debug(
+      `computeStatus request: job=${sanitizeLogValue(req.query.jobId ?? '-')} consumer=${sanitizeLogValue(req.query.consumerAddress)}`
     )
     const statusComputeTask: ComputeGetStatusCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
@@ -236,10 +268,15 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
     const response = await new ComputeGetStatusHandler(req.oceanNode).handle(
       statusComputeTask
     )
-    const jobs = await streamToObject(response.stream as Readable)
-    res.status(200).json(jobs)
+    if (response?.status?.httpStatus === 200) {
+      const jobs = await streamToObject(response.stream as Readable)
+      res.status(200).json(jobs)
+    } else {
+      logRouteError('computeStatus', null, response?.status)
+      res.status(response?.status?.httpStatus || 500).json(response?.status?.error)
+    }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('computeStatus', error)
     res.status(500).send('Internal Server Error')
   }
 })
@@ -247,9 +284,8 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
 // compute results
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeResult`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `ComputeGetResultCommand request received with query: ${JSON.stringify(req.query)}`,
-      true
+    HTTP_LOGGER.debug(
+      `computeResult request: job=${sanitizeLogValue(req.query.jobId)} index=${sanitizeLogValue(req.query.index ?? '-')}`
     )
     const resultComputeTask: ComputeGetResultCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_GET_RESULT,
@@ -274,7 +310,7 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeResult`, async (req, res) =>
       res.status(response.status.httpStatus).send(response.status.error)
     }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('computeResult', error)
     res.status(500).send('Internal Server Error')
   }
 })
@@ -282,12 +318,7 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeResult`, async (req, res) =>
 // streaming logs
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeStreamableLogs`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `ComputeGetStreamableLogsCommand request received with query: ${JSON.stringify(
-        req.query
-      )}`,
-      true
-    )
+    HTTP_LOGGER.debug(`computeStreamableLogs request: job=${req.query.jobId}`)
 
     const resultComputeTask: ComputeGetStreamableLogsCommand = {
       command: PROTOCOL_COMMANDS.COMPUTE_GET_STREAMABLE_LOGS,
@@ -314,51 +345,54 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeStreamableLogs`, async (req,
       res.status(response.status.httpStatus).send(body)
     }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('computeStreamableLogs', error)
     res.status(500).send('Internal Server Error')
   }
 })
 
 computeRoutes.post(`${SERVICES_API_BASE_PATH}/initializeCompute`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `POST initializeCompute request received with query: ${JSON.stringify(req.body)}`,
-      true
+    HTTP_LOGGER.debug(
+      `initializeCompute request: consumer=${sanitizeLogValue(req.body?.consumerAddress)} datasets=${req.body?.datasets?.length ?? 0}`
     )
     const { body } = req
     if (!body) {
-      res.status(400).json({ error: 'Missing required body' })
+      res.status(400).send('Missing required body')
       return
     }
 
     body.datasets = body.datasets || []
 
     if (!body.algorithm) {
-      res.status(400).json({ error: 'Missing algorithm' })
+      res.status(400).send('Missing algorithm')
       return
     }
 
     for (const dataset of body.datasets) {
       if (!dataset.documentId) {
-        res.status(400).json({ error: 'Missing dataset did' })
+        res.status(400).send('Missing dataset did')
         return
       }
     }
     body.command = PROTOCOL_COMMANDS.COMPUTE_INITIALIZE
+    // Use the trustworthy request IP as the caller, never a client-supplied body value, so the
+    // handler-level rate limiter (keyed on task.caller) cannot be evaded here. Matches the other
+    // compute routes and the /directCommand local path.
+    body.caller = req.caller
     const result = await new ComputeInitializeHandler(req.oceanNode).handle(body)
-    if (result.stream) {
+    // Branch on the status, NOT on the presence of a stream: a maintenance-mode rejection
+    // carries BOTH a 503 status and a stream body, so a `if (result.stream)` here would answer
+    // 200 and clients would proceed to pay for an order the node will not run.
+    if (result.status.httpStatus === 200) {
       const queryResult = JSON.parse(await streamToString(result.stream as Readable))
       res.json(queryResult)
     } else {
-      HTTP_LOGGER.log(
-        LOG_LEVELS_STR.LEVEL_ERROR,
-        `Stream not found: ${result.status.error}`
-      )
-      res.status(result.status.httpStatus).json({ error: result.status.error })
+      logRouteError('initializeCompute', null, result.status)
+      sendCommandError(res, result.status)
     }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
-    res.status(500).json({ error: 'Internal Server Error' })
+    logRouteError('initializeCompute', error)
+    res.status(500).send('Internal Server Error')
   }
 })
 
@@ -379,11 +413,11 @@ async function runServiceCommand(
       const result = await streamToObject(response.stream as Readable)
       res.status(200).json(result)
     } else {
-      HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_INFO, `Error: ${response?.status?.error}`)
-      res.status(response?.status?.httpStatus || 500).json(response?.status?.error)
+      logRouteError(task?.command, null, response?.status ?? { httpStatus: 500 })
+      sendCommandError(res, response?.status)
     }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError(task?.command, error)
     res.status(500).send('Internal Server Error')
   }
 }
@@ -423,6 +457,8 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/serviceStart`, async (req, res) =>
     metadata: req.body.metadata ?? undefined,
     outputBucketId: (req.body.outputBucketId as string) || undefined,
     payment: req.body.payment,
+    // Tri-state preserved: undefined = use node config, [] = no providers, array = use these.
+    subsidyProviders: req.body.subsidyProviders as string[] | undefined,
     authorization: req.headers?.authorization,
     caller: req.caller
   }
@@ -454,6 +490,8 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/serviceExtend`, async (req, res) =
     serviceId: (req.body.serviceId as string) || null,
     additionalDuration: req.body.additionalDuration as number,
     payment: req.body.payment,
+    // Tri-state preserved: undefined = use node config, [] = no providers, array = use these.
+    subsidyProviders: req.body.subsidyProviders as string[] | undefined,
     authorization: req.headers?.authorization,
     caller: req.caller
   }
@@ -528,12 +566,7 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/serviceList`, async (req, res) => {
 // streaming logs for services
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/serviceStreamableLogs`, async (req, res) => {
   try {
-    HTTP_LOGGER.logMessage(
-      `ServiceGetStreamableLogsCommand request received with query: ${JSON.stringify(
-        req.query
-      )}`,
-      true
-    )
+    HTTP_LOGGER.debug(`serviceStreamableLogs request: service=${req.query.serviceId}`)
 
     const task: ServiceGetStreamableLogsCommand = {
       command: PROTOCOL_COMMANDS.SERVICE_GET_STREAMABLE_LOGS,
@@ -561,7 +594,61 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/serviceStreamableLogs`, async (req,
       res.status(response.status.httpStatus).send(body)
     }
   } catch (error) {
-    HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
+    logRouteError('serviceStreamableLogs', error)
+    res.status(500).send('Internal Server Error')
+  }
+})
+
+// A numeric query param, undefined when absent. An empty or non-numeric value becomes NaN so
+// the handler rejects it instead of reading it as 0 (Number('') === 0); parseInt() is not used
+// because it accepts trailing garbage ("1abc").
+function queryNumber(value: unknown): number | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || value.trim() === '') return NaN
+  return Number(value)
+}
+
+// zip of a service's /data/outputs: an archived one (index[, offset]) or the live container's
+computeRoutes.get(`${SERVICES_API_BASE_PATH}/serviceResult`, async (req, res) => {
+  try {
+    // the query carries the consumer's signature and nonce: log ids only
+    HTTP_LOGGER.debug(
+      `serviceResult request: service=${sanitizeLogValue(req.query.serviceId ?? '-')} consumer=${sanitizeLogValue(req.query.consumerAddress ?? '-')} index=${sanitizeLogValue(req.query.index ?? '-')} live=${req.query.live === 'true'}`
+    )
+    const task: ServiceGetResultCommand = {
+      command: PROTOCOL_COMMANDS.SERVICE_GET_RESULT,
+      node: (req.query.node as string) || null,
+      consumerAddress: (req.query.consumerAddress as string) || null,
+      serviceId: (req.query.serviceId as string) || null,
+      index: queryNumber(req.query.index),
+      offset: queryNumber(req.query.offset),
+      live: req.query.live === 'true',
+      signature: (req.query.signature as string) || null,
+      nonce: (req.query.nonce as string) || null,
+      authorization: req.headers?.authorization,
+      caller: req.caller
+    }
+
+    const response = await new ServiceGetResultHandler(req.oceanNode).handle(task)
+    if (response.stream) {
+      res.status(response.status.httpStatus)
+      res.set(response.status.headers)
+      // pipeline, not pipe: a live zip fails mid-stream when its container goes away, and an
+      // unhandled error on the source would take the node down; a client that disconnects
+      // must also release the container's archive stream instead of leaving it stalled.
+      pipeline(response.stream as Readable, res, (err) => {
+        // mid-stream: the client went away or the container stopped
+        if (err)
+          HTTP_LOGGER.debug(
+            `serviceResult ${task.serviceId}: download aborted: ${errorSummary(err)}`
+          )
+      })
+    } else {
+      logRouteError('serviceResult', null, response.status)
+      res.status(response.status.httpStatus).send(response.status.error)
+    }
+  } catch (error) {
+    logRouteError('serviceResult', error)
     res.status(500).send('Internal Server Error')
   }
 })

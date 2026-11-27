@@ -9,10 +9,18 @@ import {
   buildInvalidRequestMessage
 } from '../../httpRoutes/validateCommands.js'
 import { CORE_LOGGER } from '../../../utils/logging/common.js'
+import { JobType } from '../../../utils/constants.js'
 import type { ComputeEnvironment } from '../../../@types/C2D/C2D.js'
 import { ServiceStatusNumber } from '../../../@types/C2D/ServiceOnDemand.js'
 import { validateAccess } from '../compute/startCompute.js'
+import { validateOutputBucket } from '../compute/utils.js'
 import { findServiceJobAndEngine, toPublicServiceJob } from './utils.js'
+import {
+  filterSubsidyByAllowedImages,
+  isNonEmpty,
+  resolveUserSubsidyProviders
+} from '../utils/subsidyProviders.js'
+import { maintenanceGuard } from '../utils/maintenance.js'
 
 export class ServiceExtendHandler extends CommandHandler {
   validate(command: ServiceExtendCommand): ValidateParams {
@@ -32,6 +40,11 @@ export class ServiceExtendHandler extends CommandHandler {
   async handle(task: ServiceExtendCommand): Promise<P2PCommandResponse> {
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) return validationResponse
+
+    // Maintenance (drain) gate — an extend is new commitment (another lock+claim), so reject
+    // it while draining, before any auth/escrow work.
+    const maintenanceResponse = maintenanceGuard(this.getOceanNode())
+    if (maintenanceResponse) return maintenanceResponse
 
     const auth = await this.validateTokenOrSignature(
       task.authorization,
@@ -59,6 +72,13 @@ export class ServiceExtendHandler extends CommandHandler {
       return buildInvalidParametersResponse(
         buildInvalidRequestMessage('Service job not found: ' + task.serviceId)
       )
+    if (!engine) {
+      CORE_LOGGER.throttled(
+        `service-orphan:${job.clusterHash}`,
+        'warn',
+        `Service ${task.serviceId} belongs to cluster ${job.clusterHash}, which no configured engine owns; check DOCKER_COMPUTE_ENVIRONMENTS`
+      )
+    }
     if (!engine)
       return {
         stream: null,
@@ -92,6 +112,19 @@ export class ServiceExtendHandler extends CommandHandler {
     )
     if (!accessGranted)
       return { stream: null, status: { httpStatus: 403, error: 'Access denied' } }
+
+    // Output-bucket gate, same check as SERVICE_START. Re-checked for the same reason: the
+    // owner can lose the bucket after the start (bucket sharing turned off, removed from its
+    // access list, bucket deleted), and extending would prolong a mount they may no longer
+    // use. The service keeps running until expiresAt. Checked before any escrow operation, so
+    // a refusal costs nothing. No-op for a service without a bucket.
+    const outputBucketCheck = await validateOutputBucket(
+      this.getOceanNode(),
+      job.outputBucketId,
+      '',
+      task.consumerAddress
+    )
+    if (outputBucketCheck.status.httpStatus !== 200) return outputBucketCheck
 
     // Everything from the state check to the final write runs under the per-service
     // lifecycle lock: extend is a read-mutate-write of the job row, and without the lock
@@ -187,6 +220,44 @@ export class ServiceExtendHandler extends CommandHandler {
               )
             )
 
+          // Resolve the user-supplied subsidy providers (if any) for the payment chain, enforcing
+          // the node's whitelist filter when enabled. The extend claim is synchronous, so the
+          // resolved value is passed straight to claimLock below rather than persisted.
+          const subsidyResolution = resolveUserSubsidyProviders(
+            task.subsidyProviders,
+            task.payment.chainId,
+            this.getOceanNode().getConfig()
+          )
+          if (!subsidyResolution.valid)
+            return buildInvalidParametersResponse(
+              buildInvalidRequestMessage(subsidyResolution.reason)
+            )
+
+          // Materialize the EFFECTIVE subsidy list (explicit user list, else node config for this
+          // chain) so the image gate can filter it, then pass the kept list EXPLICITLY to
+          // createLock/claimLock below (extend's claim is synchronous, so a request-time snapshot
+          // is safe — it settles moments later). `??` so an explicit `[]` survives. Escrow treats
+          // an explicit `[]` as "no providers", matching the old `resolved ?? null` fallback when
+          // node config is empty. Gate on the service's RUNNING spec (freshJob.image/tag/checksum +
+          // its stored entrypoint/cmd); unset/`{}` config → kept === effective (no gating).
+          const config = this.getOceanNode().getConfig()
+          const effectiveSubsidy =
+            subsidyResolution.resolved ??
+            config.subsidyProviders?.[String(task.payment.chainId)] ??
+            []
+          const { kept: effectiveSubsidyKept, dropped: droppedSubsidy } =
+            filterSubsidyByAllowedImages(
+              effectiveSubsidy,
+              {
+                image: freshJob.image,
+                tag: freshJob.tag,
+                checksum: freshJob.checksum,
+                dockerfile: freshJob.dockerfile
+              },
+              isNonEmpty(freshJob.dockerEntrypoint) || isNonEmpty(freshJob.dockerCmd),
+              config.subsidyProviderAllowedImages
+            )
+
           // An extendPayments entry with a lockTx but neither claimTx nor cancelTx is an
           // UNRESOLVED intent from a previous crash (see below — the intent is persisted
           // before claiming). Resolve it before charging again: try to cancel (refund)
@@ -206,9 +277,8 @@ export class ServiceExtendHandler extends CommandHandler {
               if (!cancelTx) throw new Error('cancelExpiredLock returned no tx')
               unresolved.cancelTx = cancelTx
               await engine.db.updateServiceJob(freshJob)
-              CORE_LOGGER.logMessage(
-                `Service ${task.serviceId}: refunded unresolved extension lock ${unresolved.lockTx} (${cancelTx})`,
-                true
+              CORE_LOGGER.info(
+                `Service ${task.serviceId}: cancelExpiredLock tx ${cancelTx} for unresolved extension lock ${unresolved.lockTx} (chain ${unresolved.chainId})`
               )
             } catch (e: any) {
               CORE_LOGGER.error(
@@ -233,10 +303,16 @@ export class ServiceExtendHandler extends CommandHandler {
               task.payment.token,
               task.consumerAddress,
               costExtend,
-              engine.escrow.getMinLockTime(task.additionalDuration)
+              engine.escrow.getMinLockTime(task.additionalDuration),
+              JobType.SERVICE,
+              // Same (image-gated) subsidy-provider list the in-scope claimLock uses below — lock
+              // & claim must agree on the sponsoring providers.
+              effectiveSubsidyKept
             )
           } catch (e: any) {
-            CORE_LOGGER.error(`Service extend createLock failed: ${e.message}`)
+            CORE_LOGGER.error(
+              `Service ${task.serviceId} extend createLock failed (chain ${task.payment.chainId}): ${e.message}`
+            )
             return { stream: null, status: { httpStatus: 402, error: e.message } }
           }
           if (!lockTx)
@@ -249,7 +325,9 @@ export class ServiceExtendHandler extends CommandHandler {
           try {
             await engine.escrow.waitForTransaction(task.payment.chainId, lockTx)
           } catch (e: any) {
-            CORE_LOGGER.error(`Service extend lock not confirmed: ${e.message}`)
+            CORE_LOGGER.error(
+              `Service ${task.serviceId} extend lock ${lockTx} not confirmed on chain ${task.payment.chainId}: ${e.message}`
+            )
             await engine.escrow
               .cancelExpiredLock(
                 task.payment.chainId,
@@ -258,7 +336,9 @@ export class ServiceExtendHandler extends CommandHandler {
                 task.consumerAddress
               )
               .catch((err) =>
-                CORE_LOGGER.error(`cancelExpiredLock failed: ${err.message}`)
+                CORE_LOGGER.error(
+                  `Service ${task.serviceId}: cancelExpiredLock failed for lock ${lockTx} (chain ${task.payment.chainId}): ${err.message}`
+                )
               )
             return {
               stream: null,
@@ -273,13 +353,24 @@ export class ServiceExtendHandler extends CommandHandler {
           // claiming: a crash between claim and the final write is then auditable — the
           // consumer's money can never be taken without a durable record of why — and a
           // retry finds the intent (unresolved branch above) instead of charging twice.
+          // The intent records BOTH the applied subsidy providers (`effectiveSubsidyKept`) and the
+          // gate-dropped ones. The claim below is synchronous (it uses the in-scope
+          // `effectiveSubsidyKept`), so the applied list is not needed for *this* settlement — but
+          // persisting it is what lets SERVICE_RESTART's image gate see extension sponsors: a
+          // service can start UNSUBSIDIZED and later be extended WITH subsidy, and a restart runs on
+          // that extended (subsidized) window, so the restart gate unions these in. Both are written
+          // only when non-empty, so an unconfigured node keeps the pre-feature intent shape.
           const intent = {
             chainId: task.payment.chainId,
             token: task.payment.token,
             lockTx,
             claimTx: '',
             cancelTx: '',
-            cost: costExtend
+            cost: costExtend,
+            ...(effectiveSubsidyKept.length
+              ? { subsidyProviders: effectiveSubsidyKept }
+              : {}),
+            ...(droppedSubsidy.length ? { droppedSubsidies: droppedSubsidy } : {})
           }
           freshJob.extendPayments = [...(freshJob.extendPayments ?? []), intent]
           try {
@@ -301,7 +392,9 @@ export class ServiceExtendHandler extends CommandHandler {
                 task.consumerAddress
               )
               .catch((e): string | null => {
-                CORE_LOGGER.error(`cancelExpiredLock failed: ${e.message}`)
+                CORE_LOGGER.error(
+                  `Service ${task.serviceId}: cancelExpiredLock failed for lock ${lockTx} (chain ${task.payment.chainId}): ${e.message}`
+                )
                 return null
               })
             if (!cancelTx)
@@ -323,6 +416,7 @@ export class ServiceExtendHandler extends CommandHandler {
           }
 
           let claimTx: string | null
+          let claimThrew = false
           try {
             claimTx = await engine.escrow.claimLock(
               task.payment.chainId,
@@ -330,13 +424,23 @@ export class ServiceExtendHandler extends CommandHandler {
               task.payment.token,
               task.consumerAddress,
               costExtend,
-              `service-extend:${task.serviceId}`
+              `service-extend:${task.serviceId}`,
+              JobType.SERVICE,
+              effectiveSubsidyKept
             )
           } catch (e: any) {
             claimTx = null
-            CORE_LOGGER.error(`Service extend claimLock failed: ${e.message}`)
+            claimThrew = true
+            CORE_LOGGER.error(
+              `Service ${task.serviceId} extend claimLock failed for lock ${lockTx} (chain ${task.payment.chainId}): ${e.message}`
+            )
           }
           if (!claimTx) {
+            if (!claimThrew) {
+              CORE_LOGGER.error(
+                `Service ${task.serviceId}: claimLock returned no tx for lock ${lockTx} (chain ${task.payment.chainId})`
+              )
+            }
             const cancelTx = await engine.escrow
               .cancelExpiredLock(
                 task.payment.chainId,
@@ -345,7 +449,9 @@ export class ServiceExtendHandler extends CommandHandler {
                 task.consumerAddress
               )
               .catch((e): string | null => {
-                CORE_LOGGER.error(`cancelExpiredLock failed: ${e.message}`)
+                CORE_LOGGER.error(
+                  `Service ${task.serviceId}: cancelExpiredLock failed for lock ${lockTx} (chain ${task.payment.chainId}): ${e.message}`
+                )
                 return null
               })
             // close the intent (refunded) — or leave it unresolved for the next attempt
@@ -365,9 +471,8 @@ export class ServiceExtendHandler extends CommandHandler {
           freshJob.duration += task.additionalDuration
           await engine.db.updateServiceJob(freshJob)
 
-          CORE_LOGGER.logMessage(
-            `Service ${task.serviceId} extended by ${task.additionalDuration}s, new expiresAt: ${freshJob.expiresAt}`,
-            true
+          CORE_LOGGER.info(
+            `Service ${task.serviceId} extended by ${task.additionalDuration}s (expires ${new Date(freshJob.expiresAt).toISOString()}, claimTx=${claimTx})`
           )
           return {
             stream: Readable.from(JSON.stringify([toPublicServiceJob(freshJob)])),

@@ -7,10 +7,14 @@ import {
 import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants.js'
 import { FileInfoHandler } from '../core/handler/fileInfoHandler.js'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
+import { errorSummary } from '../../utils/logging/redact.js'
 import { FileInfoCommand } from '../../@types/commands.js'
+import { sanitizeLogValue } from '../../utils/util.js'
+import { LP_MAX_FRAME_BYTES } from '../P2P/lpFraming.js'
 
 export const fileInfoRoute = express.Router()
-fileInfoRoute.use(express.json()) // Ensure JSON parsing middleware is used
+// Also parses every route mounted after this router (compute, services, auth, ...).
+fileInfoRoute.use(express.json({ limit: LP_MAX_FRAME_BYTES }))
 
 // Validation function
 fileInfoRoute.post(
@@ -18,7 +22,9 @@ fileInfoRoute.post(
   express.urlencoded({ extended: true, type: '*/*' }),
   async (req: Request, res: Response): Promise<void> => {
     const fileInfoReq: FileInfoHttpRequest = req.body as unknown as FileInfoHttpRequest
-    HTTP_LOGGER.logMessage(`FileInfo request received: ${JSON.stringify(req.body)}`, true)
+    HTTP_LOGGER.debug(
+      `FileInfo request: type=${sanitizeLogValue(req.body?.type ?? '-')} did=${sanitizeLogValue(req.body?.did ?? '-')}`
+    )
 
     try {
       const hasType =
@@ -66,11 +72,13 @@ fileInfoRoute.post(
         res.set(response.status.headers)
         response.stream.pipe(res)
       } else {
-        HTTP_LOGGER.error(response.status.error)
+        HTTP_LOGGER.debug(
+          `FileInfo failed (${response.status.httpStatus}): ${response.status.error}`
+        )
         res.status(response.status.httpStatus).send(response.status.error)
       }
     } catch (error) {
-      HTTP_LOGGER.error(error.message)
+      HTTP_LOGGER.error(`FileInfo failed: ${errorSummary(error)}`)
       res.status(500).send(error)
     }
     // res.sendStatus(200)

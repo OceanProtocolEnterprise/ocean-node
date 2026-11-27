@@ -19,6 +19,12 @@ import { generateUniqueID, validateOutputBucket } from '../compute/utils.js'
 import { validateAccess } from '../compute/startCompute.js'
 import { isJobMetadataSizeValid, INVALID_JOB_METADATA_MESSAGE } from '../../c2d/index.js'
 import { decryptUserData, toPublicServiceJob } from './utils.js'
+import {
+  filterSubsidyByAllowedImages,
+  isNonEmpty,
+  resolveUserSubsidyProviders
+} from '../utils/subsidyProviders.js'
+import { maintenanceGuard } from '../utils/maintenance.js'
 
 export class ServiceStartHandler extends CommandHandler {
   validate(command: ServiceStartCommand): ValidateParams {
@@ -52,6 +58,10 @@ export class ServiceStartHandler extends CommandHandler {
   async handle(task: ServiceStartCommand): Promise<P2PCommandResponse> {
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) return validationResponse
+
+    // Maintenance (drain) gate — reject new service commitment before any auth/escrow work.
+    const maintenanceResponse = maintenanceGuard(this.getOceanNode())
+    if (maintenanceResponse) return maintenanceResponse
 
     const auth = await this.validateTokenOrSignature(
       task.authorization,
@@ -178,6 +188,15 @@ export class ServiceStartHandler extends CommandHandler {
           buildInvalidRequestMessage(e?.message || String(e))
         )
       }
+      // The disk check only runs for a positive disk amount, and an omitted one fills to the
+      // env min (0 by default), so a service without one would never be checked.
+      if (
+        env.resources?.some((r) => r.id === 'disk') &&
+        !((resources.find((r) => r.id === 'disk')?.amount ?? 0) > 0)
+      )
+        return buildInvalidParametersResponse(
+          buildInvalidRequestMessage('A service needs a disk amount greater than 0')
+        )
 
       // 6. Server-side cost (used to size the escrow lock the background loop will create).
       const cost = engine.calculateResourcesCost(
@@ -196,37 +215,80 @@ export class ServiceStartHandler extends CommandHandler {
           )
         )
 
+      // Resolve the user-supplied subsidy providers (if any) for the payment chain BEFORE the
+      // funds pre-check, so a sponsored request can skip it. Snapshot the EFFECTIVE list (the
+      // explicit user list, else the node's configured list for this chain) and persist it on the
+      // job, so the background lock and the later claim settle from the exact same provider set
+      // instead of each re-reading config. `??` (not `||`) so an explicit `[]` survives.
+      const subsidyResolution = resolveUserSubsidyProviders(
+        task.subsidyProviders,
+        task.payment.chainId,
+        node.getConfig()
+      )
+      if (!subsidyResolution.valid) {
+        return buildInvalidParametersResponse(
+          buildInvalidRequestMessage(subsidyResolution.reason)
+        )
+      }
+      const effectiveSubsidy =
+        subsidyResolution.resolved ??
+        node.getConfig().subsidyProviders?.[String(task.payment.chainId)] ??
+        []
+      // Image gate (SUBSIDY_PROVIDER_ALLOWED_IMAGES): a listed subsidy address only applies to a
+      // service running an allowed image with NO custom entrypoint OR cmd (overriding either can
+      // run arbitrary code inside a trusted image → not the trusted workload → no subsidy). The
+      // kept list drives both the sponsored funds pre-check below and the persisted/claim snapshot;
+      // the dropped list is recorded for observability. Unset/`{}` config → no gating.
+      const { kept: effectiveSubsidyKept, dropped: droppedSubsidy } =
+        filterSubsidyByAllowedImages(
+          effectiveSubsidy,
+          {
+            image: task.image,
+            tag: task.tag,
+            checksum: task.checksum,
+            dockerfile: task.dockerfile
+          },
+          isNonEmpty(task.dockerEntrypoint) || isNonEmpty(task.dockerCmd),
+          node.getConfig().subsidyProviderAllowedImages
+        )
+      const isSponsored = effectiveSubsidyKept.length > 0
+
       // 6b. Fail fast when the consumer's escrow visibly can't cover the cost, instead
       // of returning a serviceId doomed to fail asynchronously at the Locking step.
       // Best-effort UX only: balances can change before the background createLock runs,
       // so the authoritative check stays in the pipeline — and an RPC hiccup here must
       // not block starts (the pipeline check will catch a genuine shortfall anyway).
-      try {
-        const [availableWei, costWei] = await Promise.all([
-          engine.escrow.getUserAvailableFunds(
-            task.payment.chainId,
-            task.consumerAddress,
-            task.payment.token
-          ),
-          engine.escrow.getPaymentAmountInWei(
-            cost,
-            task.payment.chainId,
-            task.payment.token
-          )
-        ])
-        if (BigInt(availableWei.toString()) < BigInt(costWei.toString())) {
-          return buildInvalidParametersResponse(
-            buildInvalidRequestMessage(
-              `Insufficient escrow funds for token ${task.payment.token} on chain ` +
-                `${task.payment.chainId}: available ${availableWei}, required ${costWei} ` +
-                `wei — deposit and authorize escrow funds before starting the service`
+      // Skipped for a sponsored request: a (partly) sponsored lock only needs the payer to
+      // cover the unsponsored portion — a fully-sponsored user may hold 0 — so this mirrors
+      // the createLock stopgap and lets zero-deposit Service-on-Demand through.
+      if (!isSponsored) {
+        try {
+          const [availableWei, costWei] = await Promise.all([
+            engine.escrow.getUserAvailableFunds(
+              task.payment.chainId,
+              task.consumerAddress,
+              task.payment.token
+            ),
+            engine.escrow.getPaymentAmountInWei(
+              cost,
+              task.payment.chainId,
+              task.payment.token
             )
+          ])
+          if (BigInt(availableWei.toString()) < BigInt(costWei.toString())) {
+            return buildInvalidParametersResponse(
+              buildInvalidRequestMessage(
+                `Insufficient escrow funds for token ${task.payment.token} on chain ` +
+                  `${task.payment.chainId}: available ${availableWei}, required ${costWei} ` +
+                  `wei — deposit and authorize escrow funds before starting the service`
+              )
+            )
+          }
+        } catch (e: any) {
+          CORE_LOGGER.debug(
+            `SERVICE_START: escrow funds pre-check skipped (${e.message}) — the background Locking step will verify`
           )
         }
-      } catch (e: any) {
-        CORE_LOGGER.debug(
-          `SERVICE_START: escrow funds pre-check skipped (${e.message}) — the background Locking step will verify`
-        )
       }
 
       const serviceId = generateUniqueID({
@@ -244,7 +306,10 @@ export class ServiceStartHandler extends CommandHandler {
         lockTx: '',
         claimTx: '',
         cancelTx: '',
-        cost
+        cost,
+        subsidyProviders: effectiveSubsidyKept,
+        // Only when the gate removed something, so unconfigured nodes keep the pre-feature shape.
+        ...(droppedSubsidy.length ? { droppedSubsidies: droppedSubsidy } : {})
       }
 
       // 7. Persist the Starting record and return immediately with the serviceId. The
@@ -271,12 +336,17 @@ export class ServiceStartHandler extends CommandHandler {
         task.outputBucketId
       )
 
+      CORE_LOGGER.info(
+        `Service ${job.serviceId} started: env=${task.environment} owner=${task.consumerAddress}`
+      )
       return {
         stream: Readable.from(JSON.stringify([toPublicServiceJob(job)])),
         status: { httpStatus: 200 }
       }
     } catch (error: any) {
-      CORE_LOGGER.error(`ServiceStart failed: ${error.message}`)
+      CORE_LOGGER.error(
+        `ServiceStart failed (env=${task.environment}, owner=${task.consumerAddress}): ${error.message}`
+      )
       return { stream: null, status: { httpStatus: 500, error: error.message } }
     }
   }

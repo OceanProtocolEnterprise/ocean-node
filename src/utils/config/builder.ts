@@ -17,9 +17,11 @@ import {
 } from '../address.js'
 import { create256Hash } from '../crypt.js'
 import { CONFIG_LOGGER } from '../logging/common.js'
-import { LOG_LEVELS_STR, GENERIC_EMOJIS } from '../logging/Logger.js'
+import { redactUrls, safeStringify } from '../logging/redact.js'
 import { OceanNodeConfigSchema } from './schemas.js'
+import { booleanFromString } from './transforms.js'
 import { ENV_TO_CONFIG_MAPPING } from './constants.js'
+import { isPolicyServerConfigured } from '../config.js'
 import { registerP2PBudgetConfig } from '../../components/P2P/timeouts.js'
 import { fileURLToPath } from 'url'
 import lodash from 'lodash'
@@ -49,7 +51,7 @@ function preprocessConfigData(data: any): void {
         data.hasP2P = interfaces.includes('P2P')
       }
     } catch (error) {
-      CONFIG_LOGGER.warn(`Failed to parse INTERFACES: ${error.message}`)
+      CONFIG_LOGGER.error(`Failed to parse INTERFACES: ${error.message}`)
     }
     delete data.INTERFACES
   }
@@ -216,41 +218,39 @@ export function buildMergedConfig(): OceanNodeConfig {
   const baseConfig = loadConfigFromFile()
   const privateKey = process.env.PRIVATE_KEY
   if (!privateKey || privateKey.length !== 66) {
-    CONFIG_LOGGER.logMessageWithEmoji(
-      'Invalid or missing PRIVATE_KEY env variable. Must be 66 characters (0x + 64 hex chars).',
-      true,
-      GENERIC_EMOJIS.EMOJI_CROSS_MARK,
-      LOG_LEVELS_STR.LEVEL_ERROR
+    CONFIG_LOGGER.error(
+      'Invalid or missing PRIVATE_KEY env variable. Must be 66 characters (0x + 64 hex chars).'
     )
     throw new Error('Invalid PRIVATE_KEY')
   }
 
-  // const keys = getPeerIdFromPrivateKey(privateKey)
-  // Set key provider type and raw private key for KeyManager
-  // Type will be validated by KeyManager when initializing
-  const over = {
-    privateKey
-  }
-
-  const { env } = process
-  const envOverrides: Record<string, any> = { over }
-
-  Object.assign(envOverrides, mapEnvToConfig(env, ENV_TO_CONFIG_MAPPING))
-
+  const envOverrides = mapEnvToConfig(process.env, ENV_TO_CONFIG_MAPPING)
   const merged = lodash.merge({}, baseConfig, envOverrides)
+  delete merged.over
 
   preprocessConfigData(merged)
   const parsed = OceanNodeConfigSchema.safeParse(merged)
 
   if (!parsed.success) {
-    console.error('\n❌ Invalid Ocean Node configuration:')
-    for (const issue of parsed.error.issues) {
-      console.error(`  • ${issue.path.join('.')}: ${issue.message}`)
-    }
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+      .join('; ')
+    CONFIG_LOGGER.error(`Invalid Ocean Node configuration: ${issues}`)
     throw new Error('Configuration validation failed')
   }
 
   const config = parsed.data as any
+
+  // PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING overrides persistentStorage.allowBucketSharing.
+  // Applied after parsing because PERSISTENT_STORAGE may still be a JSON string before it.
+  if (config.PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING !== undefined) {
+    if (config.persistentStorage) {
+      config.persistentStorage.allowBucketSharing = booleanFromString.parse(
+        config.PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING
+      )
+    }
+    delete config.PERSISTENT_STORAGE_ALLOW_BUCKET_SHARING
+  }
 
   // Post-processing transformations
   if (!config.indexingNetworks) {
@@ -278,6 +278,8 @@ export function buildMergedConfig(): OceanNodeConfig {
   config.c2dClusters = buildC2DClusters(
     config.dockerComputeEnvironments as C2DDockerConfig[]
   )
+  config.isPSConfigured = isPolicyServerConfigured()
+
   // Let the P2P budget getters fall back to values set only in config.json (env still wins).
   // Runs on every (re)build, so a forced reload re-registers the fresh p2pConfig.
   registerP2PBudgetConfig(config.p2pConfig as Record<string, unknown> | null)
@@ -299,11 +301,43 @@ export async function getConfiguration(
     previousConfiguration.codeHash = await computeCodebaseHash(__dirname)
   }
 
+  if (isStartup) {
+    // Insecure-default warning: with SUBSIDY_PROVIDER_FILTER off, the whitelist check in
+    // resolveUserSubsidyProviders is skipped entirely, so an untrusted consumer may name ANY
+    // sponsor address in a request and have this node lock/claim against it (an open,
+    // sybil-drainable sponsorship program). This exposure is a property of the filter being
+    // off, NOT of SUBSIDY_PROVIDERS being populated — a pure-default node (no providers set,
+    // filter off) is the most exposed and least likely to have chosen it deliberately — so we
+    // warn whenever the filter is off, regardless of whether any providers are configured.
+    if (!previousConfiguration.subsidyProviderFilter) {
+      CONFIG_LOGGER.warn(
+        'SUBSIDY_PROVIDER_FILTER is OFF: any consumer may name ANY sponsor address through this node (open, sybil-drainable sponsorship). Set SUBSIDY_PROVIDER_FILTER=true to restrict callers to this node’s configured SUBSIDY_PROVIDERS.'
+      )
+    }
+  }
+
   return previousConfiguration
+}
+
+const SECRET_CONFIG_KEY = /key|secret|password|token|auth/i
+
+// copy of the config with secret-looking values masked and credentials stripped from URLs
+function maskConfigSecrets(value: any, key: string = ''): any {
+  if (Array.isArray(value)) return value.map((item) => maskConfigSecrets(item))
+  if (value !== null && typeof value === 'object') {
+    const copy: Record<string, any> = {}
+    for (const [k, v] of Object.entries(value)) copy[k] = maskConfigSecrets(v, k)
+    return copy
+  }
+  if (SECRET_CONFIG_KEY.test(key) && value !== undefined && value !== null) {
+    return '[*** HIDDEN CONTENT ***]'
+  }
+  return typeof value === 'string' ? redactUrls(value) : value
 }
 
 export async function printCurrentConfig() {
   const conf = await getConfiguration(true)
-  conf.keys.privateKey = '[*** HIDDEN CONTENT ***]'
-  console.log(JSON.stringify(conf, null, 4))
+  CONFIG_LOGGER.debug(
+    `Current configuration: ${safeStringify(maskConfigSecrets(conf), { maxLength: 0 })}`
+  )
 }

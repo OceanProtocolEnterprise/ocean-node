@@ -24,11 +24,11 @@ import {
   ProcessorConstructor
 } from './processors/index.js'
 import { findEventByKey } from './utils.js'
-import ERC20Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC20TemplateEnterprise.sol/ERC20TemplateEnterprise.json' with { type: 'json' }
+import ERC721Template from '@oceanprotocol/contracts/artifacts/contracts/templates/ERC721Template.sol/ERC721Template.json' with { type: 'json' }
 import AccessListContract from '@oceanprotocol/contracts/artifacts/contracts/accesslists/AccessList.sol/AccessList.json' with { type: 'json' }
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
 
-const EVENT_PROCESSOR_MAP: Record<string, ProcessorConstructor> = {
+export const EVENT_PROCESSOR_MAP: Record<string, ProcessorConstructor> = {
   [EVENTS.METADATA_CREATED]: MetadataEventProcessor,
   [EVENTS.METADATA_UPDATED]: MetadataEventProcessor,
   [EVENTS.METADATA_STATE]: MetadataStateEventProcessor,
@@ -50,7 +50,10 @@ const EVENT_PROCESSOR_MAP: Record<string, ProcessorConstructor> = {
   [EVENTS.ESCROW_CLAIMED]: EscrowEventProcessor,
   [EVENTS.ESCROW_CANCELED]: EscrowEventProcessor,
   [EVENTS.ESCROW_DEPOSIT]: EscrowEventProcessor,
-  [EVENTS.ESCROW_WITHDRAW]: EscrowEventProcessor
+  [EVENTS.ESCROW_WITHDRAW]: EscrowEventProcessor,
+  [EVENTS.ESCROW_SUBSIDIZED]: EscrowEventProcessor,
+  [EVENTS.ESCROW_LOCK_SPONSORED]: EscrowEventProcessor,
+  [EVENTS.ESCROW_SPONSOR_REFUNDED]: EscrowEventProcessor
 }
 
 const processorInstances = new Map<string, BaseEventProcessor>()
@@ -73,11 +76,9 @@ function getEventProcessor(
       throw new Error(`No processor found for event type: ${eventType}`)
     }
     INDEXER_LOGGER.debug(
-      'Creating new Processor for event ' + eventType + 'with key ' + cacheKey
+      'Creating new Processor for event ' + eventType + ' with key ' + cacheKey
     )
     processorInstances.set(cacheKey, new ProcessorClass(chainId, config))
-  } else {
-    INDEXER_LOGGER.debug('Reusing cached processor for key ' + cacheKey)
   }
   return processorInstances.get(cacheKey)
 }
@@ -100,10 +101,7 @@ export const processChunkLogs = async (
 
       if (event && Object.values(EVENTS).includes(event.type)) {
         // only log & process the ones we support
-        INDEXER_LOGGER.logMessage(
-          `-- ${event.type} -- triggered for ${log.transactionHash}`,
-          true
-        )
+        INDEXER_LOGGER.debug(`-- ${event.type} -- triggered for ${log.transactionHash}`)
         if (
           event.type === EVENTS.METADATA_CREATED ||
           event.type === EVENTS.METADATA_UPDATED ||
@@ -115,13 +113,12 @@ export const processChunkLogs = async (
             const metadataProofs = fetchEventFromTransaction(
               txReceipt,
               'MetadataValidated',
-              new Interface(ERC20Template.abi)
+              new Interface(ERC721Template.abi),
+              log.address
             )
             if (!metadataProofs) {
-              INDEXER_LOGGER.log(
-                LOG_LEVELS_STR.LEVEL_ERROR,
-                `Metadata Proof validator not allowed`,
-                true
+              INDEXER_LOGGER.debug(
+                `No MetadataValidated proof for tx ${log.transactionHash}, event skipped`
               )
               continue
               // do not process this one
@@ -134,11 +131,18 @@ export const processChunkLogs = async (
               (allowedValidator) => validators.indexOf(allowedValidator) !== -1
             )
             if (!allowed.length) {
-              INDEXER_LOGGER.log(
-                LOG_LEVELS_STR.LEVEL_ERROR,
-                `Metadata Proof validators list is empty. Block/event for tx ${log.transactionHash} was NOT processed due to no allowed validators.`,
-                true
-              )
+              if (allowedValidators.length === 0) {
+                // only ALLOWED_VALIDATORS_LIST is set: every metadata event ends up here
+                INDEXER_LOGGER.throttled(
+                  `metadata-validators-${chainId}`,
+                  LOG_LEVELS_STR.LEVEL_WARN,
+                  `Chain ${chainId}: metadata event skipped (tx ${log.transactionHash}), ALLOWED_VALIDATORS is empty but ALLOWED_VALIDATORS_LIST is set`
+                )
+              } else {
+                INDEXER_LOGGER.debug(
+                  `Metadata Proof validators list is empty. Block/event for tx ${log.transactionHash} was NOT processed due to no allowed validators.`
+                )
+              }
               continue
               // do not process this one
             }
@@ -165,7 +169,7 @@ export const processChunkLogs = async (
                     // its enough one validator on the list
                     const balance = await accessListContract.balanceOf(metaproofValidator)
                     if (Number(balance) <= 0) {
-                      INDEXER_LOGGER.error(
+                      INDEXER_LOGGER.debug(
                         `Metadata validator: ${metaproofValidator} is NOT part of the access list group: ${accessListAddress}.`
                       )
                     } else {
@@ -179,10 +183,8 @@ export const processChunkLogs = async (
               }
               // move on to the next (do not process this event)
               if (isAllowed === false) {
-                INDEXER_LOGGER.log(
-                  LOG_LEVELS_STR.LEVEL_ERROR,
-                  `Block/event for tx ${log.transactionHash} was NOT processed because none of the metadata validators are part of the access list group(s) for chain ${chainId}.`,
-                  true
+                INDEXER_LOGGER.debug(
+                  `Block/event for tx ${log.transactionHash} was NOT processed because none of the metadata validators are part of the access list group(s) for chain ${chainId}.`
                 )
                 continue
               }

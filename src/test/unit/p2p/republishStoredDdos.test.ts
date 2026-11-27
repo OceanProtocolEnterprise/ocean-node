@@ -66,7 +66,11 @@ function elasticFake(collections: Array<[string, any[]]>): {
         }
         const page = docs.slice(offset, offset + size)
         if (page.length > 0) {
-          results.push(page.map((doc) => ({ ...doc })))
+          // same shape as ElasticsearchDdoDatabase.search: one page per schema with its total
+          results.push({
+            results: page.map((doc) => ({ ...doc })),
+            totalResults: docs.length
+          })
         }
       }
       return Promise.resolve(results)

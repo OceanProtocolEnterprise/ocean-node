@@ -139,6 +139,7 @@ export interface ComputeEnvironmentFreeOptions {
   resources?: ComputeResource[]
   access: ComputeAccessList
   allowImageBuild?: boolean
+  buildTimeoutSeconds?: number // max image-build runtime; unset → runtime default (DEFAULT_BUILD_TIMEOUT_SECONDS)
 }
 
 // Config-time only — used in C2DEnvironmentConfig.free.
@@ -152,6 +153,7 @@ export interface C2DEnvironmentFreeConfig {
   resources?: EnvironmentResourceRef[]
   access?: ComputeAccessList
   allowImageBuild?: boolean
+  buildTimeoutSeconds?: number // max image-build runtime; unset → runtime default (DEFAULT_BUILD_TIMEOUT_SECONDS)
 }
 export interface ComputeEnvironmentBaseConfig {
   description?: string // v1
@@ -161,6 +163,7 @@ export interface ComputeEnvironmentBaseConfig {
   minServiceDuration?: number // min duration in seconds for a paid service
   maxServiceDuration?: number // max duration in seconds for a paid service
   maxJobs?: number // maximum number of simultaneous paid jobs
+  buildTimeoutSeconds?: number // max image-build runtime for PAID jobs; unset → runtime default (DEFAULT_BUILD_TIMEOUT_SECONDS)
   fees: ComputeEnvFeesStructure
   resources?: ComputeResource[]
   access: ComputeAccessList
@@ -220,6 +223,7 @@ export interface C2DEnvironmentConfig {
   // startup. Omitted → the env inherits the daemon cap.
   maxServiceDuration?: number
   maxJobs?: number
+  buildTimeoutSeconds?: number // max image-build runtime for PAID jobs; unset → runtime default (DEFAULT_BUILD_TIMEOUT_SECONDS)
   fees?: ComputeEnvFeesStructure
   access?: ComputeAccessList
   free?: C2DEnvironmentFreeConfig // config-time only; resolved to ComputeEnvironmentFreeOptions at startup
@@ -348,6 +352,11 @@ export interface ComputeJob {
   metadata?: DBComputeJobMetadata
   terminationDetails?: ComputeJobTerminationDetails
   queueMaxWaitTime: number // max time in seconds a job can wait in the queue before being started
+  // Payment snapshot (chain/token/txs + applied `subsidyProviders` and gate-dropped
+  // `droppedSubsidies`). Already returned at runtime by COMPUTE_GET_STATUS (the DB→public mapper
+  // omitDBComputeFieldsFromComputeJob does not strip it); declared here so it is part of the
+  // contract. Subsidy addresses are on-chain/public.
+  payment?: DBComputeJobPayment
 }
 
 // Public compute-job response shape: the base ComputeJob plus the OPTIONAL, sanitized runtime
@@ -411,6 +420,15 @@ export interface DBComputeJobPayment {
   claimTx: string
   cancelTx: string
   cost: number
+  // Resolved, validated user-supplied Subsidy Provider addresses for this job's chain, snapshotted
+  // at request time so the (possibly async/batched) escrow claim uses the user's choice rather than
+  // whatever the node config holds later. undefined = fall back to node config at claim time;
+  // [] = claim with no subsidy providers; non-empty = claim with exactly these.
+  subsidyProviders?: string[]
+  // Observability: the subsidy addresses the SUBSIDY_PROVIDER_ALLOWED_IMAGES gate REMOVED for this
+  // job (image not allowed, or a custom entrypoint/cmd). `subsidyProviders` stays the applied/kept
+  // list; this is the complement that was dropped. Absent/empty when the gate is off or kept all.
+  droppedSubsidies?: string[]
 }
 
 // this is the internal structure
