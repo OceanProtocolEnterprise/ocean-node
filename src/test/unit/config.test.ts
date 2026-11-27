@@ -510,16 +510,17 @@ describe('Should validate IS_ENTERPRISE configuration', () => {
     }
   }
 
-  it('defaults to false when unset', async () => {
+  // enterprise fork: defaults to true so payments keep going through EnterpriseEscrow
+  it('defaults to true when unset', async () => {
     const { config: conf, error } = await configWith()
     expect(error).to.be.equal(undefined)
-    expect(conf.isEnterprise).to.be.equal(false)
+    expect(conf.isEnterprise).to.be.equal(true)
   })
 
-  it('parses "true" as true', async () => {
-    const { config: conf, error } = await configWith('true')
+  it('parses "false" as false', async () => {
+    const { config: conf, error } = await configWith('false')
     expect(error).to.be.equal(undefined)
-    expect(conf.isEnterprise).to.be.equal(true)
+    expect(conf.isEnterprise).to.be.equal(false)
   })
 
   after(() => {

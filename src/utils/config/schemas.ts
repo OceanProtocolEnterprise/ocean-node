@@ -1744,7 +1744,7 @@ export const OceanNodeConfigSchema = z
     // (separate bucket). 0 = disabled. A negative/non-numeric value fails validation.
     fileInfoRateLimit: z.coerce.number().int().min(0).optional().default(0),
     isBootstrap: booleanFromString.optional().default(false),
-    isEnterprise: booleanFromString.optional().default(false),
+    isEnterprise: booleanFromString.optional().default(true),
     validateUnsignedDDO: booleanFromString.optional().default(true),
     // enterprise: skip the startup check that every fee token is allowed by the
     // EnterpriseFeeCollector. Parsed as a boolean so SKIP_FEE_TOKEN_VALIDATION=false enforces it
